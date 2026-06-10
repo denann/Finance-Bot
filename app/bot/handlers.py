@@ -2253,7 +2253,17 @@ def split_user_inputs(text: str) -> list[str]:
 
     # Split transaksi biasa berulang tanpa nominal protection tambahan.
     # Contoh: "beli nasi 10k beli ayam 20k"
-    normal_starter_pattern = "|".join(re.escape(k) for k in transaction_starters)
+    #
+    # Jangan pakai starter income yang terlalu lemah seperti "masuk",
+    # "dari", atau frasa tengah kalimat. Contoh bug:
+    # "Uang ptpt bulanan masuk dari opik 200k kemarin"
+    # dulu kepecah jadi "Uang ptpt bulanan" + "masuk dari opik ...".
+    strong_transaction_starters = [
+        "beli", "bayar", "byr", "jajan", "makan", "minum",
+        "transfer", "top up", "topup", "isi", "ngisi",
+        "gaji", "hutang", "utang",
+    ]
+    normal_starter_pattern = "|".join(re.escape(k) for k in strong_transaction_starters)
 
     raw = re.sub(
         rf"(?<!^)\s+(?=({normal_starter_pattern})\b)",
@@ -2582,7 +2592,7 @@ def build_debt_cashflow_transaction(
         "description": "Debt cashflow tidak valid",
         "catatan": raw,
         "tipe_pengeluaran": "",
-        "date": today,
+        "date": transaction_date,
         "parsed_by": "debt",
     }
 
@@ -5035,6 +5045,216 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_delete_txn_ids", None)
             return
     
+        if confirm_target == "debt":
+            debt_parsed = context.user_data.get("pending_debt")
+
+            if not debt_parsed:
+                await query.edit_message_text("❌ Sesi debt expired. Coba input ulang.")
+                return
+
+            await query.edit_message_text(
+                "⏳ *Sedang menyimpan debt dan cashflow...*",
+                parse_mode="Markdown",
+            )
+
+            intent = debt_parsed.get("intent")
+            person = debt_parsed.get("person_name")
+            amount = debt_parsed.get("amount")
+            description = debt_parsed.get("description") or ""
+            account = debt_parsed.get("account")
+            debt_type_for_payment = debt_parsed.get("debt_type_for_payment")
+            raw = debt_parsed.get("raw_input") or ""
+
+            if not person:
+                await query.edit_message_text("❌ Nama orang tidak terdeteksi. Coba input ulang.")
+                context.user_data.pop("pending_debt", None)
+                return
+
+            debt_result = None
+
+            if intent == "add_payable":
+                debt_result = add_debt("payable", person, amount, description)
+
+            elif intent == "add_receivable":
+                debt_result = add_debt("receivable", person, amount, description)
+
+            elif intent == "add_payment":
+                target_debt_id = debt_parsed.get("target_debt_id")
+
+                if not target_debt_id:
+                    await query.edit_message_text("❌ Target debt tidak ditemukan. Coba input ulang.")
+                    context.user_data.pop("pending_debt", None)
+                    return
+
+                debt_result = add_payment(target_debt_id, amount)
+
+            else:
+                await query.edit_message_text("❌ Intent debt tidak valid. Coba input ulang.")
+                context.user_data.pop("pending_debt", None)
+                return
+
+            if not debt_result or not debt_result.get("success"):
+                message = debt_result.get("message") if debt_result else "Unknown error"
+                await query.edit_message_text(f"❌ Gagal menyimpan debt: {message}")
+                context.user_data.pop("pending_debt", None)
+                return
+
+            debt_txn = build_debt_cashflow_transaction(
+                debt_parsed,
+                account,
+                debt_type_for_payment=debt_type_for_payment,
+            )
+
+            transaction_result = None
+            if debt_txn.get("type") != "pending":
+                transaction_result = save_transaction(debt_txn, raw_input=raw)
+
+            lines = ["✅ *Debt berhasil diproses!*\n"]
+
+            if intent in ["add_payable", "add_receivable"]:
+                if debt_result.get("is_settled"):
+                    lines.append(f"📌 Debt *{person}* impas/lunas")
+                else:
+                    direction = "🔴 Utang Anda" if debt_result.get("type") == "payable" else "🟢 Piutang Anda"
+                    lines.append(f"{direction} dengan *{debt_result.get('person_name', person)}*")
+                    lines.append(f"💰 Saldo: *{format_rupiah(debt_result.get('remaining', 0))}*")
+
+            elif intent == "add_payment":
+                if debt_result.get("is_settled"):
+                    lines.append(f"📌 Debt *{person}* lunas")
+                else:
+                    direction = "🔴 Utang Anda" if debt_type_for_payment == "payable" else "🟢 Piutang Anda"
+                    lines.append(f"📌 Posisi: {direction}")
+                    lines.append(f"📊 Sisa: *{format_rupiah(debt_result.get('remaining', 0))}*")
+
+            if transaction_result:
+                if transaction_result.get("success"):
+                    lines.append("\n📝 Cashflow tersimpan di transactions.")
+                    if transaction_result.get("transaction_id"):
+                        lines.append(f"🔖 ID: `{transaction_result['transaction_id']}`")
+                    if transaction_result.get("new_balance") is not None:
+                        lines.append(f"💳 Saldo {account}: *{format_rupiah(transaction_result['new_balance'])}*")
+                else:
+                    lines.append(f"\n⚠️ Debt tersimpan, tapi cashflow gagal: {transaction_result.get('message')}")
+
+            await query.edit_message_text(
+                "\n".join(lines),
+                parse_mode="Markdown",
+            )
+
+            context.user_data.pop("pending_debt", None)
+            context.user_data.pop("pending_debt_batch", None)
+            context.user_data.pop("pending_parsed", None)
+            context.user_data.pop("pending_raw", None)
+            context.user_data.pop("pending_batch", None)
+            return
+
+        if confirm_target == "debt_batch":
+            debt_batch = context.user_data.get("pending_debt_batch")
+
+            if not debt_batch:
+                await query.edit_message_text("❌ Sesi batch debt expired. Coba input ulang.")
+                return
+
+            await query.edit_message_text(
+                "⏳ *Sedang menyimpan batch debt dan cashflow...*",
+                parse_mode="Markdown",
+            )
+
+            debt_transaction_items = []
+            failed_items = []
+            result_lines = ["✅ *Batch debt diproses!*\n"]
+            debt_success_count = 0
+
+            for i, item in enumerate(debt_batch, 1):
+                parsed = item["parsed"]
+                raw = item["raw"]
+
+                intent = parsed.get("intent")
+                person = parsed.get("person_name")
+                amount = parsed.get("amount")
+                description = parsed.get("description") or ""
+                account = parsed.get("account")
+                debt_type_for_payment = parsed.get("debt_type_for_payment")
+
+                if not person:
+                    failed_items.append({"raw": raw, "message": "Nama orang tidak terdeteksi."})
+                    continue
+
+                debt_result = None
+
+                if intent == "add_payable":
+                    debt_result = add_debt("payable", person, amount, description)
+                elif intent == "add_receivable":
+                    debt_result = add_debt("receivable", person, amount, description)
+                elif intent == "add_payment":
+                    target_debt_id = parsed.get("target_debt_id")
+                    if not target_debt_id:
+                        failed_items.append({"raw": raw, "message": "Target debt tidak ditemukan."})
+                        continue
+                    debt_result = add_payment(target_debt_id, amount)
+                else:
+                    failed_items.append({"raw": raw, "message": "Intent debt tidak valid."})
+                    continue
+
+                if not debt_result or not debt_result.get("success"):
+                    failed_items.append({
+                        "raw": raw,
+                        "message": debt_result.get("message") if debt_result else "Unknown error",
+                    })
+                    continue
+
+                debt_success_count += 1
+                result_lines.append(f"{i}. ✅ Debt *{person}* diproses")
+
+                debt_txn = build_debt_cashflow_transaction(
+                    parsed,
+                    account,
+                    debt_type_for_payment=debt_type_for_payment,
+                )
+
+                if debt_txn.get("type") != "pending":
+                    debt_transaction_items.append({"parsed": debt_txn, "raw": raw})
+
+            transaction_result = None
+            if debt_transaction_items:
+                transaction_result = save_transactions_batch(debt_transaction_items)
+
+            result_lines.append("")
+            result_lines.append(f"💸 Debt diproses: *{debt_success_count} item*")
+
+            if transaction_result:
+                result_lines.append(f"📝 Cashflow tersimpan: *{transaction_result.get('success_count', 0)} item*")
+                new_balances = transaction_result.get("new_balances", {})
+                if new_balances:
+                    result_lines.append("\n💳 *Saldo terbaru:*")
+                    for account_name, balance in new_balances.items():
+                        result_lines.append(f"• {account_name}: *{format_rupiah(balance)}*")
+
+                tx_failed = transaction_result.get("failed_items", [])
+                if tx_failed:
+                    failed_items.extend(tx_failed)
+
+                if transaction_result.get("message") and transaction_result.get("message") != "ok":
+                    result_lines.append(f"\n⚠️ {transaction_result['message']}")
+
+            if failed_items:
+                result_lines.append("\n❌ *Catatan/Gagal:*")
+                for item in failed_items:
+                    result_lines.append(f"• `{item['raw']}` — {item['message']}")
+
+            await query.edit_message_text(
+                "\n".join(result_lines),
+                parse_mode="Markdown",
+            )
+
+            context.user_data.pop("pending_debt_batch", None)
+            context.user_data.pop("pending_debt", None)
+            context.user_data.pop("pending_parsed", None)
+            context.user_data.pop("pending_raw", None)
+            context.user_data.pop("pending_batch", None)
+            return
+
         if confirm_target == "mixed":
             mixed_items = context.user_data.get("pending_mixed")
 
