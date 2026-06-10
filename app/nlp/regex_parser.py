@@ -233,6 +233,29 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
+    # ── Payable natural: "minjem uang Annisa 220k" ───────────────────────────
+    # Dalam bahasa natural user, pola ini berarti: Anda meminjam uang milik Annisa
+    # sehingga Anda punya UTANG ke Annisa. Ini harus dicek sebelum keyword umum
+    # "minjem/pinjem/pinjam" yang dipakai untuk pola "Budi minjem 300k".
+    natural_borrow_match = re.search(
+        r"\b(?:minjem|pinjem|pinjam)\b\s+(?:uang|duit|dana)?\s*(?:ke|sama|dari)?\s*([a-zA-Z][a-zA-Z\s]{0,40}?)(?=\s*\d|\s*(?:rp|idr))",
+        text_lower,
+    )
+    if natural_borrow_match and not re.search(r"\b(?:minjemin|pinjemin)\b", text_lower):
+        person = natural_borrow_match.group(1).strip()
+        # Bersihkan kata sambung/noise yang kadang ikut kebaca.
+        person = re.sub(r"\b(?:uang|duit|dana|ke|sama|dari)\b", " ", person).strip()
+        person = re.sub(r"\s+", " ", person).title()
+        if person:
+            return {
+                "intent": "add_payable",
+                "person_name": person,
+                "amount": amount,
+                "description": extract_description(text, amount),
+                "date": detect_date(text),
+                "raw_input": text,
+            }
+
     # ── Payable: Anda punya utang ke orang ───────────────────────────────────
     for kw in DEBT_PAYABLE_KEYWORDS:
         if kw in text_lower:
