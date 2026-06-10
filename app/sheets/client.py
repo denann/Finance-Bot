@@ -22,7 +22,7 @@ def get_spreadsheet():
     if _spreadsheet is None:
         creds = Credentials.from_service_account_file(
             GOOGLE_SERVICE_ACCOUNT_JSON,
-            scopes=SCOPES
+            scopes=SCOPES,
         )
         _client = gspread.authorize(creds)
         _spreadsheet = _client.open_by_key(GOOGLE_SHEET_ID)
@@ -40,6 +40,18 @@ def append_row(sheet_name: str, row: list):
     """Tambah satu baris baru di akhir sheet."""
     sheet = get_sheet(sheet_name)
     sheet.append_row(row, value_input_option="USER_ENTERED")
+
+
+def append_rows(sheet_name: str, rows: list[list]):
+    """
+    Tambah banyak baris sekaligus.
+    Ini lebih cepat daripada append_row berkali-kali.
+    """
+    if not rows:
+        return
+
+    sheet = get_sheet(sheet_name)
+    sheet.append_rows(rows, value_input_option="USER_ENTERED")
 
 
 def get_all_records(sheet_name: str) -> list[dict]:
@@ -64,7 +76,41 @@ def find_row_index(sheet_name: str, search_col: int, search_value: str) -> int |
     col_values = sheet.col_values(search_col)
 
     for i, val in enumerate(col_values):
-        if val == search_value:
-            return i + 1  # gspread pakai 1-indexed
+        if str(val).strip().lower() == str(search_value).strip().lower():
+            return i + 1
 
     return None
+
+def delete_row(sheet_name: str, row_index: int):
+    """
+    Hapus satu baris dari worksheet.
+    row_index 1-indexed.
+    """
+    sheet = get_sheet(sheet_name)
+    sheet.delete_rows(row_index)
+
+
+def delete_rows(sheet_name: str, row_indices: list[int]):
+    """
+    Hapus banyak baris dari worksheet.
+    Hapus dari bawah ke atas supaya index row tidak bergeser.
+    """
+    if not row_indices:
+        return
+
+    sheet = get_sheet(sheet_name)
+
+    for row_index in sorted(row_indices, reverse=True):
+        sheet.delete_rows(row_index)
+
+def update_row(sheet_name: str, row_index: int, row_values: list):
+    """
+    Update satu baris penuh di worksheet.
+    row_index 1-indexed.
+    """
+    sheet = get_sheet(sheet_name)
+
+    end_col = chr(ord("A") + len(row_values) - 1)
+    cell_range = f"A{row_index}:{end_col}{row_index}"
+
+    sheet.update(cell_range, [row_values])

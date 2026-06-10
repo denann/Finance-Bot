@@ -3,11 +3,11 @@ import google.generativeai as genai
 from datetime import datetime
 from app.config import GEMINI_API_KEY
 
-# Setup Gemini
+
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-3.1-flash-lite")
 
-# Daftar kategori valid — harus konsisten dengan sheet categories
+
 VALID_CATEGORIES = [
     "Food & Beverage", "Transport", "Bills & Utilities", "Shopping",
     "Health", "Entertainment", "Education", "Personal Care",
@@ -15,113 +15,164 @@ VALID_CATEGORIES = [
     "Salary", "Freelance", "Investment Return", "Other Income",
 ]
 
-# Daftar rekening valid
 VALID_ACCOUNTS = ["Cash", "BRI", "BSI", "DANA", "GoPay"]
+
+VALID_SPENDING_TYPES = ["Bulanan", "Harian", "Darurat", "Keinginan"]
 
 
 def build_prompt(user_input: str) -> str:
     today = datetime.now().strftime("%Y-%m-%d")
 
+    expense_categories = [
+        c for c in VALID_CATEGORIES
+        if c not in ["Salary", "Freelance", "Investment Return", "Other Income"]
+    ]
+
     return f"""
-Kamu adalah parser transaksi keuangan pribadi. 
+Kamu adalah parser transaksi keuangan pribadi berbahasa Indonesia.
 Tugasmu HANYA mengekstrak informasi transaksi dari input user dan mengembalikan JSON.
-Jangan tambahkan penjelasan apapun — hanya JSON murni.
+Jangan tambahkan penjelasan apapun.
+Jangan pakai markdown.
+Jangan pakai backtick.
+Balas hanya JSON murni.
 
 Hari ini: {today}
 
-Kategori yang tersedia:
-Pengeluaran: {", ".join([c for c in VALID_CATEGORIES if c not in ["Salary", "Freelance", "Investment Return", "Other Income"]])}
-Pemasukan: Salary, Freelance, Investment Return, Other Income
+Kategori pengeluaran valid:
+{", ".join(expense_categories)}
 
-Rekening yang tersedia: {", ".join(VALID_ACCOUNTS)}
+Kategori pemasukan valid:
+Salary, Freelance, Investment Return, Other Income
 
-Aturan:
-1. type harus salah satu dari: "expense", "income", "transfer"
-2. amount harus integer dalam Rupiah (bukan string)
-3. category harus dari daftar kategori di atas, pilih yang paling relevan
-4. account adalah rekening asal (null jika tidak disebutkan)
-5. to_account hanya diisi jika type = "transfer" (null jika bukan transfer)
-6. date format YYYY-MM-DD, interpretasi "kemarin", "tadi", "minggu lalu" dari hari ini
-7. description singkat dan informatif, max 50 karakter
-8. parsed_by selalu "gemini"
+Rekening valid:
+{", ".join(VALID_ACCOUNTS)}
 
-Input user: "{user_input}"
+Tipe pengeluaran valid:
+Bulanan, Harian, Darurat, Keinginan
 
-Balas HANYA dengan JSON ini (tanpa markdown, tanpa backtick):
+Definisi tipe_pengeluaran:
+- Bulanan: pengeluaran rutin bulanan seperti kos, listrik, air, internet, langganan, iuran, cicilan, asuransi.
+- Harian: kebutuhan rutin harian seperti makan, minum, bensin, transport harian, laundry, belanja harian.
+- Darurat: kebutuhan mendadak atau penting seperti obat, dokter, kerusakan, kecelakaan, service mendadak.
+- Keinginan: hiburan, game, nongkrong, belanja non-urgent, liburan, barang yang lebih bersifat wants.
+
+Aturan parsing:
+1. type harus salah satu dari: "expense", "income", "transfer".
+2. amount harus integer dalam Rupiah, bukan string.
+3. Jika ada pola "dibagi 2", "bagi 2", "split 2", "patungan 2", amount harus dibagi sesuai angka tersebut.
+4. category harus dari daftar kategori valid.
+5. account adalah rekening asal, null jika tidak disebutkan.
+6. to_account hanya diisi jika type = "transfer", null jika bukan transfer.
+7. subject adalah pihak/tempat/objek utama transaksi.
+   Contoh:
+   - "beli nasi padang 20k" → subject: "Nasi Padang"
+   - "bayar listrik 200k" → subject: "PLN"
+   - "bayar kos 1.5jt" → subject: "Kos"
+   - "gaji masuk 5jt" → subject: "Pekerjaan"
+   - "beli di Shopee 100k" → subject: "Shopee"
+8. description adalah ringkasan transaksi utama, maksimal 50 karakter.
+   Jangan masukkan catatan, orang patungan, atau konteks tambahan ke description.
+   Contoh:
+   - "beli nasi padang 20k catatan dibagi 2 sama Sapto" → description: "Nasi Padang"
+   - "beli obat 45k buat demam" → description: "Obat"
+9. catatan adalah detail tambahan jika ada.
+   Contoh:
+   - "catatan dibagi 2 sama Sapto" → catatan: "Dibagi 2 sama Sapto"
+   - "buat demam" → catatan: "Demam"
+   - Jika tidak ada, isi "".
+10. tipe_pengeluaran hanya diisi jika type = "expense". Jika type bukan expense, isi "".
+11. date format YYYY-MM-DD. Interpretasi "kemarin", "tadi", "minggu lalu" dari hari ini.
+12. parsed_by selalu "gemini".
+
+Input user:
+"{user_input}"
+
+Balas HANYA JSON dengan format berikut:
 {{
   "type": "expense|income|transfer",
   "amount": 0,
   "category": "nama kategori",
   "account": null,
   "to_account": null,
-  "description": "deskripsi singkat",
+  "subject": "",
+  "description": "",
+  "catatan": "",
+  "tipe_pengeluaran": "",
   "date": "{today}",
   "parsed_by": "gemini"
 }}
 """.strip()
 
 
-def parse_with_gemini(user_input: str) -> dict | None:
-    """
-    Fallback parser menggunakan Gemini API.
-    Dipanggil hanya jika regex parser return None.
+def clean_gemini_json(raw_text: str) -> str:
+    raw_text = raw_text.strip()
 
-    Return dict jika berhasil, None jika gagal.
-    """
+    if raw_text.startswith("```"):
+        raw_text = raw_text.split("```")[1]
+        if raw_text.startswith("json"):
+            raw_text = raw_text[4:]
+        raw_text = raw_text.strip()
+
+    return raw_text
+
+
+def parse_with_gemini(user_input: str) -> dict | None:
     try:
         prompt = build_prompt(user_input)
         response = model.generate_content(prompt)
-        raw_text = response.text.strip()
 
-        # Bersihkan jika Gemini tetap wrap dengan backtick
-        if raw_text.startswith("```"):
-            raw_text = raw_text.split("```")[1]
-            if raw_text.startswith("json"):
-                raw_text = raw_text[4:]
-            raw_text = raw_text.strip()
+        if not response or not getattr(response, "text", None):
+            return None
 
+        raw_text = clean_gemini_json(response.text)
         parsed = json.loads(raw_text)
 
-        # Validasi field wajib ada
         required_fields = ["type", "amount", "category", "date"]
         for field in required_fields:
             if field not in parsed:
                 return None
 
-        # Validasi type
         if parsed["type"] not in ["expense", "income", "transfer"]:
             return None
 
-        # Validasi amount adalah angka
         parsed["amount"] = int(parsed["amount"])
         if parsed["amount"] <= 0:
             return None
 
-        # Pastikan parsed_by selalu gemini
+        if parsed["type"] == "transfer":
+            parsed["category"] = None
+        elif parsed.get("category") not in VALID_CATEGORIES:
+            parsed["category"] = (
+                "Other Income"
+                if parsed["type"] == "income"
+                else "Other Expense"
+            )
+
+        if parsed.get("account") not in VALID_ACCOUNTS:
+            parsed["account"] = None
+
+        if parsed.get("to_account") not in VALID_ACCOUNTS:
+            parsed["to_account"] = None
+
+        if parsed["type"] != "expense":
+            parsed["tipe_pengeluaran"] = ""
+        elif parsed.get("tipe_pengeluaran") not in VALID_SPENDING_TYPES:
+            parsed["tipe_pengeluaran"] = "Harian"
+
+        parsed["subject"] = parsed.get("subject") or ""
+        parsed["description"] = parsed.get("description") or "Transaksi"
+        parsed["catatan"] = parsed.get("catatan") or ""
         parsed["parsed_by"] = "gemini"
 
         return parsed
 
     except json.JSONDecodeError:
-        # Gemini return bukan JSON valid
         return None
     except Exception:
-        # Error apapun (network, rate limit, dll)
         return None
 
 
 def parse_with_pending_fallback(user_input: str) -> dict:
-    """
-    Wrapper dengan fallback ke pending jika Gemini gagal.
-    Selalu return dict — tidak pernah return None.
-
-    Return format tambahan jika gagal:
-    {
-        "type": "pending",
-        "raw_input": str,
-        "parsed_by": "failed"
-    }
-    """
     result = parse_with_gemini(user_input)
 
     if result is None:
@@ -133,7 +184,10 @@ def parse_with_pending_fallback(user_input: str) -> dict:
             "category": None,
             "account": None,
             "to_account": None,
+            "subject": "",
             "description": None,
+            "catatan": "",
+            "tipe_pengeluaran": "",
             "date": datetime.now().strftime("%Y-%m-%d"),
         }
 

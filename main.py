@@ -23,11 +23,34 @@ from app.bot.handlers import (
     mingguan_handler,
     bulanan_handler,
     budget_handler,
+    budget_history_handler,
     set_budget_handler,
     cari_handler,
     hutang_handler,
+    last_handler,
+    delete_txn_handler,
+    edit_txn_handler,
+    unknown_command_handler,
     message_handler,
     callback_handler,
+    export_handler,
+    recurring_handler,
+    recurring_add_handler,
+    recurring_run_handler,
+    recurring_off_handler,
+    recurring_edit_handler,
+    health_handler,
+    networth_handler,
+    assets_handler,
+    liabilities_handler,
+    asset_add_handler,
+    asset_update_handler,
+    asset_off_handler,
+    liability_add_handler,
+    liability_update_handler,
+    liability_off_handler,
+    networth_snapshot_handler,
+    networth_history_handler,
 )
 from app.scheduler.jobs import create_scheduler
 
@@ -45,22 +68,39 @@ telegram_app.add_handler(CommandHandler("harian", harian_handler))
 telegram_app.add_handler(CommandHandler("mingguan", mingguan_handler))
 telegram_app.add_handler(CommandHandler("bulanan", bulanan_handler))
 telegram_app.add_handler(CommandHandler("budget", budget_handler))
-telegram_app.add_handler(CommandHandler("cari", cari_handler))
+telegram_app.add_handler(CommandHandler("budget_history", budget_history_handler))
 telegram_app.add_handler(CommandHandler("hutang", hutang_handler))
-telegram_app.add_handler(CallbackQueryHandler(callback_handler))
+telegram_app.add_handler(CommandHandler("cari", cari_handler))
+telegram_app.add_handler(CommandHandler("last", last_handler))
+telegram_app.add_handler(CommandHandler("delete_txn", delete_txn_handler))
+telegram_app.add_handler(CommandHandler("edit_txn", edit_txn_handler))
+telegram_app.add_handler(CommandHandler("export", export_handler))
+telegram_app.add_handler(MessageHandler(filters.Regex(r"(?i)^budget\b"), set_budget_handler))
+telegram_app.add_handler(CommandHandler("recurring", recurring_handler))
+telegram_app.add_handler(CommandHandler("recurring_add", recurring_add_handler))
+telegram_app.add_handler(CommandHandler("recurring_run", recurring_run_handler))
+telegram_app.add_handler(CommandHandler("recurring_edit", recurring_edit_handler))
+telegram_app.add_handler(CommandHandler("recurring_off", recurring_off_handler))
+telegram_app.add_handler(CommandHandler("health", health_handler))
+telegram_app.add_handler(CommandHandler("networth", networth_handler))
+telegram_app.add_handler(CommandHandler("assets", assets_handler))
+telegram_app.add_handler(CommandHandler("liabilities", liabilities_handler))
 
-telegram_app.add_handler(
-    MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.Regex(
-            r"(?i)^(budget|set budget)"
-        ),
-        set_budget_handler,
-    )
-)
+telegram_app.add_handler(CommandHandler("asset_add", asset_add_handler))
+telegram_app.add_handler(CommandHandler("asset_update", asset_update_handler))
+telegram_app.add_handler(CommandHandler("asset_off", asset_off_handler))
+
+telegram_app.add_handler(CommandHandler("liability_add", liability_add_handler))
+telegram_app.add_handler(CommandHandler("liability_update", liability_update_handler))
+telegram_app.add_handler(CommandHandler("liability_off", liability_off_handler))
+
+telegram_app.add_handler(CommandHandler("networth_snapshot", networth_snapshot_handler))
+telegram_app.add_handler(CommandHandler("networth_history", networth_history_handler))
+telegram_app.add_handler(MessageHandler(filters.COMMAND, unknown_command_handler))
 telegram_app.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
 )
-
+telegram_app.add_handler(CallbackQueryHandler(callback_handler))
 set_telegram_app(telegram_app)
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
@@ -107,35 +147,6 @@ async def test_sheets():
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-
-@app.get("/test-scheduler/{job_name}")
-async def test_scheduler(job_name: str):
-    """
-    Trigger scheduler job secara manual untuk testing.
-    job_name: daily | weekly | monthly | debt
-    """
-    from app.scheduler.jobs import (
-        job_daily_summary,
-        job_weekly_summary,
-        job_monthly_summary,
-        job_debt_reminder,
-    )
-
-    jobs = {
-        "daily": job_daily_summary,
-        "weekly": job_weekly_summary,
-        "monthly": job_monthly_summary,
-        "debt": job_debt_reminder,
-    }
-
-    if job_name not in jobs:
-        return {"error": f"Job '{job_name}' tidak dikenal. Pilihan: {list(jobs.keys())}"}
-
-    try:
-        await jobs[job_name]()
-        return {"status": "ok", "job": job_name, "message": "Job berhasil dijalankan. Cek Telegram!"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=APP_PORT, reload=False)

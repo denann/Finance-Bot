@@ -1,12 +1,22 @@
 from datetime import datetime
+import re
+
 from app.sheets.client import (
     append_row,
     get_all_records,
-    find_row_index,
     update_cell,
-    get_sheet,
 )
 from app.config import SHEET_BUDGETS, SHEET_TRANSACTIONS
+
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+DEBT_CASHFLOW_CATEGORIES = {
+    "Piutang Diberikan",
+    "Pembayaran Piutang",
+    "Penerimaan Utang",
+    "Bayar Utang",
+}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -16,95 +26,179 @@ def get_current_month() -> str:
     return datetime.now().strftime("%Y-%m")
 
 
+def normalize_month(month: str | None = None) -> str:
+    """
+    Normalize bulan ke format YYYY-MM.
+
+    Support:
+    - None          -> bulan sekarang
+    - 2026-06
+    - 2026/06
+    - 2026 06
+    """
+    if not month:
+        return get_current_month()
+
+    month = str(month).strip()
+    month = month.replace("/", "-")
+    month = re.sub(r"\s+", "-", month)
+
+    match = re.fullmatch(r"(\d{4})-(\d{1,2})", month)
+    if not match:
+        raise ValueError("Format bulan harus YYYY-MM. Contoh: 2026-06")
+
+    year = int(match.group(1))
+    month_num = int(match.group(2))
+
+    if month_num < 1 or month_num > 12:
+        raise ValueError("Bulan harus antara 1 sampai 12.")
+
+    return f"{year}-{month_num:02d}"
+
+
+def format_month_label(month: str) -> str:
+    """Ubah YYYY-MM menjadi label singkat."""
+    month = normalize_month(month)
+    dt = datetime.strptime(month, "%Y-%m")
+    return dt.strftime("%B %Y")
+
+
 def format_rupiah(amount: float) -> str:
-    return f"Rp{int(amount):,}".replace(",", ".")
+    return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
 
 
 def get_budget_status_emoji(pct_used: float) -> str:
-    """
-    Return emoji berdasarkan persentase budget yang terpakai.
-    """
     if pct_used >= 100:
-        return "🔴"  # Over budget
+        return "🔴"
     elif pct_used >= 80:
-        return "🟠"  # Hampir habis
+        return "🟠"
     elif pct_used >= 50:
-        return "🟡"  # Setengah jalan
+        return "🟡"
     else:
-        return "🟢"  # Aman
+        return "🟢"
+
+
+def generate_budget_id(month: str, category: str) -> str:
+    clean_category = re.sub(r"[^a-zA-Z0-9]+", "_", category.strip().lower())
+    clean_category = clean_category.strip("_")
+    return f"budget_{month}_{clean_category}"
+
+
+def safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value or 0)
+    except Exception:
+        return default
 
 
 # ── Budget CRUD ───────────────────────────────────────────────────────────────
 
 def set_budget(category: str, amount: float, month: str = None) -> dict:
     """
-    Set atau update budget untuk kategori tertentu.
-    Jika sudah ada, update. Jika belum, tambah baru.
+    Set atau update budget untuk kategori tertentu pada bulan tertentu.
 
-    Return:
-        {"success": bool, "action": "created"|"updated", "message": str}
+    Sheet budgets disarankan punya header:
+    id | month | category | budget_amount | created_at | updated_at
+
+    Kalau sheet lama kamu masih:
+    month | category | budget_amount | created_at
+
+    sebaiknya ubah header-nya dulu agar cocok dengan versi ini.
     """
-    if not month:
-        month = get_current_month()
+    month = normalize_month(month)
+    amount = float(amount or 0)
+
+    if amount <= 0:
+        return {
+            "success": False,
+            "action": "failed",
+            "message": "Nominal budget harus lebih dari 0.",
+        }
 
     records = get_all_records(SHEET_BUDGETS)
+    today = datetime.now().strftime("%Y-%m-%d")
 
-    # Cek apakah sudah ada budget untuk kategori + bulan ini
     for i, record in enumerate(records):
-        if (
-            record.get("category", "").lower() == category.lower()
-            and record.get("month") == month
-        ):
-            # Update baris yang ada
-            # Kolom: 1=month, 2=category, 3=budget_amount, 4=created_at
-            row_index = i + 2  # +2 karena header di baris 1, data mulai baris 2
-            update_cell(SHEET_BUDGETS, row_index, 3, amount)
+        record_month = str(record.get("month", "")).strip()
+        record_category = str(record.get("category", "")).strip().lower()
+
+        if record_month == month and record_category == category.strip().lower():
+            row_index = i + 2
+
+            # Header:
+            # 1=id, 2=month, 3=category, 4=budget_amount, 5=created_at, 6=updated_at
+            update_cell(SHEET_BUDGETS, row_index, 4, amount)
+            update_cell(SHEET_BUDGETS, row_index, 6, today)
+
             return {
                 "success": True,
                 "action": "updated",
-                "message": f"Budget {category} diupdate ke {format_rupiah(amount)}",
+                "month": month,
+                "category": category,
+                "amount": amount,
+                "message": f"Budget {category} untuk {month} diupdate ke {format_rupiah(amount)}",
             }
 
-    # Belum ada — tambah baru
+    budget_id = generate_budget_id(month, category)
+
     row = [
+        budget_id,
         month,
         category,
         amount,
-        datetime.now().strftime("%Y-%m-%d"),
+        today,
+        today,
     ]
+
     append_row(SHEET_BUDGETS, row)
+
     return {
         "success": True,
         "action": "created",
-        "message": f"Budget {category} diset {format_rupiah(amount)}",
+        "month": month,
+        "category": category,
+        "amount": amount,
+        "message": f"Budget {category} untuk {month} diset {format_rupiah(amount)}",
     }
 
 
 def get_budget(category: str, month: str = None) -> float | None:
-    """
-    Ambil budget untuk kategori tertentu di bulan tertentu.
-    Return None jika belum ada budget.
-    """
-    if not month:
-        month = get_current_month()
+    """Ambil budget untuk kategori tertentu di bulan tertentu."""
+    month = normalize_month(month)
 
     records = get_all_records(SHEET_BUDGETS)
+
     for record in records:
-        if (
-            record.get("category", "").lower() == category.lower()
-            and record.get("month") == month
-        ):
-            return float(record.get("budget_amount", 0))
+        record_month = str(record.get("month", "")).strip()
+        record_category = str(record.get("category", "")).strip().lower()
+
+        if record_month == month and record_category == category.strip().lower():
+            return safe_float(record.get("budget_amount", 0))
+
     return None
 
 
 def get_all_budgets(month: str = None) -> list[dict]:
     """Ambil semua budget di bulan tertentu."""
-    if not month:
-        month = get_current_month()
+    month = normalize_month(month)
 
     records = get_all_records(SHEET_BUDGETS)
-    return [r for r in records if r.get("month") == month]
+    return [
+        r for r in records
+        if str(r.get("month", "")).strip() == month
+    ]
+
+
+def get_budget_months() -> list[str]:
+    """Ambil daftar bulan yang punya budget."""
+    records = get_all_records(SHEET_BUDGETS)
+    months = sorted({
+        str(r.get("month", "")).strip()
+        for r in records
+        if str(r.get("month", "")).strip()
+    })
+
+    return months
 
 
 # ── Realisasi vs Budget ───────────────────────────────────────────────────────
@@ -112,56 +206,57 @@ def get_all_budgets(month: str = None) -> list[dict]:
 def get_actual_expense(category: str, month: str = None) -> float:
     """
     Hitung total pengeluaran aktual untuk kategori tertentu di bulan tertentu.
+
+    Catatan:
+    - Debt cashflow tidak dihitung sebagai konsumsi budget, kecuali kamu sengaja set budget
+      untuk kategori debt tersebut.
     """
-    if not month:
-        month = get_current_month()
+    month = normalize_month(month)
 
     records = get_all_records(SHEET_TRANSACTIONS)
     total = 0.0
 
     for record in records:
-        if (
-            record.get("type") == "expense"
-            and record.get("category", "").lower() == category.lower()
-            and str(record.get("date", "")).startswith(month)
-        ):
-            total += float(record.get("amount", 0))
+        txn_type = str(record.get("type", "")).strip()
+        txn_category = str(record.get("category", "")).strip()
+        txn_date = str(record.get("date", "")).strip()
+
+        if txn_type != "expense":
+            continue
+
+        if txn_category.lower() != category.strip().lower():
+            continue
+
+        if not txn_date.startswith(month):
+            continue
+
+        total += safe_float(record.get("amount", 0))
 
     return total
 
 
 def get_budget_summary(month: str = None) -> list[dict]:
     """
-    Ambil ringkasan budget vs realisasi semua kategori.
-
-    Return list of dict:
-    [
-        {
-            "category": str,
-            "budget": float,
-            "actual": float,
-            "remaining": float,
-            "pct_used": float,
-            "status": str,
-            "emoji": str,
-        },
-        ...
-    ]
+    Ambil ringkasan budget vs realisasi semua kategori pada bulan tertentu.
     """
-    if not month:
-        month = get_current_month()
+    month = normalize_month(month)
 
     budgets = get_all_budgets(month)
     result = []
 
     for b in budgets:
-        category = b.get("category", "")
-        budget_amount = float(b.get("budget_amount", 0))
+        category = str(b.get("category", "")).strip()
+        budget_amount = safe_float(b.get("budget_amount", 0))
+
+        if not category:
+            continue
+
         actual = get_actual_expense(category, month)
         remaining = budget_amount - actual
         pct_used = (actual / budget_amount * 100) if budget_amount > 0 else 0
 
         result.append({
+            "month": month,
             "category": category,
             "budget": budget_amount,
             "actual": actual,
@@ -171,7 +266,6 @@ def get_budget_summary(month: str = None) -> list[dict]:
             "emoji": get_budget_status_emoji(pct_used),
         })
 
-    # Sort: yang paling kritis di atas
     result.sort(key=lambda x: x["pct_used"], reverse=True)
     return result
 
@@ -180,25 +274,15 @@ def check_budget_after_transaction(category: str, month: str = None) -> dict | N
     """
     Dipanggil setiap kali ada transaksi expense masuk.
     Return info budget jika ada, None jika kategori tidak punya budget.
-
-    Return:
-    {
-        "category": str,
-        "budget": float,
-        "actual": float,
-        "remaining": float,
-        "pct_used": float,
-        "emoji": str,
-        "alert": bool,   ← True jika perlu notifikasi khusus
-        "alert_msg": str
-    }
     """
-    if not month:
-        month = get_current_month()
+    month = normalize_month(month)
+
+    if category in DEBT_CASHFLOW_CATEGORIES:
+        return None
 
     budget = get_budget(category, month)
     if budget is None:
-        return None  # Tidak ada budget untuk kategori ini
+        return None
 
     actual = get_actual_expense(category, month)
     remaining = budget - actual
@@ -210,12 +294,13 @@ def check_budget_after_transaction(category: str, month: str = None) -> dict | N
 
     if pct_used >= 100:
         alert = True
-        alert_msg = f"🔴 Budget {category} sudah terlampaui {format_rupiah(abs(remaining))}!"
+        alert_msg = f"🔴 Budget {category} bulan {month} sudah terlampaui {format_rupiah(abs(remaining))}!"
     elif pct_used >= 80:
         alert = True
-        alert_msg = f"🟠 Budget {category} tersisa {format_rupiah(remaining)} ({100 - pct_used:.0f}%)"
+        alert_msg = f"🟠 Budget {category} bulan {month} tersisa {format_rupiah(remaining)} ({100 - pct_used:.0f}%)"
 
     return {
+        "month": month,
         "category": category,
         "budget": budget,
         "actual": actual,

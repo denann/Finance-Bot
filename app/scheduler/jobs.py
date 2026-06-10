@@ -12,10 +12,57 @@ from app.services.report_service import (
 from app.bot.handlers import build_progress_bar
 from app.services.budget_service import get_budget_summary
 from app.services.debt_service import get_active_debts
-
+from app.services.recurring_service import process_due_recurring_rules
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+async def job_recurring_run():
+    """
+    Jalankan recurring transaction otomatis setiap pagi.
+    """
+    try:
+        result = process_due_recurring_rules()
 
+        count_due = result.get("count_due", 0)
+        success = result.get("success", [])
+        failed = result.get("failed", [])
+
+        # Kalau tidak ada yang jatuh tempo, tidak perlu spam notif.
+        if count_due == 0:
+            return
+
+        lines = [
+            "🔁 *Recurring Transaction Otomatis*\n",
+            f"📅 Tanggal run: `{result.get('run_date')}`",
+            f"📌 Rule jatuh tempo: *{count_due}*",
+        ]
+
+        if success:
+            lines.append("\n✅ *Berhasil dibuat:*")
+
+            for item in success:
+                rule = item.get("rule", {})
+                lines.append(
+                    f"• {rule.get('name', '-')}: "
+                    f"{format_rupiah(float(rule.get('amount', 0) or 0))} "
+                    f"→ next `{item.get('next_run_date', '-')}`"
+                )
+
+        if failed:
+            lines.append("\n❌ *Gagal:*")
+
+            for item in failed:
+                rule = item.get("rule", {})
+                lines.append(
+                    f"• {rule.get('name', '-')} — {item.get('message', '-')}"
+                )
+
+        await send_message("\n".join(lines))
+
+    except Exception as e:
+        await send_message(
+            f"❌ Gagal menjalankan recurring otomatis:\n`{str(e)}`"
+        )
+    
 async def send_message(text: str):
     """Kirim pesan ke user via bot."""
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -261,4 +308,12 @@ def create_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    scheduler.add_job(
+        job_recurring_run,
+        "cron",
+        hour=6,
+        minute=30,
+        id="recurring_run",
+        replace_existing=True,
+    )
     return scheduler
