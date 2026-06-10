@@ -3,6 +3,7 @@ from app.sheets.client import (
     append_row,
     get_all_records,
     update_cell,
+    delete_rows,
 )
 from app.config import SHEET_DEBTS, SHEET_DEBT_PAYMENTS
 
@@ -403,7 +404,7 @@ def get_debt_summary() -> dict:
     """
     Hitung total utang dan piutang aktif.
     """
-    all_active = get_active_debts()
+    all_active = get_debts_with_row_index(active_only=True)
 
     payables = [r for r in all_active if r.get("type") == "payable"]
     receivables = [r for r in all_active if r.get("type") == "receivable"]
@@ -416,4 +417,329 @@ def get_debt_summary() -> dict:
         "total_receivable": total_receivable,
         "payables": payables,
         "receivables": receivables,
+    }
+
+# ── Debt Void ─────────────────────────────────────────────────────────────────
+
+DEBT_ID_COL = 1
+DEBT_TYPE_COL = 2
+DEBT_PERSON_COL = 3
+DEBT_ORIGINAL_AMOUNT_COL = 4
+DEBT_REMAINING_AMOUNT_COL = 5
+DEBT_DESCRIPTION_COL = 6
+DEBT_DUE_DATE_COL = 7
+DEBT_IS_SETTLED_COL = 8
+DEBT_SETTLED_AT_COL = 10
+
+
+def get_debts_with_row_index(active_only: bool = True) -> list[dict]:
+    """
+    Ambil debt + _row_index Google Sheets.
+    Data mulai row 2 karena row 1 adalah header.
+    """
+    records = get_all_records(SHEET_DEBTS)
+    result = []
+
+    for i, record in enumerate(records):
+        item = dict(record)
+        item["_row_index"] = i + 2
+
+        if active_only and is_settled_value(item.get("is_settled", "FALSE")):
+            continue
+
+        result.append(item)
+
+    return result
+
+
+def get_debt_by_id_any_status(debt_id: str) -> tuple[int | None, dict | None]:
+    """
+    Cari debt berdasarkan ID, termasuk yang sudah settled/void.
+    """
+    target = str(debt_id or "").strip()
+    if not target:
+        return None, None
+
+    for item in get_debts_with_row_index(active_only=False):
+        if str(item.get("id", "")).strip() == target:
+            return int(item.get("_row_index")), item
+
+    return None, None
+
+
+def resolve_debt_ref(ref: str, last_debt_map: dict | None = None) -> tuple[int | None, dict | None, str | None]:
+    """
+    Resolve argumen /debt_void.
+
+    Support:
+    - /debt_void 1        -> nomor dari /hutang terakhir
+    - /debt_void debt_xxx -> debt ID langsung
+    """
+    clean = str(ref or "").strip()
+    if not clean:
+        return None, None, "Masukkan nomor debt atau debt ID."
+
+    last_debt_map = last_debt_map or {}
+
+    if clean in last_debt_map:
+        mapped = last_debt_map[clean]
+        if isinstance(mapped, dict):
+            debt_id = mapped.get("debt_id")
+            if debt_id:
+                row, debt = get_debt_by_id_any_status(debt_id)
+                return row, debt, None if debt else "Debt tidak ditemukan."
+        elif mapped:
+            row, debt = get_debt_by_id_any_status(str(mapped))
+            return row, debt, None if debt else "Debt tidak ditemukan."
+
+    if clean.isdigit():
+        return None, None, "Nomor debt tidak valid. Jalankan /hutang dulu, lalu pakai nomor yang muncul."
+
+    row, debt = get_debt_by_id_any_status(clean)
+    if not debt:
+        return None, None, "Debt ID tidak ditemukan."
+
+    return row, debt, None
+
+
+def expected_initial_cashflow_category(debt: dict) -> str:
+    debt_type = str(debt.get("type", "")).strip()
+    if debt_type == "payable":
+        return "Penerimaan Utang"
+    if debt_type == "receivable":
+        return "Piutang Diberikan"
+    return ""
+
+
+def find_debt_initial_cashflow_candidates(debt: dict) -> list[dict]:
+    """
+    Cari transaksi cashflow awal yang terkait debt.
+
+    Catatan:
+    - Versi lama belum menyimpan debt_id di transactions, jadi matching pakai person, amount,
+      category, dan parsed_by/category debt.
+    - Kalau hasilnya 0 atau >1, /debt_void akan ditolak agar aman.
+    """
+    from app.services.transaction_service import (
+        get_transactions_with_row_index,
+        is_debt_cashflow_transaction,
+    )
+
+    person = normalize_person_name(debt.get("person_name", ""))
+    amount = float(debt.get("original_amount", 0) or 0)
+    category = expected_initial_cashflow_category(debt)
+    debt_id = str(debt.get("id", "")).strip()
+
+    candidates = []
+
+    for txn in get_transactions_with_row_index():
+        if not is_debt_cashflow_transaction(txn):
+            continue
+
+        txn_category = str(txn.get("category", "")).strip()
+        txn_subject = normalize_person_name(txn.get("subject", ""))
+        txn_amount = float(txn.get("amount", 0) or 0)
+        txn_notes = str(txn.get("catatan", "") or "")
+        txn_raw = str(txn.get("raw_input", "") or "")
+
+        # Kalau versi baru menyimpan debt_id di catatan/raw_input, pakai itu sebagai match kuat.
+        if debt_id and (debt_id in txn_notes or debt_id in txn_raw):
+            candidates.append(txn)
+            continue
+
+        if txn_category != category:
+            continue
+
+        if txn_subject != person:
+            continue
+
+        if abs(txn_amount - amount) > 0.0001:
+            continue
+
+        candidates.append(txn)
+
+    return candidates
+
+
+def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
+    """
+    Preview pembatalan debt.
+    Tidak mengubah sheet.
+    """
+    row_index, debt, error = resolve_debt_ref(debt_ref, last_debt_map)
+
+    if error:
+        return {
+            "success": False,
+            "message": error,
+            "debt": None,
+            "debt_row_index": None,
+            "cashflow_txn": None,
+            "reverse_deltas": {},
+        }
+
+    if not debt:
+        return {
+            "success": False,
+            "message": "Debt tidak ditemukan.",
+            "debt": None,
+            "debt_row_index": None,
+            "cashflow_txn": None,
+            "reverse_deltas": {},
+        }
+
+    if is_settled_value(debt.get("is_settled", "FALSE")):
+        return {
+            "success": False,
+            "message": "Debt ini sudah settled/void.",
+            "debt": debt,
+            "debt_row_index": row_index,
+            "cashflow_txn": None,
+            "reverse_deltas": {},
+        }
+
+    original = float(debt.get("original_amount", 0) or 0)
+    remaining = float(debt.get("remaining_amount", 0) or 0)
+
+    if abs(original - remaining) > 0.0001:
+        return {
+            "success": False,
+            "message": (
+                "Debt ini sudah punya mutasi/pembayaran/netting. "
+                "Untuk keamanan, /debt_void hanya bisa membatalkan debt yang belum pernah berubah."
+            ),
+            "debt": debt,
+            "debt_row_index": row_index,
+            "cashflow_txn": None,
+            "reverse_deltas": {},
+        }
+
+    candidates = find_debt_initial_cashflow_candidates(debt)
+
+    if len(candidates) == 0:
+        return {
+            "success": False,
+            "message": "Cashflow transaksi terkait debt tidak ditemukan. Cek manual di sheet transactions.",
+            "debt": debt,
+            "debt_row_index": row_index,
+            "cashflow_txn": None,
+            "reverse_deltas": {},
+        }
+
+    if len(candidates) > 1:
+        return {
+            "success": False,
+            "message": (
+                "Ditemukan lebih dari 1 cashflow yang mirip dengan debt ini. "
+                "Bot menolak void otomatis agar saldo tidak salah. Rapikan manual dulu."
+            ),
+            "debt": debt,
+            "debt_row_index": row_index,
+            "cashflow_txn": None,
+            "candidate_txns": candidates,
+            "reverse_deltas": {},
+        }
+
+    cashflow_txn = candidates[0]
+
+    from app.services.transaction_service import calculate_reverse_deltas_for_delete
+    reverse_deltas = calculate_reverse_deltas_for_delete([cashflow_txn])
+
+    return {
+        "success": True,
+        "message": "ok",
+        "debt": debt,
+        "debt_row_index": row_index,
+        "cashflow_txn": cashflow_txn,
+        "candidate_txns": candidates,
+        "reverse_deltas": reverse_deltas,
+    }
+
+
+def void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
+    """
+    Batalkan debt yang salah input dengan aman:
+    1. Cari debt aktif.
+    2. Cari 1 cashflow awal yang terkait.
+    3. Reverse saldo rekening dari cashflow tersebut.
+    4. Tandai debt settled/void.
+    5. Hapus cashflow transaksi terkait.
+    """
+    preview = preview_void_debt(debt_ref, last_debt_map)
+
+    if not preview.get("success"):
+        return preview
+
+    debt = preview["debt"]
+    debt_row_index = int(preview["debt_row_index"])
+    cashflow_txn = preview["cashflow_txn"]
+    reverse_deltas = preview.get("reverse_deltas", {})
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        from app.services.transaction_service import apply_account_deltas
+        balance_result = apply_account_deltas(reverse_deltas)
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Gagal reverse saldo rekening: {str(e)}",
+            "debt": debt,
+            "cashflow_txn": cashflow_txn,
+            "reverse_deltas": reverse_deltas,
+            "new_balances": {},
+        }
+
+    try:
+        old_description = str(debt.get("description", "") or "").strip()
+        void_note = f"[VOID {today}] Dibatalkan lewat /debt_void"
+        new_description = f"{old_description} | {void_note}" if old_description else void_note
+
+        update_cell(SHEET_DEBTS, debt_row_index, DEBT_REMAINING_AMOUNT_COL, 0)
+        update_cell(SHEET_DEBTS, debt_row_index, DEBT_IS_SETTLED_COL, "TRUE")
+        update_cell(SHEET_DEBTS, debt_row_index, DEBT_SETTLED_AT_COL, today)
+        update_cell(SHEET_DEBTS, debt_row_index, DEBT_DESCRIPTION_COL, new_description)
+
+        append_debt_mutation(
+            debt_id=debt.get("id"),
+            amount=float(debt.get("original_amount", 0) or 0),
+            note=void_note,
+            mutation_type="void",
+        )
+    except Exception as e:
+        return {
+            "success": False,
+            "message": (
+                "Saldo rekening sudah direverse, tapi debt gagal ditandai void. "
+                f"Cek manual di sheet. Error: {str(e)}"
+            ),
+            "debt": debt,
+            "cashflow_txn": cashflow_txn,
+            "reverse_deltas": reverse_deltas,
+            "new_balances": balance_result.get("new_balances", {}),
+        }
+
+    try:
+        txn_row = int(cashflow_txn.get("_row_index"))
+        delete_rows("transactions", [txn_row])
+    except Exception as e:
+        return {
+            "success": False,
+            "message": (
+                "Debt sudah ditandai void dan saldo sudah direverse, "
+                "tapi cashflow transaksi gagal dihapus. Cek manual di sheet transactions. "
+                f"Error: {str(e)}"
+            ),
+            "debt": debt,
+            "cashflow_txn": cashflow_txn,
+            "reverse_deltas": reverse_deltas,
+            "new_balances": balance_result.get("new_balances", {}),
+        }
+
+    return {
+        "success": True,
+        "message": "ok",
+        "debt": debt,
+        "cashflow_txn": cashflow_txn,
+        "reverse_deltas": reverse_deltas,
+        "new_balances": balance_result.get("new_balances", {}),
     }

@@ -1,3 +1,5 @@
+import re
+import urllib.request
 import uuid
 from datetime import datetime
 
@@ -20,6 +22,14 @@ ASSET_COLUMNS = [
     "is_active",
     "created_at",
     "updated_at",
+    # Optional columns for auto-valued assets such as gold.
+    # Add these headers to the assets sheet to make gold auto valuation work.
+    "asset_type",
+    "quantity",
+    "unit",
+    "price_source",
+    "price_per_unit",
+    "last_price_update",
 ]
 
 
@@ -69,6 +79,150 @@ def safe_float(value) -> float:
         return 0.0
 
 
+def safe_float_decimal(value) -> float:
+    """Parse decimal values such as 41, 41.5, 41,5 without treating dot as thousands."""
+    try:
+        raw = str(value or "").strip().lower()
+        raw = raw.replace("gram", "").replace("gr", "").replace("g", "")
+        raw = raw.replace(",", ".")
+        raw = re.sub(r"[^0-9.]", "", raw)
+
+        if raw.count(".") > 1:
+            first, *rest = raw.split(".")
+            raw = first + "." + "".join(rest)
+
+        return float(raw or 0)
+    except Exception:
+        return 0.0
+
+
+def parse_human_money(value) -> float:
+    """Parse 2420000, 2.42 juta, 2,42jt, 91.457k for manual asset prices."""
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return 0.0
+
+    multiplier = 1
+    if re.search(r"\b(jt|juta)\b", raw):
+        multiplier = 1_000_000
+    elif re.search(r"\b(rb|ribu|k)\b", raw):
+        multiplier = 1_000
+
+    raw = re.sub(r"\b(jt|juta|rb|ribu|k)\b", "", raw).strip()
+
+    if multiplier != 1:
+        raw = raw.replace(",", ".")
+        raw = re.sub(r"[^0-9.]", "", raw)
+        if raw.count(".") > 1:
+            first, *rest = raw.split(".")
+            raw = first + "." + "".join(rest)
+        return float(raw or 0) * multiplier
+
+    raw = re.sub(r"[^0-9]", "", raw)
+    return float(raw or 0)
+
+
+def parse_price_to_float(value) -> float:
+    """Parse Indonesian price strings like Rp 2,594,000 or 2.594.000."""
+    try:
+        raw = str(value or "").strip()
+        raw = re.sub(r"[^0-9]", "", raw)
+        return float(raw or 0)
+    except Exception:
+        return 0.0
+
+
+def fetch_antam_buyback_price() -> dict:
+    """
+    Fetch latest Antam buyback price per gram from Logam Mulia.
+
+    Return:
+    {
+        "success": bool,
+        "price_per_gram": float,
+        "source": "antam_buyback",
+        "source_url": str,
+        "updated_at": str,
+        "message": str,
+    }
+
+    Notes:
+    - Website scraping can break if Logam Mulia changes its HTML.
+    - Caller should keep the last known price when this function fails.
+    """
+    url = "https://www.logammulia.com/sell/gold"
+
+    try:
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+        )
+
+        with urllib.request.urlopen(request, timeout=12) as response:
+            html = response.read().decode("utf-8", errors="ignore")
+
+        patterns = [
+            r"Harga\s+Buyback[^0-9]{0,80}Rp\s*([0-9.,]+)",
+            r"Buyback[^0-9]{0,80}Rp\s*([0-9.,]+)",
+        ]
+
+        price = 0.0
+        for pattern in patterns:
+            match = re.search(pattern, html, flags=re.IGNORECASE | re.DOTALL)
+            if match:
+                price = parse_price_to_float(match.group(1))
+                break
+
+        # Guardrail so a broken parser does not write a nonsense value.
+        if price < 500_000 or price > 5_000_000:
+            return {
+                "success": False,
+                "price_per_gram": 0,
+                "source": "antam_buyback",
+                "source_url": url,
+                "updated_at": now_str(),
+                "message": "Harga buyback Antam tidak valid / tidak ditemukan.",
+            }
+
+        return {
+            "success": True,
+            "price_per_gram": price,
+            "source": "antam_buyback",
+            "source_url": url,
+            "updated_at": now_str(),
+            "message": "OK",
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "price_per_gram": 0,
+            "source": "antam_buyback",
+            "source_url": url,
+            "updated_at": now_str(),
+            "message": str(e),
+        }
+
+
+def is_gold_asset(record: dict) -> bool:
+    asset_type = str(record.get("asset_type", "")).strip().lower()
+    category = str(record.get("category", "")).strip().lower()
+    unit = str(record.get("unit", "")).strip().lower()
+
+    return (
+        asset_type == "gold"
+        or category in ["gold", "emas", "precious metal", "logam mulia"]
+        or unit in ["g", "gr", "gram"]
+    )
+
+
 def is_active_record(record: dict) -> bool:
     return str(record.get("is_active", "")).strip().upper() == "TRUE"
 
@@ -87,13 +241,51 @@ def build_snapshot_row(snapshot: dict) -> list:
 
 def add_asset(
     name: str,
-    current_value: float,
+    current_value: float | None,
     category: str = "Other Asset",
     description: str = "",
+    asset_type: str = "manual",
+    quantity: float | None = None,
+    unit: str = "",
+    price_source: str = "",
+    price_per_unit: float | None = None,
 ) -> dict:
-    current_value = safe_float(current_value)
+    asset_type = str(asset_type or "manual").strip().lower()
+    category = str(category or "Other Asset").strip()
+    unit = str(unit or "").strip()
+    price_source = str(price_source or "").strip().lower()
 
-    if current_value <= 0:
+    quantity_value = safe_float_decimal(quantity) if quantity not in [None, ""] else 0.0
+    unit_price = safe_float(price_per_unit) if price_per_unit not in [None, ""] else 0.0
+
+    # Aset berbasis satuan: emas 41 gram, laptop 1 buah, dll.
+    # Nilai aset = quantity × price_per_unit. Tidak auto-scrape external source.
+    if quantity_value > 0 or unit or unit_price > 0:
+        if quantity_value <= 0:
+            raise ValueError("Quantity aset harus lebih dari 0. Contoh: `41 gram` atau `1 buah`.")
+
+        if not unit:
+            raise ValueError("Satuan aset wajib diisi. Contoh: `gram`, `buah`, `unit`.")
+
+        if unit_price <= 0:
+            raise ValueError("Harga satuan aset harus lebih dari 0.")
+
+        current_value = quantity_value * unit_price
+
+        if asset_type == "manual":
+            asset_type = "unit"
+
+        if not price_source:
+            price_source = "manual"
+
+    else:
+        current_value = safe_float(current_value)
+        quantity_value = ""
+        unit = ""
+        unit_price = ""
+        price_source = ""
+
+    if safe_float(current_value) <= 0:
         raise ValueError("Nilai aset harus lebih dari 0.")
 
     created_at = now_str()
@@ -101,12 +293,18 @@ def add_asset(
     asset = {
         "id": generate_id("asset"),
         "name": str(name or "").strip(),
-        "category": str(category or "Other Asset").strip(),
-        "current_value": current_value,
+        "category": category,
+        "current_value": safe_float(current_value),
         "description": str(description or "").strip(),
         "is_active": "TRUE",
         "created_at": created_at,
         "updated_at": created_at,
+        "asset_type": asset_type,
+        "quantity": quantity_value,
+        "unit": unit,
+        "price_source": price_source,
+        "price_per_unit": unit_price,
+        "last_price_update": today_str() if unit_price else "",
     }
 
     if not asset["name"]:
@@ -149,8 +347,21 @@ def add_liability(
     return liability
 
 
-def get_assets(active_only: bool = True) -> list[dict]:
+def refresh_gold_assets(records: list[dict]) -> list[dict]:
+    """Deprecated auto-refresh hook.
+
+    Harga aset sekarang dikelola manual lewat price_per_unit/unit_price agar
+    bot tidak bergantung scraping website eksternal yang bisa kena 403.
+    Fungsi ini sengaja tidak mengubah records.
+    """
+    return records
+
+
+def get_assets(active_only: bool = True, refresh_gold: bool = True) -> list[dict]:
     records = get_all_records(SHEET_ASSETS)
+
+    if refresh_gold:
+        records = refresh_gold_assets(records)
 
     if not active_only:
         return records
@@ -226,6 +437,23 @@ def normalize_asset_update_field(field: str) -> str | None:
         "amount": "current_value",
         "nominal": "current_value",
 
+        "asset_type": "asset_type",
+        "type": "asset_type",
+        "jenis": "asset_type",
+        "quantity": "quantity",
+        "qty": "quantity",
+        "berat": "quantity",
+        "unit": "unit",
+        "satuan": "unit",
+        "price_source": "price_source",
+        "sumber_harga": "price_source",
+        "price_per_unit": "price_per_unit",
+        "unit_price": "price_per_unit",
+        "harga_per_unit": "price_per_unit",
+        "harga_satuan": "price_per_unit",
+        "harga": "price_per_unit",
+        "last_price_update": "last_price_update",
+
         "description": "description",
         "deskripsi": "description",
         "desc": "description",
@@ -271,11 +499,19 @@ def normalize_liability_update_field(field: str) -> str | None:
 def normalize_common_update_value(field: str, value):
     raw = str(value or "").strip()
 
-    if field in ["current_value", "current_balance"]:
-        amount = safe_float(raw)
+    if field in ["current_value", "current_balance", "price_per_unit"]:
+        amount = parse_human_money(raw)
 
         if amount < 0:
             raise ValueError("Nominal tidak boleh negatif.")
+
+        return amount
+
+    if field == "quantity":
+        amount = safe_float_decimal(raw)
+
+        if amount < 0:
+            raise ValueError("Quantity tidak boleh negatif.")
 
         return amount
 
@@ -317,6 +553,18 @@ def update_asset(asset_id: str, updates: dict) -> dict:
             raise ValueError(f"Field `{field}` tidak boleh diedit.")
 
         normalized_updates[field] = normalize_common_update_value(field, raw_value)
+
+    merged_asset = dict(asset)
+    merged_asset.update(normalized_updates)
+
+    if is_gold_asset(merged_asset):
+        quantity = safe_float_decimal(merged_asset.get("quantity"))
+        price = safe_float(merged_asset.get("price_per_unit"))
+
+        if quantity > 0 and price > 0:
+            normalized_updates["current_value"] = quantity * price
+            if "price_per_unit" in normalized_updates:
+                normalized_updates["last_price_update"] = today_str()
 
     normalized_updates["updated_at"] = now_str()
 

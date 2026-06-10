@@ -27,6 +27,7 @@ from app.bot.handlers import (
     set_budget_handler,
     cari_handler,
     hutang_handler,
+    debt_void_handler,
     last_handler,
     delete_txn_handler,
     edit_txn_handler,
@@ -70,6 +71,7 @@ telegram_app.add_handler(CommandHandler("bulanan", bulanan_handler))
 telegram_app.add_handler(CommandHandler("budget", budget_handler))
 telegram_app.add_handler(CommandHandler("budget_history", budget_history_handler))
 telegram_app.add_handler(CommandHandler("hutang", hutang_handler))
+telegram_app.add_handler(CommandHandler("debt_void", debt_void_handler))
 telegram_app.add_handler(CommandHandler("cari", cari_handler))
 telegram_app.add_handler(CommandHandler("last", last_handler))
 telegram_app.add_handler(CommandHandler("delete_txn", delete_txn_handler))

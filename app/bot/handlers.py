@@ -23,6 +23,7 @@ from app.config import (
 from app.services.net_worth_service import (
     add_asset,
     add_liability,
+    fetch_antam_buyback_price,
     get_assets,
     get_liabilities,
     update_asset,
@@ -76,6 +77,8 @@ from app.services.debt_service import (
     add_payment,
     get_debt_summary,
     get_debt_by_person,
+    preview_void_debt,
+    void_debt,
 )
 import csv
 import os
@@ -91,10 +94,108 @@ from app.services.recurring_service import (
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
+def parse_asset_quantity_input(value: str) -> dict | None:
+    """
+    Deteksi input aset berbasis satuan:
+    - 41g / 41 gr / 41 gram
+    - 1 buah / 2 unit
+    - 41 gram @ 2410000
+    - 1 buah @ 8000000
+
+    Return dict {quantity, unit, price_per_unit?} atau None.
+    """
+    raw = str(value or "").strip().lower()
+    raw = raw.replace("@", " @ ")
+    raw = re.sub(r"\s+", " ", raw).strip()
+
+    match = re.fullmatch(
+        r"(\d+(?:[.,]\d+)?)\s*(g|gr|gram|grams|buah|unit|pcs|pc|lembar|kg|kilogram)(?:\s*@\s*([0-9.,]+)\s*(?:rb|ribu|k|jt|juta)?)?",
+        raw,
+        flags=re.IGNORECASE,
+    )
+
+    if not match:
+        return None
+
+    quantity = float(match.group(1).replace(",", "."))
+    unit = match.group(2).lower()
+    unit_aliases = {
+        "g": "gram",
+        "gr": "gram",
+        "grams": "gram",
+        "pcs": "buah",
+        "pc": "buah",
+    }
+    unit = unit_aliases.get(unit, unit)
+
+    price_raw = match.group(3)
+    price_per_unit = parse_human_amount(price_raw) if price_raw else None
+
+    return {
+        "quantity": quantity,
+        "unit": unit,
+        "price_per_unit": price_per_unit,
+    }
+
+
+def parse_human_amount(value: str | None) -> float:
+    """Parse angka manusia: 2410000, 2.41jt, 2,41 juta, 91.457k."""
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return 0.0
+
+    multiplier = 1
+    if re.search(r"\b(jt|juta)\b", raw):
+        multiplier = 1_000_000
+    elif re.search(r"\b(rb|ribu|k)\b", raw):
+        multiplier = 1_000
+
+    raw = re.sub(r"\b(jt|juta|rb|ribu|k)\b", "", raw).strip()
+
+    # Kalau ada suffix k/juta, titik/koma dianggap desimal: 2.41jt -> 2.41 * 1jt.
+    if multiplier != 1:
+        raw = raw.replace(",", ".")
+        raw = re.sub(r"[^0-9.]", "", raw)
+        if raw.count(".") > 1:
+            first, *rest = raw.split(".")
+            raw = first + "." + "".join(rest)
+        return float(raw or 0) * multiplier
+
+    # Tanpa suffix, titik/koma dianggap pemisah ribuan.
+    raw = re.sub(r"[^0-9]", "", raw)
+    return float(raw or 0)
+
+
+def guess_asset_category_and_name(name: str, category: str | None = None) -> tuple[str, str]:
+    name_clean = str(name or "").strip()
+    category_clean = str(category or "").strip()
+    low = name_clean.lower()
+
+    if "emas" in low or category_clean.lower() in ["gold", "emas", "precious metal", "logam mulia"]:
+        return name_clean or "Emas", category_clean or "Gold"
+
+    return name_clean, category_clean or "Other Asset"
+
+
+def build_asset_unit_price_prompt(data: dict) -> str:
+    return (
+        "💰 *Isi harga satuan aset*\n\n"
+        f"📦 Nama: *{data.get('name')}*\n"
+        f"📁 Kategori: *{data.get('category')}*\n"
+        f"🔢 Jumlah: *{data.get('quantity')} {data.get('unit')}*\n\n"
+        f"Harga 1 {data.get('unit')} berapa?\n\n"
+        "Contoh balasan:\n"
+        "`2410000`\n"
+        "`2.41 juta`\n"
+        "`8000000`"
+    )
+
 def parse_pipe_add_args(args: list[str], item_type: str) -> dict:
     """
     Format:
     /asset_add Nama | value | category | description
+    /asset_add Emas Antam | 41 gram | Gold | Tabungan emas
+    /asset_add Laptop | 1 buah | Electronics | Laptop kerja
     /liability_add Nama | balance | category | description
     """
     raw = " ".join(args).strip()
@@ -112,7 +213,7 @@ def parse_pipe_add_args(args: list[str], item_type: str) -> dict:
         raise ValueError(
             f"Format belum lengkap.\n\n"
             f"Format:\n"
-            f"`/{item_type}_add Nama | nominal | kategori | deskripsi`"
+            f"`/{item_type}_add Nama | nominal/jumlah satuan | kategori | deskripsi`"
         )
 
     name = parts[0]
@@ -122,18 +223,86 @@ def parse_pipe_add_args(args: list[str], item_type: str) -> dict:
     )
     description = parts[3] if len(parts) >= 4 else ""
 
-    try:
-        amount = float(str(amount_raw).replace(".", "").replace(",", ""))
-    except Exception:
-        raise ValueError("Nominal harus angka. Contoh: `8000000`.")
+    if item_type == "asset":
+        qty_info = parse_asset_quantity_input(amount_raw)
+        if qty_info:
+            name, category = guess_asset_category_and_name(name, category)
+            asset_type = "gold" if ("emas" in name.lower() or str(category).lower() in ["gold", "emas"]) else "unit"
+            return {
+                "name": name,
+                "amount": None,
+                "category": category,
+                "description": description,
+                "asset_type": asset_type,
+                "quantity": qty_info["quantity"],
+                "unit": qty_info["unit"],
+                "price_source": "manual",
+                "price_per_unit": qty_info.get("price_per_unit"),
+                "needs_unit_price": not bool(qty_info.get("price_per_unit")),
+            }
+
+    amount = parse_human_amount(amount_raw)
+    if amount <= 0:
+        raise ValueError("Nominal harus angka. Contoh: `8000000`, `2.4 juta`, atau aset satuan `41 gram`.")
 
     return {
         "name": name,
         "amount": amount,
         "category": category,
         "description": description,
+        "asset_type": "manual",
+        "quantity": None,
+        "unit": "",
+        "price_source": "",
+        "price_per_unit": None,
+        "needs_unit_price": False,
     }
 
+
+def parse_natural_asset_add(text: str) -> dict | None:
+    """
+    Natural asset input sederhana:
+    - add emas 41 gram
+    - add laptop 1 buah
+    - tambah aset emas 41 gram
+    - tambah laptop 1 unit
+    """
+    raw = str(text or "").strip()
+    match = re.fullmatch(
+        r"(?:add|tambah)(?:\s+aset)?\s+(.+?)\s+(\d+(?:[.,]\d+)?)\s*(g|gr|gram|grams|buah|unit|pcs|pc|lembar|kg|kilogram)",
+        raw,
+        flags=re.IGNORECASE,
+    )
+
+    if not match:
+        return None
+
+    name_raw = match.group(1).strip()
+    qty_raw = f"{match.group(2)} {match.group(3)}"
+    qty_info = parse_asset_quantity_input(qty_raw)
+
+    if not qty_info:
+        return None
+
+    name = name_raw.title()
+    if name.lower() == "emas":
+        name = "Emas"
+
+    name, category = guess_asset_category_and_name(name)
+    asset_type = "gold" if "emas" in name.lower() else "unit"
+
+    return {
+        "name": name,
+        "amount": None,
+        "category": category,
+        "description": "",
+        "asset_type": asset_type,
+        "quantity": qty_info["quantity"],
+        "unit": qty_info["unit"],
+        "price_source": "manual",
+        "price_per_unit": None,
+        "needs_unit_price": True,
+    }
 
 def parse_pipe_update_args(args: list[str], command_name: str) -> tuple[str, dict]:
     """
@@ -214,11 +383,25 @@ def build_networth_text(summary: dict) -> str:
     if assets:
         lines.append("\n*Aset aktif:*")
         for asset in assets:
-            lines.append(
-                f"• {asset.get('name', '-')} "
-                f"({asset.get('category', '-')}) — "
-                f"{format_rupiah(float(asset.get('current_value', 0) or 0))}"
-            )
+            name = asset.get("name", "-")
+            category = asset.get("category", "-")
+            value = float(asset.get("current_value", 0) or 0)
+
+            if str(asset.get("asset_type", "")).strip().lower() == "gold":
+                qty = asset.get("quantity", "-")
+                unit = asset.get("unit", "gram") or "gram"
+                price = float(asset.get("price_per_unit", 0) or 0)
+                lines.append(
+                    f"• {name} ({qty} {unit}) — "
+                    f"{format_rupiah(value)} "
+                    f"@ {format_rupiah(price)}/gram"
+                )
+            else:
+                lines.append(
+                    f"• {name} "
+                    f"({category}) — "
+                    f"{format_rupiah(value)}"
+                )
 
     if liabilities:
         lines.append("\n*Liabilitas aktif:*")
@@ -248,7 +431,9 @@ def build_assets_text(assets: list[dict]) -> str:
         return (
             "📭 Belum ada aset aktif.\n\n"
             "Tambah aset:\n"
-            "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja`"
+            "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja`\n"
+            "`/asset_add Emas Antam | 41 gram | Gold | Tabungan emas`\n"
+            "atau natural: `add emas 41 gram`"
         )
 
     lines = ["📦 *Daftar Aset Aktif*\n"]
@@ -259,17 +444,38 @@ def build_assets_text(assets: list[dict]) -> str:
         value = float(asset.get("current_value", 0) or 0)
         total += value
 
-        lines.append(
-            f"{i}. *{asset.get('name', '-')}*\n"
-            f"   💰 {format_rupiah(value)} | {asset.get('category', '-')}\n"
-            f"   📝 {asset.get('description', '-') or '-'}\n"
-            f"   🔖 `{asset.get('id', '-')}`"
-        )
+        quantity = asset.get("quantity", "")
+        unit = asset.get("unit", "")
+        price = float(asset.get("price_per_unit", 0) or 0)
+        has_unit_info = bool(str(quantity or "").strip()) and bool(str(unit or "").strip())
+
+        if has_unit_info:
+            last_update = asset.get("last_price_update", "-") or "-"
+            lines.append(
+                f"{i}. *{asset.get('name', '-')}*\n"
+                f"   🔢 {quantity} {unit}\n"
+                f"   🏷️ Harga/{unit}: {format_rupiah(price)}\n"
+                f"   💰 Nilai saat ini: *{format_rupiah(value)}*\n"
+                f"   📅 Harga update: `{last_update}`\n"
+                f"   📝 {asset.get('description', '-') or '-'}\n"
+                f"   🔖 `{asset.get('id', '-')}`"
+            )
+        else:
+            lines.append(
+                f"{i}. *{asset.get('name', '-')}*\n"
+                f"   💰 {format_rupiah(value)} | {asset.get('category', '-')}\n"
+                f"   📝 {asset.get('description', '-') or '-'}\n"
+                f"   🔖 `{asset.get('id', '-')}`"
+            )
 
     lines.append(f"\n📦 Total aset aktif: *{format_rupiah(total)}*")
 
-    return "\n".join(lines)
+    lines.append(
+        "\nEdit harga satuan:\n"
+        "`/asset_update asset_id | unit_price=2420000`"
+    )
 
+    return "\n".join(lines)
 
 def build_liabilities_text(liabilities: list[dict]) -> str:
     if not liabilities:
@@ -388,6 +594,35 @@ async def liabilities_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
+def build_asset_added_text(asset: dict) -> str:
+    quantity = asset.get("quantity", "")
+    unit = asset.get("unit", "")
+    price = float(asset.get("price_per_unit", 0) or 0)
+    has_unit_info = bool(str(quantity or "").strip()) and bool(str(unit or "").strip())
+
+    if has_unit_info:
+        return (
+            "✅ *Aset berhasil ditambahkan!*\n\n"
+            f"📦 Nama: *{asset.get('name')}*\n"
+            f"📁 Kategori: *{asset.get('category')}*\n"
+            f"🔢 Jumlah: *{quantity} {unit}*\n"
+            f"🏷️ Harga/{unit}: *{format_rupiah(price)}*\n"
+            f"📊 Nilai saat ini: *{format_rupiah(float(asset.get('current_value', 0) or 0))}*\n"
+            f"📅 Update harga: `{asset.get('last_price_update') or '-'}`\n"
+            f"📝 Deskripsi: {asset.get('description') or '-'}\n"
+            f"🔖 ID: `{asset.get('id')}`"
+        )
+
+    return (
+        "✅ *Aset berhasil ditambahkan!*\n\n"
+        f"📦 Nama: *{asset.get('name')}*\n"
+        f"💰 Nilai: *{format_rupiah(float(asset.get('current_value', 0) or 0))}*\n"
+        f"📁 Kategori: *{asset.get('category')}*\n"
+        f"📝 Deskripsi: {asset.get('description') or '-'}\n"
+        f"🔖 ID: `{asset.get('id')}`"
+    )
+
+
 async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /asset_add Nama | nominal | kategori | deskripsi
@@ -399,20 +634,30 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         data = parse_pipe_add_args(context.args, "asset")
 
+        if data.get("needs_unit_price"):
+            context.user_data["pending_asset_price"] = data
+            await update.message.reply_text(
+                build_asset_unit_price_prompt(data),
+                parse_mode="Markdown",
+            )
+            return
+
         asset = add_asset(
             name=data["name"],
             current_value=data["amount"],
             category=data["category"],
             description=data["description"],
+            asset_type=data.get("asset_type", "manual"),
+            quantity=data.get("quantity"),
+            unit=data.get("unit", ""),
+            price_source=data.get("price_source", ""),
+            price_per_unit=data.get("price_per_unit"),
         )
 
+        reply = build_asset_added_text(asset)
+
         await update.message.reply_text(
-            "✅ *Aset berhasil ditambahkan!*\n\n"
-            f"📦 Nama: *{asset.get('name')}*\n"
-            f"💰 Nilai: *{format_rupiah(float(asset.get('current_value', 0) or 0))}*\n"
-            f"📁 Kategori: *{asset.get('category')}*\n"
-            f"📝 Deskripsi: {asset.get('description') or '-'}\n"
-            f"🔖 ID: `{asset.get('id')}`",
+            reply,
             parse_mode="Markdown",
         )
 
@@ -421,7 +666,9 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Gagal tambah aset.\n\n"
             f"{str(e)}\n\n"
             "Contoh:\n"
-            "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja`",
+            "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja`\n"
+            "`/asset_add Emas Antam | 41 gram | Gold | Tabungan emas`\n"
+            "`/asset_add Laptop | 1 buah | Electronics | Laptop kerja`",
             parse_mode="Markdown",
         )
 
@@ -495,6 +742,7 @@ async def asset_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             f"{str(e)}\n\n"
             "Contoh:\n"
             "`/asset_update asset_xxx | value=9000000`\n"
+            "`/asset_update asset_xxx | unit_price=2420000`\n"
             "`/asset_update asset_xxx | name=Laptop Baru | category=Electronics`",
             parse_mode="Markdown",
         )
@@ -2196,11 +2444,13 @@ def split_user_inputs(text: str) -> list[str]:
         return []
 
     raw = text.strip()
-    raw = re.sub(r"\s+", " ", raw)
 
-    # Separator eksplisit
+    # Separator eksplisit harus diproses SEBELUM normalisasi whitespace.
+    # Kalau `re.sub(r"\s+", " ", raw)` dijalankan dulu, newline ikut
+    # berubah jadi spasi dan input multi-baris akan dianggap 1 transaksi panjang.
     raw = re.sub(r"[\n\r;]+", " ||| ", raw)
     raw = re.sub(r"\s*,\s*", " ||| ", raw)
+    raw = re.sub(r"[ \t]+", " ", raw)
 
     # Starter transaksi biasa
     transaction_starters = [
@@ -2563,7 +2813,7 @@ def build_debt_cashflow_transaction(
                 "description": f"Bayar utang ke {person}",
                 "catatan": raw,
                 "tipe_pengeluaran": "",
-                "date": today,
+                "date": transaction_date,
                 "parsed_by": "debt",
             }
 
@@ -2578,7 +2828,7 @@ def build_debt_cashflow_transaction(
                 "description": f"Pembayaran piutang dari {person}",
                 "catatan": raw,
                 "tipe_pengeluaran": "",
-                "date": today,
+                "date": transaction_date,
                 "parsed_by": "debt",
             }
 
@@ -3369,6 +3619,116 @@ async def set_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode="Markdown",
     )
 
+
+def short_debt_id(debt_id: str) -> str:
+    debt_id = str(debt_id or "")
+    if len(debt_id) <= 18:
+        return debt_id
+    return debt_id[:18] + "..."
+
+
+def build_debt_void_preview_text(preview: dict) -> str:
+    debt = preview.get("debt") or {}
+    cashflow_txn = preview.get("cashflow_txn") or {}
+    reverse_deltas = preview.get("reverse_deltas", {}) or {}
+
+    debt_type = str(debt.get("type", "")).strip()
+    direction = "🔴 Utang Anda" if debt_type == "payable" else "🟢 Piutang Anda"
+    person = md_safe(debt.get("person_name", "-"))
+    debt_id = md_safe(short_debt_id(debt.get("id", "-")))
+    amount = float(debt.get("remaining_amount", 0) or 0)
+
+    lines = ["⚠️ *Preview Void Debt*\n"]
+    lines.append(f"{direction} dengan *{person}*")
+    lines.append(f"💰 Nominal: *{format_rupiah(amount)}*")
+    lines.append(f"🔖 Debt ID: `{debt_id}`")
+
+    if cashflow_txn:
+        txn_desc = md_safe(cashflow_txn.get("description") or "-")
+        txn_date = md_safe(cashflow_txn.get("date") or "-")
+        txn_category = md_safe(cashflow_txn.get("category") or "-")
+        txn_account = md_safe(cashflow_txn.get("account") or "-")
+        txn_amount = float(cashflow_txn.get("amount", 0) or 0)
+        txn_row = md_safe(cashflow_txn.get("_row_index", "-"))
+
+        lines.append("\n*Cashflow terkait yang akan dihapus:*")
+        lines.append(
+            f"• Row {txn_row} — {txn_date} — *{txn_desc}*\n"
+            f"  {format_rupiah(txn_amount)} | {txn_category} | {txn_account}"
+        )
+
+    if reverse_deltas:
+        lines.append("\n*Efek balik ke saldo rekening:*")
+        for account, delta in reverse_deltas.items():
+            safe_account = md_safe(account)
+            sign = "+" if delta >= 0 else "-"
+            lines.append(f"• {safe_account}: {sign}{format_rupiah(abs(delta))}")
+
+    lines.append(
+        "\nLanjut void debt ini?\n"
+        "Debt akan ditandai settled/void dan cashflow terkait akan dihapus."
+    )
+
+    return "\n".join(lines)
+
+
+async def debt_void_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /debt_void <nomor_dari_hutang_atau_debt_id>
+
+    Membatalkan debt yang salah input secara aman:
+    - debt ditandai settled/void
+    - cashflow debt terkait dihapus
+    - saldo rekening direverse
+    """
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Masukkan nomor debt atau debt ID.\n\n"
+            "Contoh:\n"
+            "`/hutang`\n"
+            "`/debt_void 1`\n"
+            "`/debt_void debt_20260610_123456_xxx`",
+            parse_mode="Markdown",
+        )
+        return
+
+    debt_ref = context.args[0].strip()
+    last_debt_map = context.user_data.get("last_debt_map", {})
+
+    preview = preview_void_debt(debt_ref, last_debt_map)
+
+    if not preview.get("success"):
+        lines = [f"❌ *Debt void tidak bisa diproses.*\n{preview.get('message')}"]
+
+        candidates = preview.get("candidate_txns") or []
+        if candidates:
+            lines.append("\nCashflow kandidat yang ambigu:")
+            for txn in candidates[:10]:
+                lines.append(
+                    f"• Row {txn.get('_row_index', '-')} — {txn.get('date', '-')} — "
+                    f"{txn.get('description') or '-'} — {format_rupiah(float(txn.get('amount', 0) or 0))}"
+                )
+
+        await update.message.reply_text(
+            "\n".join(lines),
+            parse_mode="Markdown",
+        )
+        return
+
+    context.user_data["pending_debt_void"] = {
+        "debt_ref": debt_ref,
+    }
+
+    await update.message.reply_text(
+        build_debt_void_preview_text(preview),
+        parse_mode="Markdown",
+        reply_markup=confirm_keyboard("debt_void"),
+    )
+
 async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -3381,16 +3741,23 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     lines = ["💸 *Utang & Piutang Aktif*\n"]
+    last_debt_map = {}
+    display_no = 1
 
     if summary["payables"]:
         lines.append(f"🔴 *Utang Anda* (total: {format_rupiah(summary['total_payable'])})")
         for d in summary["payables"]:
             due = f" | jatuh tempo: {d.get('due_date')}" if d.get("due_date") else ""
+            last_debt_map[str(display_no)] = {
+                "debt_id": d.get("id"),
+                "row_index": d.get("_row_index"),
+            }
             lines.append(
-                f"  • {d.get('person_name')} — "
+                f"  {display_no}. {md_safe(d.get('person_name'))} — "
                 f"*{format_rupiah(float(d.get('remaining_amount', 0) or 0))}*"
                 f"{due}"
             )
+            display_no += 1
 
     if summary["payables"] and summary["receivables"]:
         lines.append("")
@@ -3400,14 +3767,26 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🟢 *Piutang Anda* (total: {format_rupiah(summary['total_receivable'])})"
         )
         for d in summary["receivables"]:
+            last_debt_map[str(display_no)] = {
+                "debt_id": d.get("id"),
+                "row_index": d.get("_row_index"),
+            }
             lines.append(
-                f"  • {d.get('person_name')} — "
+                f"  {display_no}. {md_safe(d.get('person_name'))} — "
                 f"*{format_rupiah(float(d.get('remaining_amount', 0) or 0))}*"
             )
+            display_no += 1
+
+    context.user_data["last_debt_map"] = last_debt_map
 
     net = summary["total_receivable"] - summary["total_payable"]
     net_label = "🟢 Anda lebih banyak dihutangi" if net >= 0 else "🔴 Anda lebih banyak berhutang"
     lines.append(f"\n{net_label}: *{format_rupiah(abs(net))}*")
+    lines.append(
+        "\nBatalkan debt salah input:\n"
+        "`/debt_void 1`\n"
+        "Angka mengikuti nomor dari hasil `/hutang` ini."
+    )
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
@@ -4075,6 +4454,56 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_text = update.message.text.strip()
+
+    # ── Pending asset unit price ─────────────────────────────────────────────
+    pending_asset = context.user_data.get("pending_asset_price")
+    if pending_asset:
+        unit_price = parse_human_amount(user_text)
+
+        if unit_price <= 0:
+            await update.message.reply_text(
+                "❌ Harga satuan belum valid.\n\n"
+                "Balas dengan angka, contoh: `2410000`, `2.41 juta`, atau `8000000`.",
+                parse_mode="Markdown",
+            )
+            return
+
+        pending_asset["price_per_unit"] = unit_price
+        pending_asset["needs_unit_price"] = False
+
+        try:
+            asset = add_asset(
+                name=pending_asset["name"],
+                current_value=pending_asset.get("amount"),
+                category=pending_asset.get("category", "Other Asset"),
+                description=pending_asset.get("description", ""),
+                asset_type=pending_asset.get("asset_type", "unit"),
+                quantity=pending_asset.get("quantity"),
+                unit=pending_asset.get("unit", ""),
+                price_source=pending_asset.get("price_source", "manual"),
+                price_per_unit=pending_asset.get("price_per_unit"),
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Gagal menyimpan aset: {str(e)}")
+            return
+
+        context.user_data.pop("pending_asset_price", None)
+
+        await update.message.reply_text(
+            build_asset_added_text(asset),
+            parse_mode="Markdown",
+        )
+        return
+
+    # ── Natural asset add ────────────────────────────────────────────────────
+    natural_asset = parse_natural_asset_add(user_text)
+    if natural_asset:
+        context.user_data["pending_asset_price"] = natural_asset
+        await update.message.reply_text(
+            build_asset_unit_price_prompt(natural_asset),
+            parse_mode="Markdown",
+        )
+        return
 
     # ── Layer 0: Local natural intent paling awal ────────────────────────────
     # WAJIB sebelum split/debt parser.
@@ -5045,6 +5474,67 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_delete_txn_ids", None)
             return
     
+        if confirm_target == "debt_void":
+            pending_void = context.user_data.get("pending_debt_void")
+
+            if not pending_void:
+                await query.edit_message_text("❌ Sesi debt void expired. Coba ulangi `/hutang` lalu `/debt_void 1`.")
+                return
+
+            debt_ref = pending_void.get("debt_ref")
+            last_debt_map = context.user_data.get("last_debt_map", {})
+
+            await query.edit_message_text(
+                "⏳ *Sedang membatalkan debt dan memperbaiki saldo...*",
+                parse_mode="Markdown",
+            )
+
+            result = void_debt(debt_ref, last_debt_map)
+
+            if not result.get("success"):
+                await query.edit_message_text(
+                    f"❌ *Gagal void debt.*\n{result.get('message')}",
+                    parse_mode="Markdown",
+                )
+                context.user_data.pop("pending_debt_void", None)
+                return
+
+            debt = result.get("debt", {}) or {}
+            txn = result.get("cashflow_txn", {}) or {}
+            new_balances = result.get("new_balances", {}) or {}
+            reverse_deltas = result.get("reverse_deltas", {}) or {}
+
+            direction = "🔴 Utang Anda" if debt.get("type") == "payable" else "🟢 Piutang Anda"
+            lines = ["✅ *Debt berhasil di-void!*\n"]
+            lines.append(f"{direction} dengan *{md_safe(debt.get('person_name', '-'))}*")
+            lines.append(f"💰 Nominal: *{format_rupiah(float(debt.get('original_amount', 0) or 0))}*")
+
+            if txn:
+                lines.append("\n🗑️ *Cashflow terkait dihapus:*")
+                lines.append(
+                    f"• Row {txn.get('_row_index', '-')} — {md_safe(txn.get('description') or '-')} — "
+                    f"{format_rupiah(float(txn.get('amount', 0) or 0))}"
+                )
+
+            if reverse_deltas:
+                lines.append("\n🔁 *Penyesuaian saldo:*")
+                for account, delta in reverse_deltas.items():
+                    sign = "+" if delta >= 0 else "-"
+                    lines.append(f"• {md_safe(account)}: {sign}{format_rupiah(abs(delta))}")
+
+            if new_balances:
+                lines.append("\n💳 *Saldo terbaru:*")
+                for account, balance in new_balances.items():
+                    lines.append(f"• {md_safe(account)}: *{format_rupiah(balance)}*")
+
+            await query.edit_message_text(
+                "\n".join(lines),
+                parse_mode="Markdown",
+            )
+
+            context.user_data.pop("pending_debt_void", None)
+            return
+
         if confirm_target == "debt":
             debt_parsed = context.user_data.get("pending_debt")
 
@@ -5581,6 +6071,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_delete_refs", None)
         context.user_data.pop("pending_delete_txn_ids", None)
         context.user_data.pop("pending_edit_txn", None)
+        context.user_data.pop("pending_debt_void", None)
+        context.user_data.pop("pending_asset_price", None)
 
         await query.edit_message_text("❌ Input dibatalkan.")
         return
