@@ -324,72 +324,342 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
 
     return None, None
 
+def parse_explicit_date(date_text: str) -> str | None:
+    """
+    Parse tanggal eksplisit ke format YYYY-MM-DD.
 
-def detect_date(text: str) -> str:
-    text_lower = normalize_text(text)
-    today = datetime.now()
+    Support:
+    - 2026-06-01
+    - 2026/06/01
+    - 01-06-2026
+    - 01/06/2026
+    """
+    text = str(date_text or "").strip()
 
-    if "kemarin" in text_lower:
+    # YYYY-MM-DD atau YYYY/MM/DD
+    match_ymd = re.fullmatch(r"(20\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])", text)
+    if match_ymd:
+        year = int(match_ymd.group(1))
+        month = int(match_ymd.group(2))
+        day = int(match_ymd.group(3))
+
+        try:
+            return datetime(year, month, day).strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+
+    # DD-MM-YYYY atau DD/MM/YYYY
+    match_dmy = re.fullmatch(r"(0?[1-9]|[12]\d|3[01])[-/](0?[1-9]|1[0-2])[-/](20\d{2})", text)
+    if match_dmy:
+        day = int(match_dmy.group(1))
+        month = int(match_dmy.group(2))
+        year = int(match_dmy.group(3))
+
+        try:
+            return datetime(year, month, day).strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+
+    return None
+
+
+def strip_date_phrases(text: str) -> str:
+    """
+    Hapus frasa tanggal dari deskripsi.
+
+    Contoh:
+    - beli nasi padang 10k minggu lalu -> beli nasi padang 10k
+    - beli nasi padang 10k dua hari yang lalu -> beli nasi padang 10k
+    - beli nasi padang 10k tanggal 2026-06-01 -> beli nasi padang 10k
+    """
+    clean = str(text or "")
+
+    # Hapus "tanggal 2026-06-01", "tgl 01-06-2026", dll.
+    clean = re.sub(
+        r"\b(?:tanggal|tgl|date|pada tanggal)\s+"
+        r"(?:20\d{2}[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])|"
+        r"(?:0?[1-9]|[12]\d|3[01])[-/](?:0?[1-9]|1[0-2])[-/]20\d{2})\b",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
+
+    # Hapus bare date tanpa kata "tanggal".
+    clean = re.sub(
+        r"\b20\d{2}[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])\b",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
+
+    clean = re.sub(
+        r"\b(?:0?[1-9]|[12]\d|3[01])[-/](?:0?[1-9]|1[0-2])[-/]20\d{2}\b",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
+
+    # Hapus relative date phrases sederhana.
+    clean = re.sub(r"\bhari\s+ini\b", " ", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"\bkemarin\b", " ", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"\bminggu\s+lalu\b", " ", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"\bseminggu\s+(?:yang\s+)?lalu\b", " ", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"\bsehari\s+(?:yang\s+)?lalu\b", " ", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"\bsebulan\s+(?:yang\s+)?lalu\b", " ", clean, flags=re.IGNORECASE)
+
+    # Hapus:
+    # 2 hari lalu
+    # 2 hari yang lalu
+    # dua hari lalu
+    # dua hari yang lalu
+    # tiga minggu lalu
+    # 3 minggu yang lalu
+    # 2 bulan yang lalu
+    clean = re.sub(
+        r"\b("
+        r"\d+|"
+        r"satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|"
+        r"sebelas|dua belas|tiga belas|empat belas|lima belas|enam belas|"
+        r"tujuh belas|delapan belas|sembilan belas|dua puluh"
+        r")\s+"
+        r"(hari|minggu|bulan)"
+        r"\s+(?:yang\s+)?lalu\b",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
+
+    clean = re.sub(r"\s+", " ", clean).strip()
+
+    return clean
+
+NUMBER_WORDS_ID = {
+    "se": 1,
+    "satu": 1,
+    "dua": 2,
+    "tiga": 3,
+    "empat": 4,
+    "lima": 5,
+    "enam": 6,
+    "tujuh": 7,
+    "delapan": 8,
+    "sembilan": 9,
+    "sepuluh": 10,
+    "sebelas": 11,
+    "dua belas": 12,
+    "tiga belas": 13,
+    "empat belas": 14,
+    "lima belas": 15,
+    "enam belas": 16,
+    "tujuh belas": 17,
+    "delapan belas": 18,
+    "sembilan belas": 19,
+    "dua puluh": 20,
+    "sebulan": 1,
+    "seminggu": 1,
+    "sehari": 1,
+}
+
+
+def parse_relative_number(value: str) -> int | None:
+    """
+    Parse angka relative date.
+
+    Support:
+    - 2
+    - dua
+    - tiga
+    - seminggu
+    - sehari
+    """
+    clean = str(value or "").strip().lower()
+
+    if clean.isdigit():
+        return int(clean)
+
+    return NUMBER_WORDS_ID.get(clean)
+
+def detect_relative_date(text: str) -> str | None:
+    """
+    Deteksi tanggal relatif.
+
+    Support:
+    - kemarin
+    - hari ini
+    - minggu lalu
+    - seminggu lalu
+    - dua hari yang lalu
+    - 2 hari yang lalu
+    - tiga minggu lalu
+    - 3 minggu yang lalu
+    - sebulan lalu
+    - 2 bulan yang lalu
+    """
+    clean = str(text or "").strip().lower()
+    today = datetime.now().date()
+
+    if re.search(r"\bhari\s+ini\b", clean):
+        return today.strftime("%Y-%m-%d")
+
+    if re.search(r"\bkemarin\b", clean):
         return (today - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    if "minggu lalu" in text_lower:
+    # minggu lalu / seminggu lalu
+    if re.search(r"\bminggu\s+lalu\b", clean) or re.search(r"\bseminggu\s+(?:yang\s+)?lalu\b", clean):
         return (today - timedelta(weeks=1)).strftime("%Y-%m-%d")
 
-    if "2 hari lalu" in text_lower or "dua hari lalu" in text_lower:
-        return (today - timedelta(days=2)).strftime("%Y-%m-%d")
+    # sehari lalu
+    if re.search(r"\bsehari\s+(?:yang\s+)?lalu\b", clean):
+        return (today - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # sebulan lalu
+    # Simple approach: 1 bulan = 30 hari untuk relative natural input.
+    if re.search(r"\bsebulan\s+(?:yang\s+)?lalu\b", clean):
+        return (today - timedelta(days=30)).strftime("%Y-%m-%d")
+
+    # Pattern:
+    # 2 hari lalu
+    # 2 hari yang lalu
+    # dua hari lalu
+    # dua hari yang lalu
+    # 3 minggu lalu
+    # tiga minggu yang lalu
+    # 2 bulan yang lalu
+    relative_match = re.search(
+        r"\b("
+        r"\d+|"
+        r"satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|"
+        r"sebelas|dua belas|tiga belas|empat belas|lima belas|enam belas|"
+        r"tujuh belas|delapan belas|sembilan belas|dua puluh"
+        r")\s+"
+        r"(hari|minggu|bulan)"
+        r"\s+(?:yang\s+)?lalu\b",
+        clean,
+        flags=re.IGNORECASE,
+    )
+
+    if relative_match:
+        number_raw = relative_match.group(1)
+        unit = relative_match.group(2).lower()
+
+        number = parse_relative_number(number_raw)
+
+        if not number:
+            return None
+
+        if unit == "hari":
+            return (today - timedelta(days=number)).strftime("%Y-%m-%d")
+
+        if unit == "minggu":
+            return (today - timedelta(weeks=number)).strftime("%Y-%m-%d")
+
+        if unit == "bulan":
+            # Simple approach: 1 bulan = 30 hari.
+            return (today - timedelta(days=number * 30)).strftime("%Y-%m-%d")
+
+    return None
+
+def detect_date(text: str) -> str:
+    """
+    Deteksi tanggal transaksi.
+
+    Priority:
+    1. Explicit date: 2026-06-01, 01-06-2026
+    2. Relative date: kemarin, minggu lalu, 2 hari lalu, dua minggu lalu, dll.
+    3. Default: hari ini
+    """
+    clean = str(text or "").strip().lower()
+    today = datetime.now().date()
+
+    # Explicit date dengan prefix: tanggal 2026-06-01 / tgl 01-06-2026
+    prefixed_date_match = re.search(
+        r"\b(?:tanggal|tgl|date|pada tanggal)\s+"
+        r"("
+        r"20\d{2}[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])"
+        r"|"
+        r"(?:0?[1-9]|[12]\d|3[01])[-/](?:0?[1-9]|1[0-2])[-/]20\d{2}"
+        r")\b",
+        clean,
+        flags=re.IGNORECASE,
+    )
+
+    if prefixed_date_match:
+        parsed_date = parse_explicit_date(prefixed_date_match.group(1))
+        if parsed_date:
+            return parsed_date
+
+    # Bare explicit date: 2026-06-01 / 01-06-2026
+    bare_date_match = re.search(
+        r"\b("
+        r"20\d{2}[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])"
+        r"|"
+        r"(?:0?[1-9]|[12]\d|3[01])[-/](?:0?[1-9]|1[0-2])[-/]20\d{2}"
+        r")\b",
+        clean,
+        flags=re.IGNORECASE,
+    )
+
+    if bare_date_match:
+        parsed_date = parse_explicit_date(bare_date_match.group(1))
+        if parsed_date:
+            return parsed_date
+
+    relative_date = detect_relative_date(clean)
+    if relative_date:
+        return relative_date
 
     return today.strftime("%Y-%m-%d")
 
+def extract_description(text: str, amount=None) -> str:
+    clean = str(text or "").strip()
 
-def extract_description(text: str, amount: int) -> str:
-    """
-    Ambil deskripsi utama transaksi.
-    Contoh:
-    - "Beli nasi padang 20 k catatan dibagi 2 sama sapto"
-      -> "Nasi Padang"
-    - "beli obat 45k buat demam"
-      -> "Obat"
-    - "bayar kos 1.5jt catatan kos bulan Juni"
-      -> "Kos"
-    """
-    desc = text.lower()
+    # 1. Hapus semua informasi waktu agar tidak masuk description.
+    clean = strip_date_phrases(clean)
 
-    # Buang bagian catatan/note/keterangan terlebih dahulu
-    desc = re.split(r"\b(catatan|note|notes|keterangan)\b\s*[:\-]?", desc)[0]
+    # 2. Hapus nominal spesifik dari amount kalau dikirim.
+    if amount is not None:
+        amount_int = int(float(amount or 0))
 
-    # Untuk kata "buat/untuk", hanya buang jika tampak sebagai keterangan tambahan.
-    # Contoh "beli obat 45k buat demam" -> desc "beli obat 45k"
-    # Tapi ini tidak akan terlalu agresif untuk semua kasus.
-    desc = re.split(r"\b(buat|untuk)\b", desc)[0]
+        amount_variants = [
+            str(amount_int),
+            f"{amount_int:,}".replace(",", "."),
+            f"{amount_int:,}".replace(",", ","),
+        ]
 
-    # Buang nominal uang: 20k, 20 k, 20 rb, 1.5jt, 1,5 juta, dll.
-    desc = re.sub(
-        r"\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta|m|miliar|milyar)?",
-        "",
-        desc,
+        for variant in amount_variants:
+            clean = clean.replace(variant, " ")
+
+    # 3. Hapus nominal umum: 10k, 10 k, 25rb, 25 ribu, 1 juta, dst.
+    clean = re.sub(
+        r"\b\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta)?\b",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
     )
 
-    # Buang pola split/patungan
-    desc = re.sub(r"\b(di\s*bagi|dibagi|bagi|split|patungan)\s*\d+\b", "", desc)
-    desc = re.sub(r"\b(berdua|bertiga|berempat|berlima)\b", "", desc)
-    desc = re.sub(r"\b\d+\s*orang\b", "", desc)
+    # 4. Hapus kata kerja transaksi umum di awal.
+    clean = re.sub(
+        r"^\s*(beli|bayar|byr|jajan|makan|minum|transfer|top\s*up|topup|isi|gaji|dapet|dapat|terima|masuk)\b",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
 
-    # Buang kata kerja/noise
-    noise_words = [
-        "beli", "bayar", "bayarin", "byr",
-        "tadi", "tadi pagi", "kemarin", "barusan",
-        "udah", "sudah", "lupa", "catat",
-        "dong", "ya", "nih", "deh", "tolong",
-        "pakai", "pake", "dari",
-    ]
+    # 5. Hapus info rekening sederhana.
+    clean = re.sub(
+        r"\b(dari|ke|pakai|pake|via)\s+(cash|bri|bsi|dana|gopay)\b",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
 
-    for word in noise_words:
-        desc = re.sub(rf"\b{re.escape(word)}\b", "", desc)
+    # 6. Rapikan spasi.
+    clean = re.sub(r"\s+", " ", clean).strip(" .,-;:")
 
-    desc = " ".join(desc.split()).strip()
+    if not clean:
+        return "Transaksi"
 
-    return desc.title() if desc else "Transaksi"
-
+    return clean.title()
 
 def detect_subject(text: str, transaction_type: str, category: str, description: str) -> str:
     text_lower = normalize_text(text)
@@ -515,7 +785,8 @@ def detect_spending_type(text: str, category: str, transaction_type: str) -> str
 # ── Main parser function ──────────────────────────────────────────────────────
 
 def parse_with_regex(text: str) -> dict | None:
-    amount = extract_amount_from_text(text)
+    text_without_date = strip_date_phrases(text)
+    amount = extract_amount_from_text(text_without_date)
     if not amount:
         return None
 
