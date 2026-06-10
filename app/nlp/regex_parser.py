@@ -7,7 +7,7 @@ from app.nlp.normalizer import extract_amount_from_text, normalize_text
 
 EXPENSE_KEYWORDS = [
     "beli", "bayar", "bayarin", "byr", "makan", "minum", "jajan",
-    "belanja", "isi", "top up", "topup", "transfer ke", "kirim ke",
+    "belanja", "isi", "ngisi", "top up", "topup", "transfer ke", "kirim ke",
     "servis", "service", "langganan", "subscribe", "sewa", "parkir",
     "bensin", "bbm", "pertalite", "pertamax", "solar",
     "nonton", "main", "game", "beli tiket", "tiket",
@@ -30,7 +30,7 @@ INCOME_KEYWORDS = [
 
 TRANSFER_KEYWORDS = [
     "transfer", "pindah", "move", "tarik tunai", "tarik",
-    "setor tunai", "setor ke", "isi", "top up", "topup",
+    "setor tunai", "setor ke", "isi", "ngisi", "top up", "topup",
 ]
 
 ACCOUNT_NAMES = ["cash", "bri", "bsi", "dana", "gopay"]
@@ -170,10 +170,13 @@ def parse_debt_input(text: str) -> dict | None:
             "buat", "untuk", "karena", "catatan", "note",
             "ke", "dari", "di", "pakai", "pake",
         ]
+        leading_noise = {"uang", "duit", "dana"}
 
         for w in after.split():
             if any(c.isdigit() for c in w):
                 break
+            if not words and w in leading_noise:
+                continue
             if w in stop_words:
                 break
             words.append(w)
@@ -210,6 +213,7 @@ def parse_debt_input(text: str) -> dict | None:
                     "person_name": person,
                     "amount": amount,
                     "description": f"Pembayaran dari/ke {person}",
+                    "date": detect_date(text),
                     "raw_input": text,
                 }
 
@@ -225,6 +229,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "person_name": person or "",
                 "amount": amount,
                 "description": f"Bayar hutang {person or ''}".strip(),
+                "date": detect_date(text),
                 "raw_input": text,
             }
 
@@ -237,6 +242,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "person_name": person or "",
                 "amount": amount,
                 "description": extract_description(text, amount),
+                "date": detect_date(text),
                 "raw_input": text,
             }
 
@@ -253,6 +259,7 @@ def parse_debt_input(text: str) -> dict | None:
                     "person_name": person,
                     "amount": amount,
                     "description": extract_description(text, amount),
+                    "date": detect_date(text),
                     "raw_input": text,
                 }
 
@@ -264,11 +271,20 @@ def parse_debt_input(text: str) -> dict | None:
 def detect_type(text: str) -> str | None:
     text_lower = normalize_text(text)
 
+    # Transfer antar rekening hanya dianggap transfer kalau ada nama rekening
+    # yang dikenali (Cash/BRI/BSI/DANA/GoPay).
+    # Contoh: "ngisi gopay 50k" -> transfer/topup ke GoPay.
     for kw in TRANSFER_KEYWORDS:
         if kw in text_lower:
             for acc in ACCOUNT_NAMES:
                 if acc in text_lower:
                     return "transfer"
+
+    # Pola pemasukan natural yang sebelumnya sering gagal:
+    # "uang ptpt bulanan dari opik 200k"
+    # "uang ptpt bulanan masuk dari alfath 91.457k"
+    if re.search(r"\buang\b.*\b(dari|masuk)\b", text_lower):
+        return "income"
 
     for kw in INCOME_KEYWORDS:
         if kw in text_lower:
@@ -279,7 +295,6 @@ def detect_type(text: str) -> str | None:
             return "expense"
 
     return None
-
 
 def detect_category(text: str, transaction_type: str) -> str:
     text_lower = normalize_text(text)
@@ -363,6 +378,30 @@ def parse_explicit_date(date_text: str) -> str | None:
     return None
 
 
+def parse_day_only_date(day_text: str) -> str | None:
+    """
+    Parse tanggal hanya angka hari dan gunakan bulan/tahun hari ini.
+
+    Support:
+    - tanggal 1
+    - tgl 1
+    - tg 01
+    - date 9
+    """
+    clean = str(day_text or "").strip()
+
+    if not re.fullmatch(r"0?[1-9]|[12]\d|3[01]", clean):
+        return None
+
+    today = datetime.now().date()
+    day = int(clean)
+
+    try:
+        return datetime(today.year, today.month, day).strftime("%Y-%m-%d")
+    except ValueError:
+        return None
+
+
 def strip_date_phrases(text: str) -> str:
     """
     Hapus frasa tanggal dari deskripsi.
@@ -379,6 +418,15 @@ def strip_date_phrases(text: str) -> str:
         r"\b(?:tanggal|tgl|date|pada tanggal)\s+"
         r"(?:20\d{2}[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])|"
         r"(?:0?[1-9]|[12]\d|3[01])[-/](?:0?[1-9]|1[0-2])[-/]20\d{2})\b",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
+
+    # Hapus "tanggal 1", "tgl 1", "tg 01"; bulan/tahun ikut hari ini.
+    clean = re.sub(
+        r"\b(?:tanggal|tgl|tg|date|pada tanggal)\s+"
+        r"(?:0?[1-9]|[12]\d|3[01])\b",
         " ",
         clean,
         flags=re.IGNORECASE,
@@ -588,6 +636,19 @@ def detect_date(text: str) -> str:
         if parsed_date:
             return parsed_date
 
+    # Prefix + angka hari saja: tanggal 1 / tgl 1 / tg 01
+    day_only_match = re.search(
+        r"\b(?:tanggal|tgl|tg|date|pada tanggal)\s+"
+        r"(0?[1-9]|[12]\d|3[01])\b",
+        clean,
+        flags=re.IGNORECASE,
+    )
+
+    if day_only_match:
+        parsed_date = parse_day_only_date(day_only_match.group(1))
+        if parsed_date:
+            return parsed_date
+
     # Bare explicit date: 2026-06-01 / 01-06-2026
     bare_date_match = re.search(
         r"\b("
@@ -613,6 +674,9 @@ def detect_date(text: str) -> str:
 def extract_description(text: str, amount=None) -> str:
     clean = str(text or "").strip()
 
+    # Bantu kasus typo tanpa spasi: "Sapto241.457k" -> "Sapto 241.457k".
+    clean = re.sub(r"(?<=[A-Za-zÀ-ÖØ-öø-ÿ])(?=\d)", " ", clean)
+
     # 1. Hapus semua informasi waktu agar tidak masuk description.
     clean = strip_date_phrases(clean)
 
@@ -637,9 +701,28 @@ def extract_description(text: str, amount=None) -> str:
         flags=re.IGNORECASE,
     )
 
-    # 4. Hapus kata kerja transaksi umum di awal.
+    # Hapus sisa satuan yang tertinggal setelah angka bertitik ribuan diganti.
+    # Contoh: "Alfath 91.457k" -> replace "91.457" menyisakan "k".
     clean = re.sub(
-        r"^\s*(beli|bayar|byr|jajan|makan|minum|transfer|top\s*up|topup|isi|gaji|dapet|dapat|terima|masuk)\b",
+        r"\b(?:rb|ribu|k|jt|juta|m|miliar|miliard|milyard)\b",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
+
+    # 4. Hapus kata kerja transaksi umum di awal.
+    # Jangan hapus kata "transfer" kalau transfernya ke orang/non-rekening,
+    # supaya deskripsi tetap "Transfer Ke Annisa", bukan cuma "Ke Annisa".
+    account_pattern = r"(?:cash|bri|bsi|dana|gopay)"
+    person_transfer = re.match(rf"^\s*transfer\s+ke\s+(?!{account_pattern}\b)", clean, flags=re.IGNORECASE)
+
+    if person_transfer:
+        start_verbs = r"beli|bayar|byr|jajan|makan|minum|top\s*up|topup|isi|ngisi|gaji|dapet|dapat|terima|masuk"
+    else:
+        start_verbs = r"beli|bayar|byr|jajan|makan|minum|transfer|top\s*up|topup|isi|ngisi|gaji|dapet|dapat|terima|masuk"
+
+    clean = re.sub(
+        rf"^\s*({start_verbs})\b",
         " ",
         clean,
         flags=re.IGNORECASE,

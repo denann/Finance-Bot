@@ -1909,6 +1909,37 @@ def short_txn_id(txn_id: str) -> str:
     return txn_id[:18] + "..."
 
 
+def expand_txn_refs(refs: list[str]) -> list[str]:
+    """
+    Expand argumen transaksi.
+
+    Support:
+    - 1 3 5 -> 1, 3, 5
+    - 1-4   -> 1, 2, 3, 4
+    - 4-1   -> 4, 3, 2, 1
+
+    Transaction ID yang mengandung tanda minus tidak diubah.
+    """
+    expanded = []
+
+    for ref in refs or []:
+        clean = str(ref or "").strip()
+        if not clean:
+            continue
+
+        range_match = re.fullmatch(r"(\d+)\s*-\s*(\d+)", clean)
+        if range_match:
+            start = int(range_match.group(1))
+            end = int(range_match.group(2))
+            step = 1 if end >= start else -1
+            expanded.extend(str(i) for i in range(start, end + step, step))
+            continue
+
+        expanded.append(clean)
+
+    return expanded
+
+
 def resolve_txn_refs_from_last(context: ContextTypes.DEFAULT_TYPE, refs: list[str]) -> dict:
     """
     Resolve argumen /delete_txn.
@@ -1926,7 +1957,7 @@ def resolve_txn_refs_from_last(context: ContextTypes.DEFAULT_TYPE, refs: list[st
     txn_ids = []
     invalid_refs = []
 
-    for ref in refs:
+    for ref in expand_txn_refs(refs):
         clean = str(ref).strip()
 
         if not clean:
@@ -2174,7 +2205,7 @@ def split_user_inputs(text: str) -> list[str]:
     # Starter transaksi biasa
     transaction_starters = [
         "beli", "bayar", "byr", "jajan", "makan", "minum",
-        "transfer", "top up", "topup", "isi",
+        "transfer", "top up", "topup", "isi", "ngisi",
         "gaji", "dapat", "dapet", "terima", "masuk",
         "hutang", "utang",
     ]
@@ -2283,12 +2314,19 @@ def build_mixed_preview(mixed_items: list[dict]) -> str:
             else:
                 icon = "🔄"
 
+            desc = md_safe(parsed.get('description') or '-')
+            category = md_safe(parsed.get('category') or '-')
+            account = md_safe(parsed.get('account') or '-')
+            date = md_safe(parsed.get('date') or '-')
+            safe_raw = md_safe(raw)
+
             lines.append(
                 f"{i}. {icon} *Transaksi*\n"
-                f"   📝 {parsed.get('description') or '-'}\n"
-                f"   💰 {format_rupiah(amount)} | {parsed.get('category') or '-'}\n"
-                f"   🏦 {parsed.get('account') or '-'}\n"
-                f"   Input: `{raw}`"
+                f"   📝 {desc}\n"
+                f"   💰 {format_rupiah(amount)} | {category}\n"
+                f"   📅 {date}\n"
+                f"   🏦 {account}\n"
+                f"   Input: `{safe_raw}`"
             )
 
         elif kind == "debt":
@@ -2311,13 +2349,19 @@ def build_mixed_preview(mixed_items: list[dict]) -> str:
                 label = "❓ Debt"
                 effect = "-"
 
+            safe_person = md_safe(person)
+            account = md_safe(parsed.get('account') or '-')
+            date = md_safe(parsed.get('date') or parsed.get('transaction_date') or '-')
+            safe_raw = md_safe(raw)
+
             lines.append(
                 f"{i}. {label}\n"
-                f"   👤 {person}\n"
+                f"   👤 {safe_person}\n"
                 f"   💰 {format_rupiah(amount)}\n"
-                f"   🏦 {parsed.get('account') or '-'}\n"
+                f"   📅 {date}\n"
+                f"   🏦 {account}\n"
                 f"   📌 {effect}\n"
-                f"   Input: `{raw}`"
+                f"   Input: `{safe_raw}`"
             )
 
     lines.append("\n*Ringkasan awal:*")
@@ -2434,9 +2478,12 @@ def build_batch_preview(parsed_items: list[dict]) -> str:
         subject = parsed.get("subject") or "-"
         spending_type = parsed.get("tipe_pengeluaran") or "-"
 
+        date = parsed.get("date") or "-"
+
         lines.append(
             f"{i}. {type_icon} *{desc}*\n"
             f"   💰 {format_rupiah(amount)} | {category}\n"
+            f"   📅 {date}\n"
             f"   👤 {subject} | 🏦 {account} | 🏷️ {spending_type}"
         )
 
@@ -2462,7 +2509,7 @@ def build_debt_cashflow_transaction(
     person = debt_parsed.get("person_name") or ""
     amount = debt_parsed.get("amount") or 0
     raw = debt_parsed.get("raw_input") or ""
-    today = datetime.now().strftime("%Y-%m-%d")
+    transaction_date = debt_parsed.get("date") or datetime.now().strftime("%Y-%m-%d")
 
     if intent == "add_receivable":
         return {
@@ -2475,7 +2522,7 @@ def build_debt_cashflow_transaction(
             "description": f"Pinjaman ke {person}",
             "catatan": raw,
             "tipe_pengeluaran": "",
-            "date": today,
+            "date": transaction_date,
             "parsed_by": "debt",
         }
 
@@ -2490,7 +2537,7 @@ def build_debt_cashflow_transaction(
             "description": f"Pinjaman dari {person}",
             "catatan": raw,
             "tipe_pengeluaran": "",
-            "date": today,
+            "date": transaction_date,
             "parsed_by": "debt",
         }
 
