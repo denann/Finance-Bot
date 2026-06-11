@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 from difflib import SequenceMatcher
-from telegram import Update, InputFile
+from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
 import shlex
@@ -70,6 +70,8 @@ from app.services.report_service import (
     get_weekly_report,
     get_monthly_report,
     search_transactions,
+    parse_report_date_arg,
+    parse_report_month_arg,
 )
 
 from app.services.debt_service import (
@@ -2292,7 +2294,8 @@ def build_last_transactions_text(transactions: list[dict], title: str) -> str:
     lines.append(
         "\nHapus transaksi:\n"
         "`/delete_txn 1`\n"
-        "`/delete_txn 1 3 5`\n\n"
+        "`/delete_txn 1 3 5`\n"
+        "`/delete_txn 1-4`\n\n"
         "Angka mengikuti nomor dari hasil `/last` terakhir."
     )
 
@@ -2652,6 +2655,7 @@ def parse_mixed_item(line: str) -> dict:
 
     txn_parsed = parse_input(line)
     if txn_parsed and txn_parsed.get("type") != "pending":
+        attach_split_bill_if_any(txn_parsed, line)
         return {
             "kind": "transaction",
             "parsed": txn_parsed,
@@ -2756,6 +2760,222 @@ def build_batch_preview(parsed_items: list[dict]) -> str:
 
     return "\n".join(lines)
 
+
+def strip_split_bill_phrase(text: str) -> str:
+    clean = str(text or "")
+    clean = re.sub(
+        r"\b(bagi|patungan|split)\s*(?:jadi\s*)?\d+\s+(?:sama|ama|dengan|bareng)\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,40}",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    clean = re.sub(
+        r"\b(?:sama|ama|dengan|bareng)\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,40}\s+(?:bagi|patungan|split)\s*(?:jadi\s*)?\d+",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    clean = re.sub(r"\s+", " ", clean).strip(" .,-")
+    return clean or str(text or "").strip()
+
+
+def clean_split_person_name(name: str) -> str:
+    clean = str(name or "").strip()
+    clean = re.split(
+        r"\b(tanggal|tgl|tg|pada|date|kemarin|hari|minggu|bulan|udah|sudah|belum|dibayar|bayar|lunas|dari|ke)\b",
+        clean,
+        flags=re.IGNORECASE,
+    )[0]
+    clean = re.sub(r"[^A-Za-zÀ-ÿ\s]", " ", clean)
+    clean = re.sub(r"\s+", " ", clean).strip()
+    return clean.title()
+
+
+def detect_split_bill(parsed: dict, raw: str) -> dict | None:
+    """
+    Deteksi input split bill sederhana.
+
+    Contoh:
+    - Ayam dcelup 26k bagi 2 sama Sapto
+    - Ayam dcelup 26k patungan 2 sama Sapto
+
+    Desain cashflow:
+    - Transaksi utama tetap disimpan sebesar total yang kamu bayarkan.
+    - Kalau teman belum bayar, dibuat piutang sebesar amount / jumlah peserta TANPA cashflow tambahan.
+    """
+    if not parsed or parsed.get("type") != "expense":
+        return None
+
+    amount = float(parsed.get("amount", 0) or 0)
+    if amount <= 0:
+        return None
+
+    text = str(raw or "")
+    patterns = [
+        r"\b(?:bagi|patungan|split)\s*(?:jadi\s*)?(\d+)\s+(?:sama|ama|dengan|bareng)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,40})",
+        r"\b(?:sama|ama|dengan|bareng)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,40})\s+(?:bagi|patungan|split)\s*(?:jadi\s*)?(\d+)",
+    ]
+
+    participants = None
+    person = None
+
+    for idx, pattern in enumerate(patterns):
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+
+        if idx == 0:
+            participants = int(match.group(1))
+            person = clean_split_person_name(match.group(2))
+        else:
+            person = clean_split_person_name(match.group(1))
+            participants = int(match.group(2))
+        break
+
+    if not participants or participants < 2 or not person:
+        return None
+
+    share_amount = amount / participants
+
+    # Bersihkan deskripsi supaya tidak ikut menyimpan frasa "bagi 2 sama ...".
+    desc = parsed.get("description") or ""
+    parsed["description"] = strip_split_bill_phrase(desc)
+
+    return {
+        "person_name": person,
+        "participants": participants,
+        "share_amount": share_amount,
+        "total_amount": amount,
+        "status": None,  # paid / unpaid
+    }
+
+
+def attach_split_bill_if_any(parsed: dict, raw: str) -> dict:
+    split_bill = detect_split_bill(parsed, raw)
+    if split_bill:
+        parsed["split_bill"] = split_bill
+    return parsed
+
+
+def split_bill_needs_decision(parsed: dict) -> bool:
+    split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
+    return bool(split_bill) and not split_bill.get("status")
+
+
+def mixed_split_bill_needs_decision(mixed_items: list[dict]) -> bool:
+    for item in mixed_items or []:
+        if item.get("kind") == "transaction" and split_bill_needs_decision(item.get("parsed", {})):
+            return True
+    return False
+
+
+def split_bill_keyboard(scope: str = "single") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Sudah dibayar", callback_data=f"split:paid:{scope}"),
+            InlineKeyboardButton("🟢 Belum, masuk piutang", callback_data=f"split:unpaid:{scope}"),
+        ],
+        [InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{scope}")],
+    ])
+
+
+def build_split_bill_prompt_from_parsed(parsed: dict) -> str:
+    split_bill = parsed.get("split_bill", {}) or {}
+    person = split_bill.get("person_name", "-")
+    participants = int(split_bill.get("participants", 2) or 2)
+    total = float(split_bill.get("total_amount", parsed.get("amount", 0)) or 0)
+    share = float(split_bill.get("share_amount", 0) or 0)
+
+    return (
+        "🤝 *Split bill terdeteksi*\n\n"
+        f"📝 Item: *{md_safe(parsed.get('description') or '-')}*\n"
+        f"💰 Total dibayar: *{format_rupiah(total)}*\n"
+        f"👥 Dibagi: *{participants} orang*\n"
+        f"👤 Teman: *{md_safe(person)}*\n"
+        f"📌 Bagian {md_safe(person)}: *{format_rupiah(share)}*\n\n"
+        f"{md_safe(person)} sudah bayar bagian dia?\n"
+        "Kalau belum, saya akan catat sebagai piutang tanpa cashflow tambahan."
+    )
+
+
+def build_mixed_split_bill_prompt(mixed_items: list[dict]) -> str:
+    split_items = [
+        item for item in mixed_items or []
+        if item.get("kind") == "transaction" and split_bill_needs_decision(item.get("parsed", {}))
+    ]
+
+    lines = [f"🤝 *Split bill terdeteksi di {len(split_items)} item*\n"]
+
+    for i, item in enumerate(split_items, 1):
+        parsed = item["parsed"]
+        split_bill = parsed.get("split_bill", {}) or {}
+        person = split_bill.get("person_name", "-")
+        share = float(split_bill.get("share_amount", 0) or 0)
+        lines.append(
+            f"{i}. {md_safe(parsed.get('description') or '-')} — "
+            f"bagian {md_safe(person)} *{format_rupiah(share)}*"
+        )
+
+    lines.append(
+        "\nApakah bagian teman-teman di item ini sudah dibayar?\n"
+        "Pilih *Belum* kalau mau otomatis masuk piutang."
+    )
+    return "\n".join(lines)
+
+
+def apply_split_bill_decision_to_mixed(mixed_items: list[dict], status: str) -> list[dict]:
+    for item in mixed_items or []:
+        if item.get("kind") != "transaction":
+            continue
+        parsed = item.get("parsed", {})
+        if parsed.get("split_bill"):
+            parsed["split_bill"]["status"] = status
+    return mixed_items
+
+
+def create_split_bill_debt(parsed: dict, raw: str = "") -> dict | None:
+    split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
+    if not split_bill or split_bill.get("status") != "unpaid":
+        return None
+
+    person = split_bill.get("person_name")
+    share_amount = float(split_bill.get("share_amount", 0) or 0)
+    if not person or share_amount <= 0:
+        return None
+
+    desc = f"Split bill: {parsed.get('description') or raw or '-'}"
+    return add_debt("receivable", person, share_amount, desc)
+
+
+def summarize_saved_transaction_items(items: list[dict]) -> dict:
+    total_expense = 0.0
+    total_income = 0.0
+    total_transfer = 0.0
+    for item in items or []:
+        parsed = item.get("parsed", {})
+        amount = float(parsed.get("amount", 0) or 0)
+        if parsed.get("type") == "expense":
+            total_expense += amount
+        elif parsed.get("type") == "income":
+            total_income += amount
+        elif parsed.get("type") == "transfer":
+            total_transfer += amount
+    return {
+        "expense": total_expense,
+        "income": total_income,
+        "transfer": total_transfer,
+        "net": total_income - total_expense,
+    }
+
+
+def append_saved_summary_lines(lines: list[str], items: list[dict], title: str = "Ringkasan tersimpan"):
+    summary = summarize_saved_transaction_items(items)
+    lines.append(f"\n📊 *{title}:*")
+    lines.append(f"❌ Pengeluaran: *{format_rupiah(summary['expense'])}*")
+    lines.append(f"✅ Pemasukan : *{format_rupiah(summary['income'])}*")
+    if summary["transfer"]:
+        lines.append(f"🔄 Transfer  : *{format_rupiah(summary['transfer'])}*")
+    lines.append(f"📌 Net       : *{format_rupiah(summary['net'])}*")
 
 def build_debt_cashflow_transaction(
     debt_parsed: dict,
@@ -3109,8 +3329,11 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*6. Laporan*\n"
         "`/saldo` — saldo semua rekening\n"
         "`/harian` — ringkasan hari ini\n"
+        "`/harian 2026-06-01` — ringkasan tanggal tertentu\n"
         "`/mingguan` — ringkasan minggu ini\n"
+        "`/mingguan 2026-06-01` — ringkasan minggu yang memuat tanggal itu\n"
         "`/bulanan` — ringkasan bulan ini\n"
+        "`/bulanan 2026-06` — ringkasan bulan tertentu\n"
         "`/hutang` — utang/piutang aktif\n"
         "`/cari kopi` — cari transaksi dengan keyword kopi\n\n"
 
@@ -3118,7 +3341,9 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/budget` — lihat budget bulan berjalan\n"
         "`/budget 2026-06` — lihat budget bulan tertentu\n"
         "`/budget_history` — lihat daftar bulan yang punya budget\n"
-        "`budget makan 1.5 juta` — set budget bulan berjalan\n"
+        "`budget makan 1.5 juta` — otomatis map ke Food & Beverage\n"
+        "`budget jajan 500rb` — buat budget custom Jajan\n"
+        "`budget kebutuhan 2 juta` — buat budget custom Kebutuhan\n"
         "`budget transport 300rb 2026-07` — set budget bulan tertentu\n\n"
 
         "*8. Lihat & Koreksi Transaksi*\n"
@@ -3132,6 +3357,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*9. Hapus Transaksi*\n"
         "`/delete_txn 1` — hapus transaksi nomor 1 dari hasil /last\n"
         "`/delete_txn 1 3 5` — hapus banyak transaksi sekaligus\n"
+        "`/delete_txn 1-4` — hapus range transaksi dari hasil /last\n"
         "`/delete_txn txn_20260609_xxx` — hapus berdasarkan transaction ID\n\n"
 
         "*10. Edit Transaksi*\n"
@@ -3220,7 +3446,22 @@ async def harian_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reject_unauthorized(update)
         return
 
-    report = get_daily_report()
+    date_arg = " ".join(context.args).strip() if context.args else None
+
+    try:
+        report = get_daily_report(date_arg)
+    except ValueError as e:
+        await update.message.reply_text(
+            f"❌ {str(e)}\n\n"
+            "Contoh:\n"
+            "`/harian`\n"
+            "`/harian 2026-06-01`\n"
+            "`/harian 01-06-2026`\n"
+            "`/harian 1`",
+            parse_mode="Markdown",
+        )
+        return
+
     date_str = report["date"]
 
     if report["count"] == 0:
@@ -3270,7 +3511,20 @@ async def mingguan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reject_unauthorized(update)
         return
 
-    report = get_weekly_report()
+    date_arg = " ".join(context.args).strip() if context.args else None
+
+    try:
+        report = get_weekly_report(date_arg)
+    except ValueError as e:
+        await update.message.reply_text(
+            f"❌ {str(e)}\n\n"
+            "Contoh:\n"
+            "`/mingguan`\n"
+            "`/mingguan 2026-06-01`\n"
+            "`/mingguan 1`",
+            parse_mode="Markdown",
+        )
+        return
 
     if report["count"] == 0:
         await update.message.reply_text(
@@ -3325,14 +3579,27 @@ async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reject_unauthorized(update)
         return
 
-    report = get_monthly_report()
+    month_arg = " ".join(context.args).strip() if context.args else None
+
+    try:
+        year, month_num = parse_report_month_arg(month_arg)
+        report = get_monthly_report(year, month_num)
+    except ValueError as e:
+        await update.message.reply_text(
+            f"❌ {str(e)}\n\n"
+            "Contoh:\n"
+            "`/bulanan`\n"
+            "`/bulanan 2026-06`\n"
+            "`/bulanan 6`",
+            parse_mode="Markdown",
+        )
+        return
 
     if report["count"] == 0:
         await update.message.reply_text("📭 Belum ada transaksi bulan ini.")
         return
 
-    now = datetime.now()
-    month_name = now.strftime("%B %Y")
+    month_name = report.get("month", "-")
 
     lines = [f"📆 *Ringkasan Bulanan*\n_{month_name}_\n"]
     lines.append(f"✅ Pemasukan : *{format_rupiah(report['total_income'])}*")
@@ -3528,7 +3795,12 @@ async def set_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """
     Input bebas:
     budget makan 1.5 juta
-    budget makan 1.5 juta 2026-07
+    budget jajan 500rb
+    budget kebutuhan 2 juta 2026-07
+
+    Rule:
+    - Alias kuat seperti makan -> Food & Beverage.
+    - Label lain disimpan apa adanya sebagai budget custom.
     """
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -3545,7 +3817,8 @@ async def set_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "❌ Nominal budget tidak ditemukan.\n"
             "Contoh:\n"
             "`budget makan 1.5 juta`\n"
-            "`budget makan 1.5 juta 2026-07`",
+            "`budget jajan 500rb`\n"
+            "`budget kebutuhan 2 juta 2026-07`",
             parse_mode="Markdown",
         )
         return
@@ -3566,54 +3839,85 @@ async def set_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         month = normalize_month(None)
 
-    categories = get_all_records(SHEET_CATEGORIES)
-    matched_category = None
+    # Ambil label setelah kata budget, lalu buang nominal dan bulan.
+    label_text = re.sub(r"^\s*budget\s+", "", text_lower).strip()
+    label_text = re.sub(r"\b20\d{2}[-/](0?[1-9]|1[0-2])\b", " ", label_text)
+    label_text = re.sub(r"\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta)?", " ", label_text)
+    label_text = re.sub(r"\b(per\s+bulan|bulan|untuk|buat|sebesar|senilai)\b", " ", label_text)
+    label_text = re.sub(r"\s+", " ", label_text).strip(" .,-")
 
-    # Hilangkan angka dan bulan dari teks agar matching kategori tidak keganggu
-    text_for_category = re.sub(r"\b20\d{2}[-/](0?[1-9]|1[0-2])\b", " ", text_lower)
-    text_for_category = re.sub(r"\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta)?", " ", text_for_category)
-    text_for_category = re.sub(r"\s+", " ", text_for_category).strip()
-
-    for cat in categories:
-        cat_name = str(cat.get("category_name", "")).strip()
-        aliases_raw = str(cat.get("aliases", "")).strip()
-
-        all_keywords = [cat_name.lower()]
-        if aliases_raw:
-            all_keywords += [a.strip().lower() for a in aliases_raw.split(",")]
-
-        for keyword in all_keywords:
-            if keyword and keyword in text_for_category:
-                matched_category = cat_name
-                break
-
-        if matched_category:
-            break
-
-    if not matched_category:
+    if not label_text:
         await update.message.reply_text(
-            "❌ Kategori tidak dikenali.\n\n"
-            "Contoh penggunaan:\n"
+            "❌ Nama budget belum kebaca.\n\n"
+            "Contoh:\n"
             "`budget makan 1.5 juta`\n"
-            "`budget transport 300rb`\n"
-            "`budget belanja 500rb 2026-07`\n"
-            "`budget listrik 200rb 2027-01`",
+            "`budget jajan 500rb`\n"
+            "`budget kebutuhan 2 juta`",
             parse_mode="Markdown",
         )
         return
 
-    result = set_budget(matched_category, amount, month=month)
+    alias_to_category = {
+        # Sengaja TIDAK memasukkan 'jajan' supaya bisa jadi budget custom.
+        "makan": "Food & Beverage",
+        "makanan": "Food & Beverage",
+        "minum": "Food & Beverage",
+        "food": "Food & Beverage",
+        "fnb": "Food & Beverage",
+        "transport": "Transport",
+        "transportasi": "Transport",
+        "bensin": "Transport",
+        "ojol": "Transport",
+        "grab": "Transport",
+        "gojek": "Transport",
+        "listrik": "Bills & Utilities",
+        "token": "Bills & Utilities",
+        "pln": "Bills & Utilities",
+        "air": "Bills & Utilities",
+        "internet": "Bills & Utilities",
+        "pulsa": "Bills & Utilities",
+        "belanja": "Shopping",
+        "shopping": "Shopping",
+        "obat": "Health",
+        "dokter": "Health",
+        "hiburan": "Entertainment",
+        "entertainment": "Entertainment",
+        "pendidikan": "Education",
+        "edukasi": "Education",
+        "kos": "Kos & Utilities",
+        "sedekah": "Zakat & Sedekah",
+        "zakat": "Zakat & Sedekah",
+        "investasi": "Investasi",
+    }
+
+    tokens = set(label_text.split())
+    matched_category = None
+
+    # Exact phrase dulu, lalu token-level alias.
+    if label_text in alias_to_category:
+        matched_category = alias_to_category[label_text]
+    else:
+        for token in tokens:
+            if token in alias_to_category:
+                matched_category = alias_to_category[token]
+                break
+
+    budget_label = matched_category or label_text.title()
+
+    result = set_budget(budget_label, amount, month=month)
 
     if not result.get("success"):
         await update.message.reply_text(f"❌ {result.get('message')}")
         return
 
     action_label = "diset" if result["action"] == "created" else "diupdate"
+    source_note = "kategori resmi" if matched_category else "budget custom"
 
     await update.message.reply_text(
-        f"✅ Budget *{matched_category}* {action_label}!\n"
+        f"✅ Budget *{budget_label}* {action_label}!\n"
         f"📅 Bulan: *{format_month_label(month)}*\n"
-        f"💰 {format_rupiah(amount)} / bulan\n\n"
+        f"💰 {format_rupiah(amount)} / bulan\n"
+        f"🏷️ Tipe: {source_note}\n\n"
         f"Cek dengan:\n"
         f"`/budget {month}`",
         parse_mode="Markdown",
@@ -4585,6 +4889,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown",
                     reply_markup=account_keyboard("mixed_acc"),
                 )
+            elif mixed_split_bill_needs_decision(mixed_items):
+                await update.message.reply_text(
+                    build_mixed_split_bill_prompt(mixed_items),
+                    parse_mode="Markdown",
+                    reply_markup=split_bill_keyboard("mixed"),
+                )
             else:
                 await update.message.reply_text(
                     f"{preview}\n\nSimpan semua item ini?",
@@ -4644,6 +4954,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    attach_split_bill_if_any(parsed, user_text)
+
     context.user_data["pending_parsed"] = parsed
     context.user_data["pending_raw"] = user_text
     context.user_data.pop("pending_batch", None)
@@ -4654,11 +4966,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     preview = build_preview(parsed)
 
     if parsed.get("account") or parsed.get("type") == "transfer":
-        await update.message.reply_text(
-            f"{preview}\n\nSimpan transaksi ini?",
-            parse_mode="Markdown",
-            reply_markup=confirm_keyboard("pending"),
-        )
+        if split_bill_needs_decision(parsed):
+            await update.message.reply_text(
+                build_split_bill_prompt_from_parsed(parsed),
+                parse_mode="Markdown",
+                reply_markup=split_bill_keyboard("single"),
+            )
+        else:
+            await update.message.reply_text(
+                f"{preview}\n\nSimpan transaksi ini?",
+                parse_mode="Markdown",
+                reply_markup=confirm_keyboard("pending"),
+            )
     else:
         await update.message.reply_text(
             f"{preview}\n\n💳 Dari rekening mana?",
@@ -5256,6 +5575,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for item in failed_items:
                 preview += f"\n• `{item['raw']}` — {item['message']}"
 
+        if mixed_split_bill_needs_decision(prepared_items):
+            await query.edit_message_text(
+                build_mixed_split_bill_prompt(prepared_items),
+                parse_mode="Markdown",
+                reply_markup=split_bill_keyboard("mixed"),
+            )
+            return
+
         await query.edit_message_text(
             f"{preview}\n\nSimpan semua item ini?",
             parse_mode="Markdown",
@@ -5279,6 +5606,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["pending_batch"] = batch
         preview = build_batch_preview(batch)
 
+        if any(split_bill_needs_decision(item.get("parsed", {})) for item in batch):
+            mixed_like = [{"kind": "transaction", "parsed": item["parsed"], "raw": item.get("raw", "")} for item in batch]
+            context.user_data["pending_mixed"] = mixed_like
+            context.user_data.pop("pending_batch", None)
+            await query.edit_message_text(
+                build_mixed_split_bill_prompt(mixed_like),
+                parse_mode="Markdown",
+                reply_markup=split_bill_keyboard("mixed"),
+            )
+            return
+
         await query.edit_message_text(
             f"{preview}\n\nSimpan semua transaksi ini?",
             parse_mode="Markdown",
@@ -5295,6 +5633,58 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         parsed["account"] = account
+        context.user_data["pending_parsed"] = parsed
+
+        if split_bill_needs_decision(parsed):
+            await query.edit_message_text(
+                build_split_bill_prompt_from_parsed(parsed),
+                parse_mode="Markdown",
+                reply_markup=split_bill_keyboard("single"),
+            )
+            return
+
+        preview = build_preview(parsed)
+
+        await query.edit_message_text(
+            f"{preview}\n\nSimpan transaksi ini?",
+            parse_mode="Markdown",
+            reply_markup=confirm_keyboard("pending"),
+        )
+        return
+
+    if data.startswith("split:"):
+        parts = data.split(":")
+        status = parts[1] if len(parts) > 1 else ""
+        scope = parts[2] if len(parts) > 2 else "single"
+
+        if status not in ["paid", "unpaid"]:
+            await query.edit_message_text("❌ Pilihan split bill tidak valid.")
+            return
+
+        if scope == "mixed":
+            mixed_items = context.user_data.get("pending_mixed")
+            if not mixed_items:
+                await query.edit_message_text("❌ Sesi split bill expired. Coba input ulang.")
+                return
+
+            mixed_items = apply_split_bill_decision_to_mixed(mixed_items, status)
+            context.user_data["pending_mixed"] = mixed_items
+            preview = build_mixed_preview(mixed_items)
+
+            await query.edit_message_text(
+                f"{preview}\n\nSimpan semua item ini?",
+                parse_mode="Markdown",
+                reply_markup=confirm_keyboard("mixed"),
+            )
+            return
+
+        parsed = context.user_data.get("pending_parsed")
+        if not parsed:
+            await query.edit_message_text("❌ Sesi split bill expired. Coba input ulang.")
+            return
+
+        if parsed.get("split_bill"):
+            parsed["split_bill"]["status"] = status
         context.user_data["pending_parsed"] = parsed
         preview = build_preview(parsed)
 
@@ -5894,6 +6284,24 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result_lines.append("")
                 result_lines.append(f"📝 Transactions tersimpan: *{transaction_success_count} item*")
                 result_lines.append(f"💸 Debt diproses: *{debt_success_count} item*")
+                append_saved_summary_lines(result_lines, all_transaction_items)
+
+                split_debt_lines = []
+                for item in normal_transaction_items:
+                    debt_result = create_split_bill_debt(item.get("parsed", {}), item.get("raw", ""))
+                    if debt_result and debt_result.get("success"):
+                        split_debt_lines.append(
+                            f"• {debt_result.get('person_name')}: *{format_rupiah(debt_result.get('remaining'))}*"
+                        )
+                    elif debt_result:
+                        failed_items.append({
+                            "raw": item.get("raw", "split bill"),
+                            "message": debt_result.get("message", "Gagal membuat piutang split bill."),
+                        })
+
+                if split_debt_lines:
+                    result_lines.append("\n🤝 *Piutang split bill dibuat:*")
+                    result_lines.extend(split_debt_lines)
 
                 new_balances = transaction_result.get("new_balances", {})
                 if new_balances:
@@ -5950,6 +6358,25 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines.append("\n🔖 *ID tersimpan:*")
                 for txn_id in saved_ids:
                     lines.append(f"• `{txn_id}`")
+
+            append_saved_summary_lines(lines, batch)
+
+            split_debt_lines = []
+            for item in batch:
+                debt_result = create_split_bill_debt(item.get("parsed", {}), item.get("raw", ""))
+                if debt_result and debt_result.get("success"):
+                    split_debt_lines.append(
+                        f"• {debt_result.get('person_name')}: *{format_rupiah(debt_result.get('remaining'))}*"
+                    )
+                elif debt_result:
+                    result.setdefault("failed_items", []).append({
+                        "raw": item.get("raw", "split bill"),
+                        "message": debt_result.get("message", "Gagal membuat piutang split bill."),
+                    })
+
+            if split_debt_lines:
+                lines.append("\n🤝 *Piutang split bill dibuat:*")
+                lines.extend(split_debt_lines)
 
             new_balances = result.get("new_balances", {})
             if new_balances:
@@ -6026,6 +6453,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"*{format_rupiah(result['new_balance'])}*"
                 )
 
+            split_info = ""
+            split_debt = create_split_bill_debt(parsed, raw)
+            if split_debt and split_debt.get("success"):
+                split_info = (
+                    f"\n\n🤝 *Piutang split bill dibuat*"
+                    f"\n👤 {split_debt.get('person_name')}: "
+                    f"*{format_rupiah(split_debt.get('remaining'))}*"
+                )
+            elif split_debt:
+                split_info = f"\n\n⚠️ Gagal membuat piutang split bill: {split_debt.get('message')}"
+
             budget_info = ""
             if parsed.get("type") == "expense" and parsed.get("category"):
                 budget_check = check_budget_after_transaction(parsed["category"])
@@ -6044,6 +6482,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ *Transaksi tersimpan!*\n"
                 f"🔖 ID: `{result['transaction_id']}`"
                 f"{balance_info}"
+                f"{split_info}"
                 f"{budget_info}",
                 parse_mode="Markdown",
             )

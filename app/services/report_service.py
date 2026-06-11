@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import re
 from app.sheets.client import get_all_records
 from app.config import SHEET_TRANSACTIONS, SHEET_ACCOUNTS
 
@@ -9,10 +10,86 @@ def format_rupiah(amount: float) -> str:
     return f"Rp{int(amount):,}".replace(",", ".")
 
 
-def get_week_range() -> tuple[str, str]:
-    """Return (monday, sunday) minggu ini dalam format YYYY-MM-DD."""
-    today = datetime.now()
-    monday = today - timedelta(days=today.weekday())
+def parse_report_date_arg(value: str | None = None) -> str:
+    """
+    Normalize argumen tanggal laporan ke YYYY-MM-DD.
+
+    Support:
+    - None / kosong -> hari ini
+    - today / hariini / hari ini
+    - yesterday / kemarin
+    - 2026-06-01
+    - 01-06-2026 / 01/06/2026
+    - 1 / tanggal 1 / tgl 1 -> bulan & tahun sekarang
+    """
+    today = datetime.now().date()
+
+    if not value:
+        return today.strftime("%Y-%m-%d")
+
+    raw = str(value).strip().lower()
+    raw = re.sub(r"^(tanggal|tgl|tg)\s+", "", raw).strip()
+
+    if raw in ["today", "hariini", "hari ini"]:
+        return today.strftime("%Y-%m-%d")
+
+    if raw in ["yesterday", "kemarin"]:
+        return (today - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    m = re.fullmatch(r"(20\d{2})[-/](\d{1,2})[-/](\d{1,2})", raw)
+    if m:
+        dt = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+        return dt.strftime("%Y-%m-%d")
+
+    m = re.fullmatch(r"(\d{1,2})[-/](\d{1,2})[-/](20\d{2})", raw)
+    if m:
+        dt = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1))).date()
+        return dt.strftime("%Y-%m-%d")
+
+    m = re.fullmatch(r"\d{1,2}", raw)
+    if m:
+        day = int(raw)
+        dt = datetime(today.year, today.month, day).date()
+        return dt.strftime("%Y-%m-%d")
+
+    raise ValueError("Format tanggal tidak dikenali. Contoh: 2026-06-01, 01-06-2026, atau 1.")
+
+
+def parse_report_month_arg(value: str | None = None) -> tuple[int, int]:
+    """Normalize argumen bulan laporan ke (year, month)."""
+    today = datetime.now().date()
+
+    if not value:
+        return today.year, today.month
+
+    raw = str(value).strip().lower().replace("/", "-")
+
+    if raw in ["month", "bulan", "bulanan", "bulanini", "bulan ini"]:
+        return today.year, today.month
+
+    m = re.fullmatch(r"(20\d{2})-(\d{1,2})", raw)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+
+    m = re.fullmatch(r"(\d{1,2})-(20\d{2})", raw)
+    if m:
+        return int(m.group(2)), int(m.group(1))
+
+    m = re.fullmatch(r"\d{1,2}", raw)
+    if m:
+        return today.year, int(raw)
+
+    raise ValueError("Format bulan tidak dikenali. Contoh: 2026-06 atau 6.")
+
+
+def get_week_range(reference_date: str | None = None) -> tuple[str, str]:
+    """Return (monday, sunday) minggu dari reference_date dalam format YYYY-MM-DD."""
+    if reference_date:
+        base = datetime.strptime(parse_report_date_arg(reference_date), "%Y-%m-%d")
+    else:
+        base = datetime.now()
+
+    monday = base - timedelta(days=base.weekday())
     sunday = monday + timedelta(days=6)
     return monday.strftime("%Y-%m-%d"), sunday.strftime("%Y-%m-%d")
 
@@ -98,8 +175,7 @@ def summarize(transactions: list[dict]) -> dict:
 
 def get_daily_report(date_str: str = None) -> dict:
     """Laporan harian untuk tanggal tertentu. Default: hari ini."""
-    if not date_str:
-        date_str = datetime.now().strftime("%Y-%m-%d")
+    date_str = parse_report_date_arg(date_str)
 
     records = get_all_records(SHEET_TRANSACTIONS)
     transactions = filter_transactions(records, date_from=date_str, date_to=date_str)
@@ -109,9 +185,9 @@ def get_daily_report(date_str: str = None) -> dict:
     return summary
 
 
-def get_weekly_report() -> dict:
-    """Laporan mingguan — Senin sampai Minggu minggu ini."""
-    date_from, date_to = get_week_range()
+def get_weekly_report(reference_date: str = None) -> dict:
+    """Laporan mingguan — Senin sampai Minggu dari reference_date."""
+    date_from, date_to = get_week_range(reference_date)
     records = get_all_records(SHEET_TRANSACTIONS)
     transactions = filter_transactions(records, date_from=date_from, date_to=date_to)
     summary = summarize(transactions)

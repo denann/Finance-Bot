@@ -19,6 +19,7 @@ from app.sheets.client import (
     update_cell,
     delete_rows,
     update_row,
+    get_sheet,
 )
 import uuid
 from datetime import datetime
@@ -462,6 +463,7 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
 
     try:
         append_row(SHEET_TRANSACTIONS, row)
+        sort_transactions_sheet_by_date(desc=True)
     except Exception as e:
         return {
             "success": False,
@@ -575,6 +577,7 @@ def save_transactions_batch(parsed_items: list[dict]) -> dict:
 
     try:
         append_rows(SHEET_TRANSACTIONS, rows)
+        sort_transactions_sheet_by_date(desc=True)
     except Exception as e:
         return {
             "success": False,
@@ -676,6 +679,48 @@ def parse_transaction_date(date_value: str):
         return None
 
 
+def sort_transactions_sheet_by_date(desc: bool = True) -> dict:
+    """
+    Sort tab transactions berdasarkan kolom date.
+
+    Catatan:
+    - Header tetap di row 1.
+    - Urutan default terbaru di atas supaya /last dan sheet konsisten.
+    - Kalau sorting gagal, caller tidak boleh dianggap gagal simpan transaksi.
+    """
+    try:
+        sheet = get_sheet(SHEET_TRANSACTIONS)
+        values = sheet.get_all_values()
+
+        if len(values) <= 2:
+            return {"success": True, "message": "Tidak cukup row untuk sort."}
+
+        header = values[0]
+        rows = values[1:]
+        col_count = len(header)
+
+        normalized_rows = []
+        for idx, row in enumerate(rows):
+            padded = list(row) + [""] * max(0, col_count - len(row))
+            padded = padded[:col_count]
+            date_obj = parse_transaction_date(padded[1] if len(padded) > 1 else "")
+            normalized_rows.append((idx, date_obj or datetime.min.date(), padded))
+
+        normalized_rows.sort(
+            key=lambda item: (item[1], item[0]),
+            reverse=desc,
+        )
+
+        sorted_rows = [item[2] for item in normalized_rows]
+        end_col = chr(ord("A") + col_count - 1)
+        sheet.update(f"A2:{end_col}{len(sorted_rows) + 1}", sorted_rows)
+
+        return {"success": True, "message": "transactions sorted by date"}
+
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
 def get_transactions_with_row_index() -> list[dict]:
     """
     Ambil semua transaksi + _row_index Google Sheets.
@@ -744,7 +789,10 @@ def get_recent_transactions(
 
     records = sorted(
         records,
-        key=lambda x: int(x.get("_row_index", 0)),
+        key=lambda x: (
+            parse_transaction_date(x.get("date", "")) or datetime.min.date(),
+            int(x.get("_row_index", 0)),
+        ),
         reverse=True,
     )
 
@@ -1448,6 +1496,7 @@ def edit_transaction_by_ref(
         row_values = build_transaction_row_from_record(new_txn)
 
         update_row(SHEET_TRANSACTIONS, target_row_index, row_values)
+        sort_transactions_sheet_by_date(desc=True)
 
     except Exception as e:
         return {

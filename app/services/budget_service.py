@@ -224,13 +224,22 @@ def get_actual_expense(category: str, month: str = None) -> float:
         if txn_type != "expense":
             continue
 
-        if txn_category.lower() != category.strip().lower():
-            continue
-
         if not txn_date.startswith(month):
             continue
 
-        total += safe_float(record.get("amount", 0))
+        budget_key = category.strip().lower()
+        desc = str(record.get("description", "") or "").lower()
+        raw = str(record.get("raw_input", "") or "").lower()
+
+        # Budget kategori resmi: cocokkan kategori transaksi.
+        if txn_category.lower() == budget_key:
+            total += safe_float(record.get("amount", 0))
+            continue
+
+        # Budget custom: kalau nama budget muncul di deskripsi/raw input, ikut dihitung.
+        # Contoh: budget "Jajan" bisa menghitung input yang memang mengandung kata jajan.
+        if budget_key and (budget_key in desc or budget_key in raw):
+            total += safe_float(record.get("amount", 0))
 
     return total
 
