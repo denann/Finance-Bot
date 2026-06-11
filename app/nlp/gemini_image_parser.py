@@ -23,7 +23,7 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # You may override this in Wispbyte env if your Gemini account uses a different model name.
-GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash")
+GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-lite")
 model = genai.GenerativeModel(GEMINI_IMAGE_MODEL)
 
 
