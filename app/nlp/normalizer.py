@@ -56,6 +56,46 @@ def normalize_text(text: str) -> str:
     return text.lower().strip()
 
 
+def parse_amount_value(number_str: str, unit: str = "") -> int | None:
+    """
+    Parse satu token nominal menjadi integer.
+
+    Catatan khusus:
+    - 91.457k -> 91457 (91.457 × 1000)
+    - 70.100k -> 70100
+    - 150.000 tanpa unit -> 150000
+    """
+    number_str = str(number_str or "").strip().lower().replace(",", ".")
+    unit = str(unit or "").strip().lower()
+
+    if not number_str:
+        return None
+
+    try:
+        if unit:
+            number = float(number_str)
+            multiplier = {
+                "rb": 1_000,
+                "ribu": 1_000,
+                "k": 1_000,
+                "jt": 1_000_000,
+                "juta": 1_000_000,
+                "m": 1_000_000,
+                "miliar": 1_000_000_000,
+                "miliard": 1_000_000_000,
+                "milyard": 1_000_000_000,
+            }.get(unit, 1)
+            return int(number * multiplier)
+
+        # Tanpa unit: titik dengan grup 3 digit dianggap ribuan.
+        if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", number_str):
+            return int(number_str.replace(".", ""))
+
+        return int(float(number_str))
+    except Exception:
+        return None
+
+
 def extract_amount_from_text(text: str) -> int | None:
     """
     Cari dan ekstrak nominal dari kalimat penuh.
@@ -66,6 +106,25 @@ def extract_amount_from_text(text: str) -> int | None:
         "bayar listrik 150.000"  → 150000
     """
     text = text.lower().strip()
+
+    # Handle ekspresi nominal sederhana: "70.100k - 19k", "100k + 25k".
+    # Wajib ada unit pada salah satu sisi agar tidak salah baca tanggal seperti 15-05-2026.
+    unit_pattern = r"rb|ribu|k|jt|juta|m|miliar|miliard|milyard"
+    token_pattern = rf"(\d+(?:[.,]\d+)?)\s*({unit_pattern})?"
+    expr_match = re.search(
+        rf"{token_pattern}\s*([+\-])\s*{token_pattern}",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if expr_match:
+        n1, u1, op, n2, u2 = expr_match.groups()
+        if u1 or u2:
+            v1 = parse_amount_value(n1, u1 or "")
+            v2 = parse_amount_value(n2, u2 or "")
+            if v1 is not None and v2 is not None:
+                result = v1 + v2 if op == "+" else v1 - v2
+                if result > 0:
+                    return int(result)
 
     # Handle format titik ribuan: "150.000" atau "1.500.000"
     # Deteksi: angka dengan titik yang diikuti tepat 3 digit
@@ -126,6 +185,14 @@ def apply_split_operation(text: str, base_amount: int) -> int:
         "60rb patungan 3"   → 20000
     """
     text_lower = text.lower()
+
+    # Jangan bagi amount utama untuk split bill dengan teman.
+    # Contoh: "Tissue 10k bagi 4 sama opik alpat sapto"
+    # amount transaksi utama harus tetap 10000; piutang dihitung di handlers.py.
+    if re.search(r"\b(?:bagi|patungan|split)\s*(?:jadi\s*)?\d+\s+(?:sama|ama|dengan|bareng)\b", text_lower):
+        return base_amount
+    if re.search(r"\b(?:sama|ama|dengan|bareng)\s+[a-zA-ZÀ-ÿ\s]{1,60}\s+(?:bagi|patungan|split)\s*(?:jadi\s*)?\d+\b", text_lower):
+        return base_amount
 
     # Pola: "dibagi N", "bagi N", "split N", "/ N"
     split_patterns = [

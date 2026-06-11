@@ -617,6 +617,24 @@ def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
     candidates = find_debt_initial_cashflow_candidates(debt)
 
     if len(candidates) == 0:
+        # Beberapa piutang sengaja dibuat TANPA cashflow, misalnya split bill:
+        # transaksi utama sudah tersimpan sebagai expense, lalu bagian teman hanya dicatat
+        # sebagai piutang tanpa mengubah saldo rekening. Untuk kasus ini /debt_void
+        # tetap aman: cukup tandai debt sebagai void tanpa reverse saldo dan tanpa delete txn.
+        debt_type = str(debt.get("type", "")).strip()
+        desc = str(debt.get("description", "") or "").lower()
+        if debt_type == "receivable" and ("split bill" in desc or "tanpa cashflow" in desc):
+            return {
+                "success": True,
+                "message": "ok",
+                "debt": debt,
+                "debt_row_index": row_index,
+                "cashflow_txn": None,
+                "candidate_txns": [],
+                "reverse_deltas": {},
+                "void_mode": "debt_only",
+            }
+
         return {
             "success": False,
             "message": "Cashflow transaksi terkait debt tidak ditemukan. Cek manual di sheet transactions.",
@@ -676,18 +694,21 @@ def void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
     reverse_deltas = preview.get("reverse_deltas", {})
     today = datetime.now().strftime("%Y-%m-%d")
 
-    try:
-        from app.services.transaction_service import apply_account_deltas
-        balance_result = apply_account_deltas(reverse_deltas)
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"Gagal reverse saldo rekening: {str(e)}",
-            "debt": debt,
-            "cashflow_txn": cashflow_txn,
-            "reverse_deltas": reverse_deltas,
-            "new_balances": {},
-        }
+    if cashflow_txn and reverse_deltas:
+        try:
+            from app.services.transaction_service import apply_account_deltas
+            balance_result = apply_account_deltas(reverse_deltas)
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Gagal reverse saldo rekening: {str(e)}",
+                "debt": debt,
+                "cashflow_txn": cashflow_txn,
+                "reverse_deltas": reverse_deltas,
+                "new_balances": {},
+            }
+    else:
+        balance_result = {"new_balances": {}}
 
     try:
         old_description = str(debt.get("description", "") or "").strip()
@@ -718,22 +739,23 @@ def void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
             "new_balances": balance_result.get("new_balances", {}),
         }
 
-    try:
-        txn_row = int(cashflow_txn.get("_row_index"))
-        delete_rows("transactions", [txn_row])
-    except Exception as e:
-        return {
-            "success": False,
-            "message": (
-                "Debt sudah ditandai void dan saldo sudah direverse, "
-                "tapi cashflow transaksi gagal dihapus. Cek manual di sheet transactions. "
-                f"Error: {str(e)}"
-            ),
-            "debt": debt,
-            "cashflow_txn": cashflow_txn,
-            "reverse_deltas": reverse_deltas,
-            "new_balances": balance_result.get("new_balances", {}),
-        }
+    if cashflow_txn:
+        try:
+            txn_row = int(cashflow_txn.get("_row_index"))
+            delete_rows("transactions", [txn_row])
+        except Exception as e:
+            return {
+                "success": False,
+                "message": (
+                    "Debt sudah ditandai void dan saldo sudah direverse, "
+                    "tapi cashflow transaksi gagal dihapus. Cek manual di sheet transactions. "
+                    f"Error: {str(e)}"
+                ),
+                "debt": debt,
+                "cashflow_txn": cashflow_txn,
+                "reverse_deltas": reverse_deltas,
+                "new_balances": balance_result.get("new_balances", {}),
+            }
 
     return {
         "success": True,

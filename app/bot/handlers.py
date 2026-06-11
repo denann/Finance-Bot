@@ -5,6 +5,7 @@ from difflib import SequenceMatcher
 from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
+from telegram.error import BadRequest
 import shlex
 import os
 import google.generativeai as genai
@@ -20,7 +21,7 @@ from app.config import (
     WEBHOOK_URL,
     APP_PORT,
 )
-from telegram.error import BadRequest
+
 from app.services.net_worth_service import (
     add_asset,
     add_liability,
@@ -108,37 +109,27 @@ from app.services.recurring_service import (
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
+
 TELEGRAM_SAFE_MESSAGE_LIMIT = 3800
 
 
 def split_long_message(text: str, max_len: int = TELEGRAM_SAFE_MESSAGE_LIMIT) -> list[str]:
-    """
-    Split pesan panjang Telegram jadi beberapa chunk aman.
-
-    Strategi:
-    - Pecah utama berdasarkan double newline agar section help tidak kepotong aneh.
-    - Kalau masih terlalu panjang, fallback pecah per line.
-    """
+    """Split pesan panjang Telegram menjadi beberapa bagian aman."""
     text = str(text or "").strip()
-
     if not text:
         return [""]
-
     if len(text) <= max_len:
         return [text]
 
     chunks = []
     current = ""
 
-    blocks = text.split("\n\n")
-
-    for block in blocks:
+    for block in text.split("\n\n"):
         block = block.strip()
         if not block:
             continue
 
         candidate = f"{current}\n\n{block}".strip() if current else block
-
         if len(candidate) <= max_len:
             current = candidate
             continue
@@ -147,32 +138,27 @@ def split_long_message(text: str, max_len: int = TELEGRAM_SAFE_MESSAGE_LIMIT) ->
             chunks.append(current)
             current = ""
 
-        # Kalau 1 block masih terlalu panjang, pecah per line.
-        if len(block) > max_len:
-            line_current = ""
-
-            for line in block.splitlines():
-                line = line.rstrip()
-                candidate_line = f"{line_current}\n{line}".strip() if line_current else line
-
-                if len(candidate_line) <= max_len:
-                    line_current = candidate_line
-                else:
-                    if line_current:
-                        chunks.append(line_current)
-
-                    # Fallback ekstrem kalau 1 line panjang banget.
-                    if len(line) > max_len:
-                        for i in range(0, len(line), max_len):
-                            chunks.append(line[i:i + max_len])
-                        line_current = ""
-                    else:
-                        line_current = line
-
-            if line_current:
-                chunks.append(line_current)
-        else:
+        if len(block) <= max_len:
             current = block
+            continue
+
+        line_current = ""
+        for line in block.splitlines():
+            candidate_line = f"{line_current}\n{line}".strip() if line_current else line
+            if len(candidate_line) <= max_len:
+                line_current = candidate_line
+            else:
+                if line_current:
+                    chunks.append(line_current)
+                if len(line) > max_len:
+                    for i in range(0, len(line), max_len):
+                        chunks.append(line[i:i + max_len])
+                    line_current = ""
+                else:
+                    line_current = line
+
+        if line_current:
+            chunks.append(line_current)
 
     if current:
         chunks.append(current)
@@ -181,15 +167,14 @@ def split_long_message(text: str, max_len: int = TELEGRAM_SAFE_MESSAGE_LIMIT) ->
 
 
 async def reply_long_markdown(update: Update, text: str):
-    """
-    Kirim pesan Markdown panjang secara aman.
-    Kalau Markdown error, fallback kirim plain text.
-    """
+    """Kirim Markdown panjang dengan fallback plain text kalau Markdown error."""
     for part in split_long_message(text):
         try:
             await update.message.reply_text(part, parse_mode="Markdown")
         except BadRequest:
             await update.message.reply_text(part)
+
+
 
 def parse_asset_quantity_input(value: str) -> dict | None:
     """
@@ -1810,12 +1795,20 @@ KNOWN_COMMANDS = {
         "description": "Lihat transaksi terakhir dengan filter.",
         "destructive": False,
     },
+    "transaksi": {
+        "description": "Lihat transaksi full untuk hari/minggu/bulan tertentu.",
+        "destructive": False,
+    },
     "delete_txn": {
         "description": "Hapus transaksi dari hasil /last atau berdasarkan ID.",
         "destructive": True,
     },
     "edit_txn": {
         "description": "Edit transaksi dari hasil /last atau berdasarkan ID.",
+        "destructive": True,
+    },
+    "debt_void": {
+        "description": "Batalkan utang/piutang salah input secara aman.",
         "destructive": True,
     },
     "insight": {
@@ -1875,6 +1868,10 @@ COMMAND_ALIASES = {
     # hutang
     "utang": "hutang",
     "hutang": "hutang",
+    "void_hutang": "debt_void",
+    "void_utang": "debt_void",
+    "void_piutang": "debt_void",
+    "debt_void": "debt_void",
 
     # last/history
     "last": "last",
@@ -1882,6 +1879,9 @@ COMMAND_ALIASES = {
     "histori": "last",
     "history": "last",
     "riwayat": "last",
+    "transaksi": "transaksi",
+    "mutasi": "transaksi",
+    "riwayat_transaksi": "transaksi",
 
     # delete
     "delete": "delete_txn",
@@ -1949,34 +1949,6 @@ UNAVAILABLE_COMMANDS = {
     "yearly": (
         "Fitur laporan tahunan belum tersedia.\n"
         "Yang tersedia saat ini: `/harian`, `/mingguan`, `/bulanan`."
-    ),
-    "export": (
-        "Fitur export belum aktif.\n"
-        "Nanti akan tersedia sebagai `/export 2026-06`."
-    ),
-    "ekspor": (
-        "Fitur export belum aktif.\n"
-        "Nanti akan tersedia sebagai `/export 2026-06`."
-    ),
-    "csv": (
-        "Fitur export CSV belum aktif.\n"
-        "Nanti akan tersedia sebagai `/export 2026-06`."
-    ),
-    "recurring": (
-        "Fitur recurring expense belum aktif.\n"
-        "Nanti akan tersedia untuk mencatat langganan/cicilan rutin."
-    ),
-    "cicilan": (
-        "Fitur cicilan otomatis belum aktif.\n"
-        "Untuk sekarang, cicilan masih perlu dicatat manual sebagai transaksi biasa."
-    ),
-    "networth": (
-        "Fitur net worth tracker belum aktif.\n"
-        "Nanti akan menghitung saldo rekening + aset + piutang - utang."
-    ),
-    "net_worth": (
-        "Fitur net worth tracker belum aktif.\n"
-        "Nanti akan menghitung saldo rekening + aset + piutang - utang."
     ),
 }
 
@@ -2918,16 +2890,60 @@ def strip_split_bill_phrase(text: str) -> str:
     return clean or str(text or "").strip()
 
 
-def clean_split_person_name(name: str) -> str:
-    clean = str(name or "").strip()
+def split_split_bill_person_names(name_text: str) -> list[str]:
+    """
+    Ambil daftar nama teman dari frasa split bill.
+
+    Contoh:
+    - "Sapto" -> ["Sapto"]
+    - "opik alpat sapto" -> ["Opik", "Alpat", "Sapto"]
+    - "opik, alpat, dan sapto" -> ["Opik", "Alpat", "Sapto"]
+
+    Catatan: untuk mode tanpa pemisah koma/dan, nama diasumsikan satu kata per orang.
+    Ini sesuai gaya input user seperti: "bagi 4 sama opik alpat sapto".
+    """
+    clean = str(name_text or "").strip()
+
+    # Stop sebelum frasa tanggal/status agar tidak ikut jadi nama.
     clean = re.split(
         r"\b(tanggal|tgl|tg|pada|date|kemarin|hari|minggu|bulan|udah|sudah|belum|dibayar|bayar|lunas|dari|ke)\b",
         clean,
         flags=re.IGNORECASE,
     )[0]
-    clean = re.sub(r"[^A-Za-zÀ-ÿ\s]", " ", clean)
-    clean = re.sub(r"\s+", " ", clean).strip()
-    return clean.title()
+
+    clean = re.sub(r"[^A-Za-zÀ-ÿ,;&\s]", " ", clean)
+    clean = re.sub(r"\s+", " ", clean).strip(" ,;&")
+    if not clean:
+        return []
+
+    # Kalau ada separator eksplisit, pakai itu.
+    if re.search(r"[,;&]|\bdan\b|\band\b", clean, flags=re.IGNORECASE):
+        raw_parts = re.split(r"\s*(?:,|;|&|\bdan\b|\band\b)\s*", clean, flags=re.IGNORECASE)
+    else:
+        # Tanpa separator, treat setiap token sebagai nama orang.
+        raw_parts = clean.split()
+
+    names = []
+    seen = set()
+    noise = {"sama", "ama", "dengan", "bareng", "dan", "and"}
+
+    for part in raw_parts:
+        part = re.sub(r"[^A-Za-zÀ-ÿ\s]", " ", str(part or ""))
+        part = re.sub(r"\s+", " ", part).strip()
+        if not part or part.lower() in noise:
+            continue
+        normalized = part.title()
+        key = normalized.lower()
+        if key not in seen:
+            names.append(normalized)
+            seen.add(key)
+
+    return names
+
+
+def clean_split_person_name(name: str) -> str:
+    names = split_split_bill_person_names(name)
+    return " ".join(names).title() if names else ""
 
 
 def detect_split_bill(parsed: dict, raw: str) -> dict | None:
@@ -2936,11 +2952,12 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
 
     Contoh:
     - Ayam dcelup 26k bagi 2 sama Sapto
-    - Ayam dcelup 26k patungan 2 sama Sapto
+    - Tissue 10k bagi 4 sama opik alpat sapto
 
     Desain cashflow:
     - Transaksi utama tetap disimpan sebesar total yang kamu bayarkan.
-    - Kalau teman belum bayar, dibuat piutang sebesar amount / jumlah peserta TANPA cashflow tambahan.
+    - Kalau teman belum bayar, dibuat piutang per orang sebesar amount / jumlah peserta
+      TANPA cashflow tambahan.
     """
     if not parsed or parsed.get("type") != "expense":
         return None
@@ -2951,12 +2968,12 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
 
     text = str(raw or "")
     patterns = [
-        r"\b(?:bagi|patungan|split)\s*(?:jadi\s*)?(\d+)\s+(?:sama|ama|dengan|bareng)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,40})",
-        r"\b(?:sama|ama|dengan|bareng)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,40})\s+(?:bagi|patungan|split)\s*(?:jadi\s*)?(\d+)",
+        r"\b(?:bagi|patungan|split)\s*(?:jadi\s*)?(\d+)\s+(?:sama|ama|dengan|bareng)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{0,80})",
+        r"\b(?:sama|ama|dengan|bareng)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{0,80})\s+(?:bagi|patungan|split)\s*(?:jadi\s*)?(\d+)",
     ]
 
     participants = None
-    person = None
+    person_names = []
 
     for idx, pattern in enumerate(patterns):
         match = re.search(pattern, text, flags=re.IGNORECASE)
@@ -2965,25 +2982,28 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
 
         if idx == 0:
             participants = int(match.group(1))
-            person = clean_split_person_name(match.group(2))
+            person_names = split_split_bill_person_names(match.group(2))
         else:
-            person = clean_split_person_name(match.group(1))
+            person_names = split_split_bill_person_names(match.group(1))
             participants = int(match.group(2))
         break
 
-    if not participants or participants < 2 or not person:
+    if not participants or participants < 2 or not person_names:
         return None
 
     share_amount = amount / participants
+    total_receivable = share_amount * len(person_names)
 
     # Bersihkan deskripsi supaya tidak ikut menyimpan frasa "bagi 2 sama ...".
     desc = parsed.get("description") or ""
     parsed["description"] = strip_split_bill_phrase(desc)
 
     return {
-        "person_name": person,
+        "person_name": " ".join(person_names),  # backward compatibility
+        "person_names": person_names,
         "participants": participants,
         "share_amount": share_amount,
+        "total_receivable": total_receivable,
         "total_amount": amount,
         "status": None,  # paid / unpaid
     }
@@ -3020,20 +3040,23 @@ def split_bill_keyboard(scope: str = "single") -> InlineKeyboardMarkup:
 
 def build_split_bill_prompt_from_parsed(parsed: dict) -> str:
     split_bill = parsed.get("split_bill", {}) or {}
-    person = split_bill.get("person_name", "-")
+    person_names = split_bill.get("person_names") or [split_bill.get("person_name", "-")]
     participants = int(split_bill.get("participants", 2) or 2)
     total = float(split_bill.get("total_amount", parsed.get("amount", 0)) or 0)
     share = float(split_bill.get("share_amount", 0) or 0)
+    total_receivable = float(split_bill.get("total_receivable", share * len(person_names)) or 0)
+    friend_text = ", ".join(str(p) for p in person_names if p)
 
     return (
         "🤝 *Split bill terdeteksi*\n\n"
         f"📝 Item: *{md_safe(parsed.get('description') or '-')}*\n"
         f"💰 Total dibayar: *{format_rupiah(total)}*\n"
         f"👥 Dibagi: *{participants} orang*\n"
-        f"👤 Teman: *{md_safe(person)}*\n"
-        f"📌 Bagian {md_safe(person)}: *{format_rupiah(share)}*\n\n"
-        f"{md_safe(person)} sudah bayar bagian dia?\n"
-        "Kalau belum, saya akan catat sebagai piutang tanpa cashflow tambahan."
+        f"👤 Teman: *{md_safe(friend_text)}*\n"
+        f"📌 Bagian per orang: *{format_rupiah(share)}*\n"
+        f"📌 Total piutang jika belum dibayar: *{format_rupiah(total_receivable)}*\n\n"
+        f"{md_safe(friend_text)} sudah bayar bagian mereka?\n"
+        "Kalau belum, saya akan catat sebagai piutang per orang tanpa cashflow tambahan."
     )
 
 
@@ -3048,16 +3071,17 @@ def build_mixed_split_bill_prompt(mixed_items: list[dict]) -> str:
     for i, item in enumerate(split_items, 1):
         parsed = item["parsed"]
         split_bill = parsed.get("split_bill", {}) or {}
-        person = split_bill.get("person_name", "-")
+        person_names = split_bill.get("person_names") or [split_bill.get("person_name", "-")]
         share = float(split_bill.get("share_amount", 0) or 0)
+        friend_text = ", ".join(str(p) for p in person_names if p)
         lines.append(
             f"{i}. {md_safe(parsed.get('description') or '-')} — "
-            f"bagian {md_safe(person)} *{format_rupiah(share)}*"
+            f"{md_safe(friend_text)} @ *{format_rupiah(share)}*"
         )
 
     lines.append(
         "\nApakah bagian teman-teman di item ini sudah dibayar?\n"
-        "Pilih *Belum* kalau mau otomatis masuk piutang."
+        "Pilih *Belum* kalau mau otomatis masuk piutang per orang."
     )
     return "\n".join(lines)
 
@@ -3077,13 +3101,56 @@ def create_split_bill_debt(parsed: dict, raw: str = "") -> dict | None:
     if not split_bill or split_bill.get("status") != "unpaid":
         return None
 
-    person = split_bill.get("person_name")
+    person_names = split_bill.get("person_names") or [split_bill.get("person_name")]
+    person_names = [str(p).strip().title() for p in person_names if str(p or "").strip()]
     share_amount = float(split_bill.get("share_amount", 0) or 0)
-    if not person or share_amount <= 0:
+    if not person_names or share_amount <= 0:
         return None
 
     desc = f"Split bill: {parsed.get('description') or raw or '-'}"
-    return add_debt("receivable", person, share_amount, desc)
+    created = []
+    failed = []
+
+    for person in person_names:
+        result = add_debt("receivable", person, share_amount, desc)
+        if result and result.get("success"):
+            created.append({
+                "person_name": person,
+                "remaining": share_amount,
+                "debt_id": result.get("debt_id"),
+            })
+        else:
+            failed.append({
+                "person_name": person,
+                "message": (result or {}).get("message", "Gagal membuat piutang."),
+            })
+
+    if failed and not created:
+        return {
+            "success": False,
+            "message": "; ".join(f"{x['person_name']}: {x['message']}" for x in failed),
+            "created": created,
+            "failed": failed,
+        }
+
+    return {
+        "success": True,
+        "person_name": ", ".join(x["person_name"] for x in created),
+        "remaining": sum(float(x["remaining"] or 0) for x in created),
+        "created": created,
+        "failed": failed,
+        "message": "ok" if not failed else "; ".join(f"{x['person_name']}: {x['message']}" for x in failed),
+    }
+
+
+def format_split_debt_result_lines(debt_result: dict) -> list[str]:
+    """Format hasil create_split_bill_debt untuk output Telegram."""
+    lines = []
+    for item in (debt_result or {}).get("created", []) or []:
+        lines.append(
+            f"• {md_safe(item.get('person_name'))}: *{format_rupiah(float(item.get('remaining', 0) or 0))}*"
+        )
+    return lines
 
 
 def summarize_saved_transaction_items(items: list[dict]) -> dict:
@@ -3751,7 +3818,7 @@ async def harian_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"*{format_rupiah(amount)}* | {contrib:.1f}% dari pengeluaran"
             )
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await reply_long_markdown(update, "\n".join(lines))
 
 
 async def mingguan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3819,7 +3886,7 @@ async def mingguan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"*{format_rupiah(amount)}* | {contrib:.1f}% dari pengeluaran"
             )
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await reply_long_markdown(update, "\n".join(lines))
 
 
 async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4223,6 +4290,9 @@ def build_debt_void_preview_text(preview: dict) -> str:
             f"• Row {txn_row} — {txn_date} — *{txn_desc}*\n"
             f"  {format_rupiah(txn_amount)} | {txn_category} | {txn_account}"
         )
+    else:
+        lines.append("\n*Cashflow terkait:* tidak ada.")
+        lines.append("Debt/piutang ini akan divoid tanpa mengubah saldo rekening.")
 
     if reverse_deltas:
         lines.append("\n*Efek balik ke saldo rekening:*")
@@ -4233,7 +4303,7 @@ def build_debt_void_preview_text(preview: dict) -> str:
 
     lines.append(
         "\nLanjut void debt ini?\n"
-        "Debt akan ditandai settled/void dan cashflow terkait akan dihapus."
+        "Debt akan ditandai settled/void. Jika ada cashflow terkait, cashflow akan dihapus dan saldo direverse."
     )
 
     return "\n".join(lines)
@@ -5401,6 +5471,156 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=account_keyboard("acc"),
         )
 
+def build_transactions_full_text(transactions: list[dict], title: str) -> str:
+    lines = [f"🧾 *{md_safe(title)}*\n"]
+
+    total_income = 0.0
+    total_expense = 0.0
+    total_transfer = 0.0
+
+    for i, txn in enumerate(transactions, 1):
+        txn_type = str(txn.get("type", "")).strip()
+        amount = float(txn.get("amount", 0) or 0)
+
+        if txn_type == "income":
+            total_income += amount
+        elif txn_type == "expense":
+            total_expense += amount
+        elif txn_type == "transfer":
+            total_transfer += amount
+
+        icon = {
+            "expense": "❌",
+            "income": "✅",
+            "transfer": "🔄",
+        }.get(txn_type, "❓")
+
+        date = md_safe(txn.get("date", "-"))
+        desc = md_safe(txn.get("description") or "-")
+        category = md_safe(txn.get("category") or "-")
+        account = md_safe(txn.get("account") or "-")
+        to_account = md_safe(txn.get("to_account") or "")
+
+        account_text = account
+        if txn_type == "transfer" and str(txn.get("to_account") or "").strip():
+            account_text = f"{account} → {to_account}"
+
+        lines.append(
+            f"{i}. {icon} *{desc}*\n"
+            f"   📅 {date}\n"
+            f"   💰 {format_rupiah(amount)} | {category}\n"
+            f"   🏦 {account_text}"
+        )
+
+    net = total_income - total_expense
+    lines.append(
+        "\n*Ringkasan:*\n"
+        f"✅ Income   : *{format_rupiah(total_income)}*\n"
+        f"❌ Expense  : *{format_rupiah(total_expense)}*\n"
+        f"🔄 Transfer : *{format_rupiah(total_transfer)}*\n"
+        f"📊 Net      : *{format_rupiah(net)}*\n"
+        f"📝 Total    : *{len(transactions)} transaksi*"
+    )
+
+    lines.append(
+        "\nNomor di atas bisa dipakai untuk koreksi setelah command ini:\n"
+        "`/delete_txn 1` atau `/edit_txn 1 amount=15000`"
+    )
+
+    return "\n".join(lines)
+
+
+def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str]:
+    """Parse command /transaksi untuk full list hari/minggu/bulan tertentu."""
+    raw = " ".join(args or []).strip()
+    low = raw.lower()
+
+    if not raw:
+        year, month_num = parse_report_month_arg(None)
+        report = get_monthly_report(year, month_num)
+        return f"Transaksi Bulan {report.get('month', '-')}", report.get("transactions", []), "month"
+
+    first = low.split()[0]
+    rest = " ".join(raw.split()[1:]).strip()
+
+    if first in ["hari", "harian", "tanggal", "tgl", "tg", "day", "daily"]:
+        report = get_daily_report(rest or None)
+        return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day"
+
+    if first in ["minggu", "mingguan", "week", "weekly"]:
+        report = get_weekly_report(rest or None)
+        return f"Transaksi Minggu {report.get('date_from', '-')} s/d {report.get('date_to', '-')}", report.get("transactions", []), "week"
+
+    if first in ["bulan", "bulanan", "month", "monthly"]:
+        year, month_num = parse_report_month_arg(rest or None)
+        report = get_monthly_report(year, month_num)
+        return f"Transaksi Bulan {report.get('month', '-')}", report.get("transactions", []), "month"
+
+    if re.fullmatch(r"20\d{2}[-/]\d{1,2}[-/]\d{1,2}", low) or re.fullmatch(r"\d{1,2}[-/]\d{1,2}[-/]20\d{2}", low):
+        report = get_daily_report(raw)
+        return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day"
+
+    if re.fullmatch(r"20\d{2}[-/]\d{1,2}", low):
+        year, month_num = parse_report_month_arg(raw)
+        report = get_monthly_report(year, month_num)
+        return f"Transaksi Bulan {report.get('month', '-')}", report.get("transactions", []), "month"
+
+    if re.fullmatch(r"\d{1,2}", low):
+        report = get_daily_report(raw)
+        return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day"
+
+    raise ValueError(
+        "Format /transaksi tidak dikenali. Contoh: /transaksi hari 1, /transaksi minggu 2026-06-01, /transaksi bulan 2026-06."
+    )
+
+
+async def transaksi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List transaksi full untuk hari/minggu/bulan tertentu."""
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    try:
+        title, transactions, _period_type = parse_transaksi_period(context.args)
+    except ValueError as e:
+        await update.message.reply_text(
+            f"❌ {str(e)}\n\n"
+            "Contoh:\n"
+            "`/transaksi`\n"
+            "`/transaksi hari 2026-06-01`\n"
+            "`/transaksi hari 1`\n"
+            "`/transaksi minggu 2026-06-01`\n"
+            "`/transaksi bulan 2026-06`\n"
+            "`/transaksi bulan 6`",
+            parse_mode="Markdown",
+        )
+        return
+
+    transactions = sorted(
+        transactions,
+        key=lambda x: (str(x.get("date", "")), int(x.get("_row_index", 0) or 0)),
+        reverse=True,
+    )
+
+    if not transactions:
+        await update.message.reply_text(
+            f"📭 Tidak ada transaksi untuk filter: *{md_safe(title)}*",
+            parse_mode="Markdown",
+        )
+        return
+
+    last_map = {}
+    for i, txn in enumerate(transactions, 1):
+        if txn.get("_row_index"):
+            last_map[str(i)] = {
+                "id": str(txn.get("id", "")),
+                "row_index": int(txn.get("_row_index")),
+            }
+
+    context.user_data["last_txn_map"] = last_map
+    await reply_long_markdown(update, build_transactions_full_text(transactions, title))
+
+
 async def last_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /last
@@ -5482,10 +5702,7 @@ async def last_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["last_txn_map"] = last_map
 
-    await update.message.reply_text(
-        build_last_transactions_text(transactions, title),
-        parse_mode="Markdown",
-    )
+    await reply_long_markdown(update, build_last_transactions_text(transactions, title))
 
 
 async def delete_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6706,9 +6923,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for item in normal_transaction_items:
                     debt_result = create_split_bill_debt(item.get("parsed", {}), item.get("raw", ""))
                     if debt_result and debt_result.get("success"):
-                        split_debt_lines.append(
-                            f"• {debt_result.get('person_name')}: *{format_rupiah(debt_result.get('remaining'))}*"
-                        )
+                        split_debt_lines.extend(format_split_debt_result_lines(debt_result))
                     elif debt_result:
                         failed_items.append({
                             "raw": item.get("raw", "split bill"),
@@ -6781,9 +6996,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for item in batch:
                 debt_result = create_split_bill_debt(item.get("parsed", {}), item.get("raw", ""))
                 if debt_result and debt_result.get("success"):
-                    split_debt_lines.append(
-                        f"• {debt_result.get('person_name')}: *{format_rupiah(debt_result.get('remaining'))}*"
-                    )
+                    split_debt_lines.extend(format_split_debt_result_lines(debt_result))
                 elif debt_result:
                     result.setdefault("failed_items", []).append({
                         "raw": item.get("raw", "split bill"),
@@ -6872,11 +7085,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             split_info = ""
             split_debt = create_split_bill_debt(parsed, raw)
             if split_debt and split_debt.get("success"):
-                split_info = (
-                    f"\n\n🤝 *Piutang split bill dibuat*"
-                    f"\n👤 {split_debt.get('person_name')}: "
-                    f"*{format_rupiah(split_debt.get('remaining'))}*"
-                )
+                split_lines = format_split_debt_result_lines(split_debt)
+                split_info = "\n\n🤝 *Piutang split bill dibuat*\n" + "\n".join(split_lines)
             elif split_debt:
                 split_info = f"\n\n⚠️ Gagal membuat piutang split bill: {split_debt.get('message')}"
 

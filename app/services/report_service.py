@@ -6,6 +6,18 @@ from app.config import SHEET_TRANSACTIONS, SHEET_ACCOUNTS
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def get_transaction_records_for_report() -> list[dict]:
+    """Ambil transaksi dengan _row_index agar hasil /transaksi bisa dipakai delete/edit."""
+    records = get_transaction_records_for_report()
+    result = []
+    for i, record in enumerate(records):
+        item = dict(record)
+        item["_row_index"] = i + 2
+        result.append(item)
+    return result
+
+
+
 def format_rupiah(amount: float) -> str:
     return f"Rp{int(amount):,}".replace(",", ".")
 
@@ -177,7 +189,7 @@ def get_daily_report(date_str: str = None) -> dict:
     """Laporan harian untuk tanggal tertentu. Default: hari ini."""
     date_str = parse_report_date_arg(date_str)
 
-    records = get_all_records(SHEET_TRANSACTIONS)
+    records = get_transaction_records_for_report()
     transactions = filter_transactions(records, date_from=date_str, date_to=date_str)
     summary = summarize(transactions)
     summary["date"] = date_str
@@ -188,7 +200,7 @@ def get_daily_report(date_str: str = None) -> dict:
 def get_weekly_report(reference_date: str = None) -> dict:
     """Laporan mingguan — Senin sampai Minggu dari reference_date."""
     date_from, date_to = get_week_range(reference_date)
-    records = get_all_records(SHEET_TRANSACTIONS)
+    records = get_transaction_records_for_report()
     transactions = filter_transactions(records, date_from=date_from, date_to=date_to)
     summary = summarize(transactions)
     summary["date_from"] = date_from
@@ -204,7 +216,7 @@ def get_monthly_report(year: int = None, month: int = None) -> dict:
     month = now.month if month is None else month
     date_from, date_to = get_month_range(year, month)
 
-    records = get_all_records(SHEET_TRANSACTIONS)
+    records = get_transaction_records_for_report()
     transactions = filter_transactions(records, date_from=date_from, date_to=date_to)
     summary = summarize(transactions)
     summary["date_from"] = date_from
@@ -220,7 +232,7 @@ def search_transactions(keyword: str, limit: int = 10) -> list[dict]:
     Return max `limit` hasil terbaru.
     """
     keyword_lower = keyword.lower()
-    records = get_all_records(SHEET_TRANSACTIONS)
+    records = get_transaction_records_for_report()
     results = []
 
     for r in records:
@@ -243,7 +255,7 @@ def get_top_expenses(month: str = None, top_n: int = 5) -> list[dict]:
     if not month:
         month = datetime.now().strftime("%Y-%m")
 
-    records = get_all_records(SHEET_TRANSACTIONS)
+    records = get_transaction_records_for_report()
     expenses = [
         r for r in records
         if r.get("type") == "expense"

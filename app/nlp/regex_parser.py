@@ -139,7 +139,7 @@ DEBT_PAYABLE_KEYWORDS = [
 ]
 
 DEBT_RECEIVABLE_KEYWORDS = [
-    "pinjemin", "pinjemin ke", "kasih hutang",
+    "minjemin", "minjemin ke", "pinjemin", "pinjemin ke", "kasih hutang",
     "pinjem", "pinjam", "minjem",
     "hutangin", "utangin",
 ]
