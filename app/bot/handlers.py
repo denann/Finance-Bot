@@ -20,7 +20,7 @@ from app.config import (
     WEBHOOK_URL,
     APP_PORT,
 )
-
+from telegram.error import BadRequest
 from app.services.net_worth_service import (
     add_asset,
     add_liability,
@@ -108,6 +108,88 @@ from app.services.recurring_service import (
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
+TELEGRAM_SAFE_MESSAGE_LIMIT = 3800
+
+
+def split_long_message(text: str, max_len: int = TELEGRAM_SAFE_MESSAGE_LIMIT) -> list[str]:
+    """
+    Split pesan panjang Telegram jadi beberapa chunk aman.
+
+    Strategi:
+    - Pecah utama berdasarkan double newline agar section help tidak kepotong aneh.
+    - Kalau masih terlalu panjang, fallback pecah per line.
+    """
+    text = str(text or "").strip()
+
+    if not text:
+        return [""]
+
+    if len(text) <= max_len:
+        return [text]
+
+    chunks = []
+    current = ""
+
+    blocks = text.split("\n\n")
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+
+        candidate = f"{current}\n\n{block}".strip() if current else block
+
+        if len(candidate) <= max_len:
+            current = candidate
+            continue
+
+        if current:
+            chunks.append(current)
+            current = ""
+
+        # Kalau 1 block masih terlalu panjang, pecah per line.
+        if len(block) > max_len:
+            line_current = ""
+
+            for line in block.splitlines():
+                line = line.rstrip()
+                candidate_line = f"{line_current}\n{line}".strip() if line_current else line
+
+                if len(candidate_line) <= max_len:
+                    line_current = candidate_line
+                else:
+                    if line_current:
+                        chunks.append(line_current)
+
+                    # Fallback ekstrem kalau 1 line panjang banget.
+                    if len(line) > max_len:
+                        for i in range(0, len(line), max_len):
+                            chunks.append(line[i:i + max_len])
+                        line_current = ""
+                    else:
+                        line_current = line
+
+            if line_current:
+                chunks.append(line_current)
+        else:
+            current = block
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+
+async def reply_long_markdown(update: Update, text: str):
+    """
+    Kirim pesan Markdown panjang secara aman.
+    Kalau Markdown error, fallback kirim plain text.
+    """
+    for part in split_long_message(text):
+        try:
+            await update.message.reply_text(part, parse_mode="Markdown")
+        except BadRequest:
+            await update.message.reply_text(part)
 
 def parse_asset_quantity_input(value: str) -> dict | None:
     """
@@ -3469,7 +3551,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Data yang dikirim ke Gemini adalah ringkasan relevan, bukan seluruh spreadsheet mentah."
     )
 
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await reply_long_markdown(update, text)
 
 
 async def send_finance_insight_reply(
