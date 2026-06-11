@@ -76,6 +76,17 @@ from app.services.report_service import (
     parse_report_month_arg,
 )
 
+from app.services.finance_insight_service import (
+    build_monthly_finance_context,
+    build_ask_finance_context,
+    build_audit_context,
+    build_coach_context,
+    normalize_month_arg as normalize_insight_month,
+    should_handle_finance_question,
+    route_finance_question_mode,
+)
+from app.nlp.gemini_finance_insight import generate_finance_insight
+
 from app.services.debt_service import (
     add_debt,
     add_payment,
@@ -1725,6 +1736,30 @@ KNOWN_COMMANDS = {
         "description": "Edit transaksi dari hasil /last atau berdasarkan ID.",
         "destructive": True,
     },
+    "insight": {
+        "description": "Buat insight/narasi finansial dengan Gemini.",
+        "destructive": False,
+    },
+    "ask": {
+        "description": "Tanya jawab finansial natural berbasis data sheet.",
+        "destructive": False,
+    },
+    "audit": {
+        "description": "Cek anomali dan kualitas data transaksi.",
+        "destructive": False,
+    },
+    "coach": {
+        "description": "Saran finansial ringan berbasis data.",
+        "destructive": False,
+    },
+    "assets": {
+        "description": "Lihat daftar aset aktif.",
+        "destructive": False,
+    },
+    "networth": {
+        "description": "Lihat kekayaan bersih.",
+        "destructive": False,
+    },
 }
 
 
@@ -1789,6 +1824,26 @@ COMMAND_ALIASES = {
     "find": "cari",
     "carii": "cari",
     "cari": "cari",
+
+    # Gemini / RAG finance
+    "insight": "insight",
+    "analisis": "insight",
+    "analisa": "insight",
+    "narasi": "insight",
+    "ask": "ask",
+    "tanya": "ask",
+    "audit": "audit",
+    "anomali": "audit",
+    "coach": "coach",
+    "saran": "coach",
+
+    # net worth
+    "aset": "assets",
+    "asset": "assets",
+    "assets": "assets",
+    "networth": "networth",
+    "net_worth": "networth",
+    "kekayaan": "networth",
 }
 
 
@@ -3272,20 +3327,18 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
         "👋 Halo! Saya bot pencatat keuangan pribadi Anda.\n\n"
-        "Ketik transaksi bebas seperti:\n"
+        "Bisa catat transaksi lewat teks atau foto struk:\n"
         "• `beli kopi 25rb`\n"
         "• `gaji masuk 8 juta`\n"
-        "• `Budi minjem 300k`\n\n"
-        "Command cepat:\n"
-        "`/saldo` — lihat saldo\n"
-        "`/last` — lihat transaksi terakhir\n"
-        "`/budget` — lihat budget\n"
-        "`/hutang` — lihat utang/piutang\n"
-        "`/export` — export transaksi CSV\n"
-        "`/recurring` — transaksi rutin\n"
-        "`/networth` — lihat kekayaan bersih\n"
-
-        "`/health` — cek status bot\n\n"
+        "• `Budi minjem 300k`\n"
+        "• kirim foto struk / QRIS\n\n"
+        "Command utama:\n"
+        "`/saldo`, `/last`, `/budget`, `/hutang`, `/assets`, `/networth`\n\n"
+        "Analisis Gemini:\n"
+        "`/insight` — insight bulanan\n"
+        "`/ask bulan ini boros di mana?` — tanya data finance\n"
+        "`/audit` — cek data/anomali\n"
+        "`/coach` — saran finansial ringan\n\n"
         "Ketik `/help` untuk panduan lengkap."
     )
 
@@ -3299,6 +3352,9 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
         "📖 *Panduan Penggunaan Finance Bot*\n\n"
+
+        "*A. Fitur Inti*\n"
+        "Bagian ini deterministic: bot mencatat, menghitung, dan mengubah data Google Sheets.\n\n"
 
         "*1. Catat Pengeluaran*\n"
         "`beli kopi 25rb`\n"
@@ -3318,28 +3374,33 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         "*4. Utang/Piutang*\n"
         "`hutang ke Budi 500rb`\n"
-        "`minjem Joko 100k`\n"
+        "`minjem uang Annisa 220k`\n"
         "`Budi minjem 300rb`\n"
         "`Budi bayar 100rb`\n"
-        "`bayar hutang Budi 100rb`\n\n"
+        "`bayar hutang Budi 100rb`\n"
+        "`/debt_void 1` — batalkan debt salah input dari hasil `/hutang`\n\n"
 
         "*5. Input Banyak Sekaligus*\n"
         "`beli kopi 10k beli nasi 20k`\n"
         "`beli kopi 10k minjem Joko 50k`\n"
         "`hutang ke Budi 500k; hutang ke Joko 100k`\n\n"
 
-        "*6. Laporan*\n"
+        "*6. Split Bill*\n"
+        "`Ayam dcelup 26k bagi 2 sama Sapto`\n"
+        "Bot akan tanya apakah sudah dibayar. Kalau belum, bagian Sapto masuk piutang.\n\n"
+
+        "*7. Laporan*\n"
         "`/saldo` — saldo semua rekening\n"
         "`/harian` — ringkasan hari ini\n"
         "`/harian 2026-06-01` — ringkasan tanggal tertentu\n"
         "`/mingguan` — ringkasan minggu ini\n"
         "`/mingguan 2026-06-01` — ringkasan minggu yang memuat tanggal itu\n"
-        "`/bulanan` — ringkasan bulan ini\n"
-        "`/bulanan 2026-06` — ringkasan bulan tertentu\n"
+        "`/bulanan` — ringkasan bulan ini + insight otomatis Gemini\n"
+        "`/bulanan 2026-06` — ringkasan bulan tertentu + insight otomatis Gemini\n"
         "`/hutang` — utang/piutang aktif\n"
         "`/cari kopi` — cari transaksi dengan keyword kopi\n\n"
 
-        "*7. Budget*\n"
+        "*8. Budget*\n"
         "`/budget` — lihat budget bulan berjalan\n"
         "`/budget 2026-06` — lihat budget bulan tertentu\n"
         "`/budget_history` — lihat daftar bulan yang punya budget\n"
@@ -3348,77 +3409,172 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`budget kebutuhan 2 juta` — buat budget custom Kebutuhan\n"
         "`budget transport 300rb 2026-07` — set budget bulan tertentu\n\n"
 
-        "*8. Lihat & Koreksi Transaksi*\n"
-        "`/last` — lihat 10 transaksi terakhir\n"
+        "*9. Lihat & Koreksi Transaksi*\n"
+        "`/last` — lihat 10 transaksi terakhir, urut tanggal terbaru\n"
         "`/last 20` — lihat 20 transaksi terakhir\n"
-        "`/last today` — lihat transaksi hari ini\n"
-        "`/last week` — lihat transaksi minggu ini\n"
-        "`/last month` — lihat transaksi bulan ini\n"
-        "`/last 2026-06` — lihat transaksi bulan tertentu\n\n"
-
-        "*9. Hapus Transaksi*\n"
-        "`/delete_txn 1` — hapus transaksi nomor 1 dari hasil /last\n"
-        "`/delete_txn 1 3 5` — hapus banyak transaksi sekaligus\n"
-        "`/delete_txn 1-4` — hapus range transaksi dari hasil /last\n"
-        "`/delete_txn txn_20260609_xxx` — hapus berdasarkan transaction ID\n\n"
-
-        "*10. Edit Transaksi*\n"
+        "`/last today`, `/last week`, `/last month`, `/last 2026-06`\n"
+        "`/delete_txn 1`, `/delete_txn 1 3 5`, `/delete_txn 1-4`\n"
         "`/edit_txn 2 amount=15000`\n"
-        "`/edit_txn 2 desc=\"Kopi susu\"`\n"
-        "`/edit_txn 2 account=BRI`\n"
-        "`/edit_txn 2 category=\"Food & Beverage\"`\n"
-        "`/edit_txn 2 date=2026-06-10`\n"
-        "`/edit_txn 2 20000` — shortcut edit nominal\n\n"
+        "`/edit_txn 2 desc=Kopi susu`\n"
+        "`/edit_txn 2 account=BRI category=Food & Beverage`\n\n"
 
-        "*11. Export CSV*\n"
-        "`/export` — export transaksi bulan berjalan\n"
-        "`/export today` — export transaksi hari ini\n"
-        "`/export week` — export transaksi minggu ini\n"
-        "`/export month` — export transaksi bulan ini\n"
-        "`/export 2026-06` — export transaksi bulan tertentu\n\n"
-
-        "*12. Recurring Transaction*\n"
-        "`/recurring` — lihat daftar transaksi rutin\n"
+        "*10. Export, Recurring, Health*\n"
+        "`/export`, `/export today`, `/export week`, `/export 2026-06`\n"
+        "`/recurring` — lihat transaksi rutin\n"
         "`/recurring_add Netflix | expense | 65000 | Entertainment | DANA | monthly | 5 | Langganan Netflix`\n"
-        "`/recurring_edit <rule_id> | amount=75000 | day=10` — edit recurring rule\n"
-        "`/recurring_run` — jalankan transaksi rutin yang jatuh tempo\n"
-        "`/recurring_off <rule_id>` — nonaktifkan transaksi rutin\n\n"
-
-        "*13. Health Check*\n"
+        "`/recurring_run`, `/recurring_edit ...`, `/recurring_off ...`\n"
         "`/health` — cek status bot, env, Google Sheets, dan sheet utama\n\n"
 
-        "*14. Net Worth Tracker*\n"
-        "`/networth` — lihat total kekayaan bersih\n"
+        "*11. Net Worth, Aset, Liabilitas*\n"
+        "`/networth` — lihat kekayaan bersih\n"
         "`/assets` — lihat daftar aset aktif\n"
         "`/liabilities` — lihat daftar liabilitas aktif\n"
-        "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja` — tambah aset\n"
-        "`/asset_update asset_id | value=9000000` — update nilai aset\n"
-        "`/asset_off asset_id` — nonaktifkan aset\n"
-        "`/liability_add Paylater | 1200000 | Paylater | Cicilan aktif` — tambah liabilitas\n"
-        "`/liability_update liab_id | balance=500000` — update liabilitas\n"
-        "`/liability_off liab_id` — nonaktifkan liabilitas\n"
-        "`/networth_snapshot` — simpan snapshot net worth hari ini\n"
-        "`/networth_history` — lihat riwayat snapshot net worth\n\n"
+        "`add emas 41 gram` — bot tanya harga 1 gram, lalu kalikan otomatis\n"
+        "`add laptop 1 buah` — bot tanya harga 1 buah\n"
+        "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja`\n"
+        "`/asset_update asset_id | unit_price=2420000`\n"
+        "`/asset_update asset_id | value=9000000`\n"
+        "`/asset_off asset_id`\n"
+        "`/liability_add Paylater | 1200000 | Paylater | Cicilan aktif`\n"
+        "`/liability_update liab_id | balance=500000`\n"
+        "`/networth_snapshot`, `/networth_history`\n\n"
 
-        "*15. Input Gambar / Struk*\n"
+        "*12. Input Gambar / Struk*\n"
         "Kirim foto struk, nota, QRIS, atau screenshot transaksi.\n"
-        "Bot akan membaca gambar dengan Gemini, lalu menampilkan preview sebelum disimpan.\n"
-        "Tambahkan caption kalau perlu, contoh:\n"
-        "`pakai BSI`\n"
-        "`ini pemasukan`\n"
-        "`struk makan hari ini`\n\n"
+        "Bot membaca gambar dengan Gemini, lalu menampilkan preview sebelum disimpan.\n"
+        "Caption opsional: `pakai BSI`, `ini pemasukan`, `total aja`.\n\n"
+
+        "*B. Analisis Gemini / RAG Finance*\n"
+        "Bagian ini read-only: bot mengambil data relevan dari Google Sheets, menghitung angka pakai Python, lalu Gemini menjelaskan insight.\n\n"
+
+        "`/insight` — monthly narrative report bulan ini\n"
+        "`/insight 2026-06` — insight bulan tertentu\n"
+        "`/ask bulan ini boros di mana?` — tanya jawab finansial natural\n"
+        "`/ask kapan terakhir saya beli kopi?` — tanya transaksi spesifik\n"
+        "`/ask budget makan aman gak?` — budget assistant\n"
+        "`/audit` — deteksi anomali + data quality checker\n"
+        "`/coach` — financial coach ringan\n"
+        "`/coach gimana biar nabung 2 juta?`\n\n"
+
+        "Contoh pertanyaan natural tanpa command:\n"
+        "`bulan ini boros di mana?`\n"
+        "`ada transaksi aneh bulan ini?`\n"
+        "`budget saya aman gak?`\n"
+        "`kasih saran pengeluaran bulan ini`\n\n"
 
         "*Catatan penting:*\n"
+        "• Fitur inti mengubah data, fitur Gemini/RAG hanya membaca dan memberi insight.\n"
         "• Untuk `/delete_txn` dan `/edit_txn`, jalankan `/last` dulu.\n"
-        "• Angka `1`, `2`, `3` mengikuti nomor dari hasil `/last` terakhir.\n"
-        "• Transaksi debt cashflow belum bisa diedit/hapus dari fitur transaksi biasa agar sheet debts tidak rusak.\n\n"
-
-
-        "Kalau command typo, bot akan coba kasih saran.\n"
-        "Contoh: `/minguan` akan diarahkan ke `/mingguan`."
+        "• Transaksi debt cashflow tidak dihapus dari `/delete_txn`; gunakan `/debt_void` agar konsisten.\n"
+        "• Data yang dikirim ke Gemini adalah ringkasan relevan, bukan seluruh spreadsheet mentah."
     )
 
     await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def send_finance_insight_reply(
+    update: Update,
+    mode: str,
+    context_data: dict,
+    question: str = "",
+    prefix: str = "🤖 Insight Gemini",
+):
+    await update.message.reply_text("⏳ Mengambil data dan membuat insight...")
+    answer = generate_finance_insight(mode, context_data, question=question)
+    await update.message.reply_text(f"{prefix}\n\n{answer}")
+
+
+async def insight_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/insight [YYYY-MM] — monthly narrative report."""
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    month_arg = " ".join(context.args).strip() if context.args else None
+    month = normalize_insight_month(month_arg)
+    data = build_monthly_finance_context(month)
+    await send_finance_insight_reply(
+        update,
+        "monthly_insight",
+        data,
+        question=f"Buat insight/narasi keuangan untuk {month}",
+        prefix=f"📌 Insight Finance {month}",
+    )
+
+
+async def audit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/audit [YYYY-MM] — cek data quality dan anomali."""
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    month_arg = " ".join(context.args).strip() if context.args else None
+    month = normalize_insight_month(month_arg)
+    data = build_audit_context(month)
+    await send_finance_insight_reply(
+        update,
+        "audit",
+        data,
+        question=f"Audit data finance dan anomali untuk {month}",
+        prefix=f"🧹 Audit Finance {month}",
+    )
+
+
+async def ask_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ask <pertanyaan> — tanya jawab finansial natural."""
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    question = " ".join(context.args).strip()
+    if not question:
+        await update.message.reply_text(
+            "❌ Tulis pertanyaannya setelah `/ask`.\n\n"
+            "Contoh:\n"
+            "`/ask bulan ini boros di mana?`\n"
+            "`/ask kapan terakhir saya beli kopi?`\n"
+            "`/ask budget makan aman gak?`",
+            parse_mode="Markdown",
+        )
+        return
+
+    mode = route_finance_question_mode(question)
+    if mode == "audit":
+        data = build_audit_context(None)
+    elif mode == "coach":
+        data = build_coach_context(None, question=question)
+    else:
+        data = build_ask_finance_context(question)
+
+    await send_finance_insight_reply(update, mode, data, question=question, prefix="💬 Jawaban Finance")
+
+
+async def coach_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/coach [pertanyaan] — financial coach ringan."""
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    question = " ".join(context.args).strip() if context.args else "Kasih saran finansial ringan untuk bulan ini."
+    data = build_coach_context(None, question=question)
+    await send_finance_insight_reply(update, "coach", data, question=question, prefix="🧭 Finance Coach")
+
+
+async def handle_natural_finance_question(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
+    """Handle pertanyaan finance natural tanpa command, read-only."""
+    if not should_handle_finance_question(user_text):
+        return False
+
+    mode = route_finance_question_mode(user_text)
+    if mode == "audit":
+        data = build_audit_context(None)
+    elif mode == "coach":
+        data = build_coach_context(None, question=user_text)
+    else:
+        data = build_ask_finance_context(user_text)
+
+    await send_finance_insight_reply(update, mode, data, question=user_text, prefix="🤖 Analisis Finance")
+    return True
 
 
 async def saldo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3657,6 +3813,21 @@ async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    # Insight otomatis setelah /bulanan.
+    # Dikirim sebagai pesan terpisah tanpa parse_mode agar output Gemini tidak merusak Markdown Telegram.
+    try:
+        insight_data = build_monthly_finance_context(month_name)
+        insight_text = generate_finance_insight(
+            "monthly_auto",
+            insight_data,
+            question=f"Buat insight singkat otomatis setelah laporan bulanan {month_name}",
+        )
+        await update.message.reply_text(f"🤖 Insight Bulanan Gemini\n\n{insight_text}")
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ Ringkasan bulanan berhasil, tapi insight Gemini gagal dibuat: {str(e)}"
+        )
 
 
 async def cari_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4980,6 +5151,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if local_natural_handled:
+        return
+
+    # ── RAG/Gemini finance question read-only ───────────────────────────────
+    # Ditaruh sebelum parser transaksi, tapi hanya aktif untuk pertanyaan tanpa nominal.
+    finance_question_handled = await handle_natural_finance_question(
+        update,
+        context,
+        user_text,
+    )
+
+    if finance_question_handled:
         return
 
     has_explicit_separator = bool(re.search(r"[\n\r;,]", user_text))

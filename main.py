@@ -53,6 +53,10 @@ from app.bot.handlers import (
     liability_off_handler,
     networth_snapshot_handler,
     networth_history_handler,
+    insight_handler,
+    ask_handler,
+    audit_handler,
+    coach_handler,
 )
 from app.scheduler.jobs import create_scheduler
 
@@ -99,6 +103,13 @@ telegram_app.add_handler(CommandHandler("liability_off", liability_off_handler))
 
 telegram_app.add_handler(CommandHandler("networth_snapshot", networth_snapshot_handler))
 telegram_app.add_handler(CommandHandler("networth_history", networth_history_handler))
+
+# Gemini / RAG finance insight (read-only)
+telegram_app.add_handler(CommandHandler("insight", insight_handler))
+telegram_app.add_handler(CommandHandler("ask", ask_handler))
+telegram_app.add_handler(CommandHandler("audit", audit_handler))
+telegram_app.add_handler(CommandHandler("coach", coach_handler))
+
 telegram_app.add_handler(MessageHandler(filters.COMMAND, unknown_command_handler))
 telegram_app.add_handler(
     MessageHandler(filters.PHOTO | filters.Document.IMAGE, image_handler)

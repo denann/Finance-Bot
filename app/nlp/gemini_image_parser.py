@@ -70,19 +70,34 @@ Rekening valid:
 Tipe pengeluaran valid:
 Bulanan, Harian, Darurat, Keinginan
 
-Aturan penting:
-1. Kalau gambar adalah struk/nota, jadikan SATU transaksi expense dengan amount = total akhir yang dibayar.
-2. Kalau gambar jelas berisi beberapa transaksi terpisah, boleh kembalikan beberapa item.
-3. Jangan menjumlahkan subtotal item kalau ada total akhir/total pembayaran yang jelas.
-4. Jika tanggal di gambar terbaca, gunakan tanggal itu. Kalau tidak ada, gunakan {today}.
-5. Jika rekening/metode bayar terlihat dan cocok dengan rekening valid, isi account. Jika tidak yakin, account null.
-6. Untuk screenshot transfer antar rekening sendiri, type boleh "transfer" jika rekening asal dan tujuan sama-sama rekening valid.
-7. Kalau transfer ke orang/toko dan bukan antar rekening sendiri, itu expense.
-8. Subject = merchant/orang/objek utama transaksi.
-9. Description = ringkasan singkat transaksi, maksimal 50 karakter.
-10. Catatan boleh berisi info OCR pendek, nomor struk, atau metode bayar jika terlihat.
-11. Jika gambar tidak berisi transaksi keuangan yang jelas, balas items kosong.
-12. parsed_by selalu "gemini_image".
+ATURAN MODE OUTPUT:
+1. DEFAULT untuk struk/nota yang punya baris item jelas: kembalikan BANYAK item, satu transaksi untuk setiap baris barang/jasa.
+   Contoh struk berisi Beras, Minyak Goreng, Gula Pasir -> items harus berisi 3 transaksi expense terpisah.
+2. Kalau user menulis caption seperti "total aja", "satu transaksi", "jangan detail", "rekap total", atau gambar hanya menampilkan total tanpa rincian item, kembalikan SATU transaksi saja dengan amount = total akhir.
+3. Kalau gambar jelas berisi beberapa transaksi terpisah dari screenshot mutasi/bank/e-wallet, kembalikan beberapa item sesuai baris transaksi.
+4. Jangan membuat item dari dashboard/grafik/non-transaksi. Fokus hanya ke area struk/nota/mutasi yang berisi transaksi uang.
+
+ATURAN NOMINAL DAN DESKRIPSI:
+5. Untuk itemized receipt, amount setiap item = total baris item, bukan harga satuan, jika total baris terlihat.
+   Contoh "4.000 Kg x 12.500 Rp 50.000.000" -> amount 50000000.
+6. Kalau hanya terlihat harga satuan dan kuantitas, hitung amount = quantity x unit price.
+7. Jangan menjumlahkan ulang semua item menjadi transaksi tambahan jika kamu sudah mengembalikan itemized rows.
+8. Gunakan total akhir hanya untuk validasi, bukan sebagai item tambahan, kecuali mode satu transaksi.
+9. Description untuk itemized receipt = nama barang/jasa saja, maksimal 50 karakter.
+10. Subject untuk itemized receipt = nama toko/merchant kalau terlihat; kalau tidak terlihat, isi dari nama barang.
+11. Catatan boleh berisi info pendek seperti nama toko, nomor struk, qty x harga satuan, atau metode bayar.
+12. Jika tanggal di gambar terbaca, gunakan tanggal itu. Kalau tidak ada, gunakan {today}.
+13. Jika rekening/metode bayar terlihat dan cocok dengan rekening valid, isi account. Jika tidak yakin, account null.
+14. Untuk screenshot transfer antar rekening sendiri, type boleh "transfer" jika rekening asal dan tujuan sama-sama rekening valid.
+15. Kalau transfer ke orang/toko dan bukan antar rekening sendiri, itu expense.
+16. parsed_by selalu "gemini_image".
+17. Jika gambar tidak berisi transaksi keuangan yang jelas, balas items kosong.
+
+ATURAN KATEGORI:
+18. Sembako/bahan makanan/beras/minyak/gula/mie masuk "Food & Beverage" kecuali caption menyebut untuk bisnis/stok toko.
+19. Belanja barang umum masuk "Shopping".
+20. Tagihan/token/listrik/air/internet masuk "Bills & Utilities".
+21. Kalau tidak yakin, expense pakai "Other Expense".
 
 Balas HANYA JSON murni dengan format:
 {{
@@ -103,8 +118,21 @@ Balas HANYA JSON murni dengan format:
     }}
   ]
 }}
-""".strip()
 
+Contoh jika gambar struk berisi:
+TOKO ABANG, No Struk 211, tanggal 2023-01-10
+Beras 4.000 Kg x 12.500 Rp 50.000.000
+Minyak Goreng 1600 Kg x 27.500 Rp 44.000.000
+Total Rp 94.000.000
+
+Maka output yang benar adalah:
+{{
+  "items": [
+    {{"type":"expense","amount":50000000,"category":"Food & Beverage","account":null,"to_account":null,"subject":"Toko Abang","description":"Beras","catatan":"No. Struk 211 | 4.000 Kg x 12.500","tipe_pengeluaran":"Harian","date":"2023-01-10","raw_text":"Beras 4.000 Kg x 12.500 Rp 50.000.000","parsed_by":"gemini_image"}},
+    {{"type":"expense","amount":44000000,"category":"Food & Beverage","account":null,"to_account":null,"subject":"Toko Abang","description":"Minyak Goreng","catatan":"No. Struk 211 | 1600 Kg x 27.500","tipe_pengeluaran":"Harian","date":"2023-01-10","raw_text":"Minyak Goreng 1600 Kg x 27.500 Rp 44.000.000","parsed_by":"gemini_image"}}
+  ]
+}}
+""".strip()
 
 def normalize_item(item: dict) -> dict | None:
     if not isinstance(item, dict):
