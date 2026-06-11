@@ -1,4 +1,5 @@
 import re
+import io
 from datetime import datetime
 from difflib import SequenceMatcher
 from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -38,6 +39,7 @@ from app.services.net_worth_service import (
 from app.bot.keyboards import account_keyboard, confirm_keyboard
 from app.nlp.regex_parser import parse_with_regex, parse_debt_input
 from app.nlp.gemini_parser import parse_with_pending_fallback
+from app.nlp.gemini_image_parser import parse_transactions_from_image
 from app.sheets.client import get_all_records, get_spreadsheet
 from app.services.transaction_service import (
     save_transaction,
@@ -3398,6 +3400,14 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/networth_snapshot` — simpan snapshot net worth hari ini\n"
         "`/networth_history` — lihat riwayat snapshot net worth\n\n"
 
+        "*15. Input Gambar / Struk*\n"
+        "Kirim foto struk, nota, QRIS, atau screenshot transaksi.\n"
+        "Bot akan membaca gambar dengan Gemini, lalu menampilkan preview sebelum disimpan.\n"
+        "Tambahkan caption kalau perlu, contoh:\n"
+        "`pakai BSI`\n"
+        "`ini pemasukan`\n"
+        "`struk makan hari ini`\n\n"
+
         "*Catatan penting:*\n"
         "• Untuk `/delete_txn` dan `/edit_txn`, jalankan `/last` dulu.\n"
         "• Angka `1`, `2`, `3` mengikuti nomor dari hasil `/last` terakhir.\n"
@@ -4749,6 +4759,148 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
 
     return False
 
+
+
+# ── Image / Receipt Handler ──────────────────────────────────────────────────
+
+async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle foto struk/nota/screenshot transaksi.
+
+    Flow:
+    - User kirim gambar.
+    - Bot download gambar dari Telegram.
+    - Gemini membaca gambar dan mengembalikan transaksi.
+    - Hasil masuk ke flow preview + pilih rekening yang sama seperti input teks.
+    """
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    message = update.message
+    if not message:
+        return
+
+    photo = message.photo[-1] if message.photo else None
+    document = message.document if message.document else None
+
+    file_id = None
+    mime_type = "image/jpeg"
+    file_size = 0
+
+    if photo:
+        file_id = photo.file_id
+        file_size = int(photo.file_size or 0)
+        mime_type = "image/jpeg"
+    elif document and str(document.mime_type or "").startswith("image/"):
+        file_id = document.file_id
+        file_size = int(document.file_size or 0)
+        mime_type = document.mime_type or "image/jpeg"
+    else:
+        await message.reply_text("❌ File yang dikirim belum terbaca sebagai gambar.")
+        return
+
+    # Batas aman supaya gambar besar tidak membebani memory/server.
+    if file_size and file_size > 10 * 1024 * 1024:
+        await message.reply_text(
+            "❌ Gambar terlalu besar. Kirim gambar di bawah 10 MB."
+        )
+        return
+
+    status_msg = await message.reply_text(
+        "🖼️ Membaca gambar dengan Gemini...\n"
+        "Pastikan gambar tidak berisi data sensitif seperti nomor rekening lengkap, password, atau OTP."
+    )
+
+    try:
+        tg_file = await context.bot.get_file(file_id)
+        try:
+            image_bytes = await tg_file.download_as_bytearray()
+        except AttributeError:
+            buffer = io.BytesIO()
+            await tg_file.download_to_memory(buffer)
+            image_bytes = buffer.getvalue()
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Gagal download gambar dari Telegram: {str(e)}")
+        return
+
+    caption = message.caption or ""
+    result = parse_transactions_from_image(
+        bytes(image_bytes),
+        mime_type=mime_type,
+        caption=caption,
+    )
+
+    if not result.get("success"):
+        await status_msg.edit_text(
+            "🤔 Gambar belum bisa saya ubah jadi transaksi.\n\n"
+            f"Detail: {result.get('message') or '-'}\n\n"
+            "Coba kirim foto yang lebih jelas, atau tambahkan caption seperti:\n"
+            "`beli makan dari struk ini`\n"
+            "`ini pemasukan`\n"
+            "`pakai BSI`",
+            parse_mode="Markdown",
+        )
+        return
+
+    items = result.get("items", []) or []
+
+    # Single transaction dari gambar.
+    if len(items) == 1:
+        parsed = items[0]
+        context.user_data["pending_parsed"] = parsed
+        context.user_data["pending_raw"] = caption or "[gambar]"
+        context.user_data.pop("pending_batch", None)
+        context.user_data.pop("pending_debt", None)
+        context.user_data.pop("pending_debt_batch", None)
+        context.user_data.pop("pending_mixed", None)
+
+        preview = build_preview(parsed)
+
+        if parsed.get("account") or parsed.get("type") == "transfer":
+            await status_msg.edit_text(
+                f"{preview}\n\nSimpan transaksi dari gambar ini?",
+                parse_mode="Markdown",
+                reply_markup=confirm_keyboard("pending"),
+            )
+        else:
+            await status_msg.edit_text(
+                f"{preview}\n\n💳 Dari rekening mana?",
+                parse_mode="Markdown",
+                reply_markup=account_keyboard("acc"),
+            )
+        return
+
+    # Multiple transaction dari gambar.
+    mixed_items = []
+    for idx, parsed in enumerate(items, 1):
+        mixed_items.append({
+            "kind": "transaction",
+            "parsed": parsed,
+            "raw": f"gambar item {idx}",
+        })
+
+    context.user_data["pending_mixed"] = mixed_items
+    context.user_data.pop("pending_parsed", None)
+    context.user_data.pop("pending_raw", None)
+    context.user_data.pop("pending_batch", None)
+    context.user_data.pop("pending_debt", None)
+    context.user_data.pop("pending_debt_batch", None)
+
+    preview = build_mixed_preview(mixed_items)
+
+    if mixed_needs_account(mixed_items):
+        await status_msg.edit_text(
+            f"{preview}\n\n💳 Pilih rekening untuk item yang belum punya rekening:",
+            parse_mode="Markdown",
+            reply_markup=account_keyboard("mixed_acc"),
+        )
+    else:
+        await status_msg.edit_text(
+            f"{preview}\n\nSimpan semua transaksi dari gambar ini?",
+            parse_mode="Markdown",
+            reply_markup=confirm_keyboard("mixed"),
+        )
 
 # ── Message Handler ──────────────────────────────────────────────────────────
 

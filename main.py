@@ -33,6 +33,7 @@ from app.bot.handlers import (
     edit_txn_handler,
     unknown_command_handler,
     message_handler,
+    image_handler,
     callback_handler,
     export_handler,
     recurring_handler,
@@ -99,6 +100,9 @@ telegram_app.add_handler(CommandHandler("liability_off", liability_off_handler))
 telegram_app.add_handler(CommandHandler("networth_snapshot", networth_snapshot_handler))
 telegram_app.add_handler(CommandHandler("networth_history", networth_history_handler))
 telegram_app.add_handler(MessageHandler(filters.COMMAND, unknown_command_handler))
+telegram_app.add_handler(
+    MessageHandler(filters.PHOTO | filters.Document.IMAGE, image_handler)
+)
 telegram_app.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
 )
