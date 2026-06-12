@@ -1,12 +1,12 @@
 import json
 import re
-import google.generativeai as genai
+import os
 
 from app.config import GEMINI_API_KEY
+from app.nlp.gemini_langchain_client import generate_text_with_gemini
 
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-3.1-flash-lite")
+GEMINI_INTENT_MODEL = os.getenv("GEMINI_INTENT_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"))
 
 
 ALLOWED_INTENTS = {
@@ -235,8 +235,14 @@ Input user:
 """
 
     try:
-        response = model.generate_content(prompt)
-        raw_text = response.text if response and response.text else ""
+        if not GEMINI_API_KEY:
+            raw_text = ""
+        else:
+            raw_text = generate_text_with_gemini(
+                prompt,
+                model_name=GEMINI_INTENT_MODEL,
+                temperature=0.0,
+            )
         data = extract_json_object(raw_text)
         return normalize_router_result(data)
 

@@ -2,9 +2,8 @@ import json
 import os
 from datetime import datetime
 
-import google.generativeai as genai
-
 from app.config import GEMINI_API_KEY
+from app.nlp.gemini_langchain_client import generate_text_from_image_with_gemini
 
 
 # Keep this list aligned with the normal Gemini text parser.
@@ -19,12 +18,8 @@ VALID_ACCOUNTS = ["Cash", "BRI", "BSI", "DANA", "GoPay"]
 VALID_SPENDING_TYPES = ["Bulanan", "Harian", "Darurat", "Keinginan"]
 
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-
 # You may override this in Wispbyte env if your Gemini account uses a different model name.
-GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-lite")
-model = genai.GenerativeModel(GEMINI_IMAGE_MODEL)
+GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash")
 
 
 def clean_gemini_json(raw_text: str) -> str:
@@ -227,17 +222,15 @@ def parse_transactions_from_image(image_bytes: bytes, mime_type: str = "image/jp
 
     try:
         prompt = build_image_prompt(caption)
-        image_part = {
-            "mime_type": mime_type or "image/jpeg",
-            "data": image_bytes,
-        }
-
-        response = model.generate_content(
-            [prompt, image_part],
-            generation_config={"temperature": 0},
+        response_text = generate_text_from_image_with_gemini(
+            prompt,
+            image_bytes,
+            mime_type=mime_type or "image/jpeg",
+            model_name=GEMINI_IMAGE_MODEL,
+            temperature=0.0,
         )
 
-        if not response or not getattr(response, "text", None):
+        if not response_text:
             return {
                 "success": False,
                 "items": [],
@@ -245,7 +238,7 @@ def parse_transactions_from_image(image_bytes: bytes, mime_type: str = "image/jp
                 "raw_response": "",
             }
 
-        raw_text = clean_gemini_json(response.text)
+        raw_text = clean_gemini_json(response_text)
         data = json.loads(raw_text)
         raw_items = data.get("items", []) if isinstance(data, dict) else []
 
@@ -275,7 +268,7 @@ def parse_transactions_from_image(image_bytes: bytes, mime_type: str = "image/jp
             "success": False,
             "items": [],
             "message": f"Output Gemini bukan JSON valid: {str(e)}",
-            "raw_response": getattr(response, "text", "") if "response" in locals() else "",
+            "raw_response": response_text if "response_text" in locals() else "",
         }
     except Exception as e:
         return {

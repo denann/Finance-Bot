@@ -1,11 +1,11 @@
 import json
-import google.generativeai as genai
+import os
 from datetime import datetime
 from app.config import GEMINI_API_KEY
+from app.nlp.gemini_langchain_client import generate_text_with_gemini
 
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-3.1-flash-lite")
+GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"))
 
 
 VALID_CATEGORIES = [
@@ -119,12 +119,19 @@ def clean_gemini_json(raw_text: str) -> str:
 def parse_with_gemini(user_input: str) -> dict | None:
     try:
         prompt = build_prompt(user_input)
-        response = model.generate_content(prompt)
-
-        if not response or not getattr(response, "text", None):
+        if not GEMINI_API_KEY:
             return None
 
-        raw_text = clean_gemini_json(response.text)
+        response_text = generate_text_with_gemini(
+            prompt,
+            model_name=GEMINI_TEXT_MODEL,
+            temperature=0.0,
+        )
+
+        if not response_text:
+            return None
+
+        raw_text = clean_gemini_json(response_text)
         parsed = json.loads(raw_text)
 
         required_fields = ["type", "amount", "category", "date"]

@@ -3,16 +3,12 @@ from __future__ import annotations
 import json
 import os
 
-import google.generativeai as genai
-
 from app.config import GEMINI_API_KEY
+from app.nlp.gemini_langchain_client import generate_text_with_gemini
 from app.services.finance_insight_service import deterministic_audit_text, deterministic_monthly_text
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
-GEMINI_INSIGHT_MODEL = os.getenv("GEMINI_INSIGHT_MODEL", "gemini-3.1-flash-lite")
-model = genai.GenerativeModel(GEMINI_INSIGHT_MODEL)
+GEMINI_INSIGHT_MODEL = os.getenv("GEMINI_INSIGHT_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
 
 MODE_LABELS = {
     "monthly_auto": "Insight otomatis setelah laporan bulanan",
@@ -73,12 +69,11 @@ def generate_finance_insight(mode: str, context: dict, question: str = "") -> st
 
     try:
         prompt = build_finance_insight_prompt(mode, context, question=question)
-        response = model.generate_content(
+        text = generate_text_with_gemini(
             prompt,
-            generation_config={"temperature": 0.2},
-        )
-        text = getattr(response, "text", "") or ""
-        text = text.strip()
+            model_name=GEMINI_INSIGHT_MODEL,
+            temperature=0.2,
+        ).strip()
         if text:
             return text
     except Exception as e:
