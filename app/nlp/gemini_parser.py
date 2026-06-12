@@ -59,30 +59,31 @@ Definisi tipe_pengeluaran:
 Aturan parsing:
 1. type harus salah satu dari: "expense", "income", "transfer".
 2. amount harus integer dalam Rupiah, bukan string.
-3. Jika ada pola "dibagi 2", "bagi 2", "split 2", "patungan 2", amount harus dibagi sesuai angka tersebut.
-4. category harus dari daftar kategori valid.
-5. account adalah rekening asal, null jika tidak disebutkan.
-6. to_account hanya diisi jika type = "transfer", null jika bukan transfer.
-7. subject adalah pihak/tempat/objek utama transaksi.
+3. Jika ada pola split tanpa nama teman, misalnya "dibagi 2", "bagi 2", "split 2", amount boleh dibagi sesuai angka tersebut karena itu dianggap bagian user.
+4. Jika ada pola split bill dengan nama teman, misalnya "22k dibagi 2 sama Sapto", "22k bagi 2 sama Opik Alpat Sapto", amount harus tetap total tagihan asli, bukan dibagi. Status sudah dibayar/belum dibayar akan ditangani sistem setelah parsing.
+5. category harus dari daftar kategori valid.
+6. account adalah rekening asal, null jika tidak disebutkan.
+7. to_account hanya diisi jika type = "transfer", null jika bukan transfer.
+8. subject adalah pihak/tempat/objek utama transaksi.
    Contoh:
    - "beli nasi padang 20k" → subject: "Nasi Padang"
    - "bayar listrik 200k" → subject: "PLN"
    - "bayar kos 1.5jt" → subject: "Kos"
    - "gaji masuk 5jt" → subject: "Pekerjaan"
    - "beli di Shopee 100k" → subject: "Shopee"
-8. description adalah ringkasan transaksi utama, maksimal 50 karakter.
+9. description adalah ringkasan transaksi utama, maksimal 50 karakter.
    Jangan masukkan catatan, orang patungan, atau konteks tambahan ke description.
    Contoh:
    - "beli nasi padang 20k catatan dibagi 2 sama Sapto" → description: "Nasi Padang"
    - "beli obat 45k buat demam" → description: "Obat"
-9. catatan adalah detail tambahan jika ada.
+10. catatan adalah detail tambahan jika ada.
    Contoh:
    - "catatan dibagi 2 sama Sapto" → catatan: "Dibagi 2 sama Sapto"
    - "buat demam" → catatan: "Demam"
    - Jika tidak ada, isi "".
-10. tipe_pengeluaran hanya diisi jika type = "expense". Jika type bukan expense, isi "".
-11. date format YYYY-MM-DD. Interpretasi "kemarin", "tadi", "minggu lalu" dari hari ini.
-12. parsed_by selalu "gemini".
+11. tipe_pengeluaran hanya diisi jika type = "expense". Jika type bukan expense, isi "".
+12. date format YYYY-MM-DD. Interpretasi "kemarin", "tadi", "minggu lalu" dari hari ini.
+13. parsed_by selalu "gemini".
 
 Input user:
 "{user_input}"

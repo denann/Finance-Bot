@@ -2592,7 +2592,11 @@ def split_user_inputs(text: str) -> list[str]:
     transaction_starters = [
         "beli", "bayar", "byr", "jajan", "makan", "minum",
         "transfer", "top up", "topup", "isi", "ngisi",
-        "gaji", "dapat", "dapet", "terima", "masuk",
+        "gaji", "dapat", "dapet", "terima",
+        # Jangan masukkan "masuk" sebagai starter split.
+        # Contoh yang harus tetap satu item:
+        # "gajian 5000k masuk BCA 01-06-2026".
+        # Kata "masuk" tetap dikenali sebagai income di regex_parser.detect_type().
         "hutang", "utang",
     ]
 
@@ -2645,9 +2649,14 @@ def split_user_inputs(text: str) -> list[str]:
     # "Uang ptpt bulanan masuk dari opik 200k kemarin"
     # dulu kepecah jadi "Uang ptpt bulanan" + "masuk dari opik ...".
     strong_transaction_starters = [
-        "beli", "bayar", "byr", "jajan", "makan", "minum",
+        "beli", "bayar", "byr", "jajan",
         "transfer", "top up", "topup", "isi", "ngisi",
-        "gaji", "hutang", "utang",
+        "gaji",
+        # Jangan masukkan kata benda/aksi yang sering muncul di tengah kalimat.
+        # "sapto hutang ke saya 50k buat makan" dan
+        # "saya hutang ke opik 25k" harus tetap satu item.
+        # Kalau memang ada item baru setelah nominal, amount_before_pattern
+        # di atas tetap akan memecahnya secara aman.
     ]
     normal_starter_pattern = "|".join(re.escape(k) for k in strong_transaction_starters)
 
@@ -2715,6 +2724,8 @@ def build_mixed_preview(mixed_items: list[dict]) -> str:
             account = md_safe(parsed.get('account') or '-')
             date = md_safe(parsed.get('date') or '-')
             safe_raw = md_safe(raw)
+            split_preview = format_split_bill_preview_line(parsed)
+            split_line = f"   {md_safe(split_preview)}\n" if split_preview else ""
 
             lines.append(
                 f"{i}. {icon} *Transaksi*\n"
@@ -2722,6 +2733,7 @@ def build_mixed_preview(mixed_items: list[dict]) -> str:
                 f"   💰 {format_rupiah(amount)} | {category}\n"
                 f"   📅 {date}\n"
                 f"   🏦 {account}\n"
+                f"{split_line}"
                 f"   Input: `{safe_raw}`"
             )
 
@@ -2813,6 +2825,35 @@ def mixed_needs_account(mixed_items: list[dict]) -> bool:
 
     return False
 
+
+
+def format_split_bill_preview_line(parsed: dict) -> str:
+    split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
+    if not split_bill:
+        return ""
+
+    total = float(split_bill.get("total_amount", parsed.get("amount", 0)) or 0)
+    share = float(split_bill.get("share_amount", 0) or 0)
+    total_receivable = float(split_bill.get("total_receivable", 0) or 0)
+    status = split_bill.get("status")
+
+    if status == "paid":
+        status_label = "sudah dibayar"
+        receivable_display = 0
+    elif status == "unpaid":
+        status_label = "belum dibayar / masuk piutang"
+        receivable_display = total_receivable
+    else:
+        status_label = "menunggu status"
+        receivable_display = total_receivable
+
+    return (
+        f"🤝 Split: {status_label} | "
+        f"total dibayar {format_rupiah(total)} | "
+        f"bagian kamu {format_rupiah(share)} | "
+        f"piutang {format_rupiah(receivable_display)}"
+    )
+
 def build_preview(parsed: dict) -> str:
     """Buat teks preview transaksi sebelum disimpan."""
     type_label = {
@@ -2828,6 +2869,10 @@ def build_preview(parsed: dict) -> str:
         f"👤 Subjek  : {parsed.get('subject') or '-'}",
         f"📝 Deskripsi: {parsed.get('description') or '-'}",
     ]
+
+    split_preview = format_split_bill_preview_line(parsed)
+    if split_preview:
+        lines.append(split_preview)
 
     if parsed.get("catatan"):
         lines.append(f"🗒️ Catatan : {parsed.get('catatan')}")
@@ -2913,6 +2958,14 @@ def strip_split_bill_phrase(text: str) -> str:
     )
     clean = re.sub(
         rf"\b{friend_marker}\s+{name_chunk}\s+{split_word}\s*(?:jadi\s*)?\d*",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    # Support input tanpa marker "sama":
+    # "Nasi kuning 22k dibagi 2 sapto".
+    clean = re.sub(
+        rf"\b{split_word}\s*(?:jadi\s*)?\d+\s*(?:orang\s+)?{name_chunk}",
         " ",
         clean,
         flags=re.IGNORECASE,
@@ -3003,8 +3056,13 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     friend_marker = r"(?:sama|ama|dengan|bareng)"
     name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{0,80}"
     patterns = [
+        # "dibagi 2 sama sapto"
         rf"\b{split_word}\s*(?:jadi\s*)?(\d+)\s*(?:orang)?\s+{friend_marker}\s+({name_chunk})",
+        # "sama sapto dibagi 2"
         rf"\b{friend_marker}\s+({name_chunk})\s+{split_word}\s*(?:jadi\s*)?(\d+)",
+        # "dibagi 2 sapto" tanpa marker sama/dengan.
+        # Nama harus diawali huruf, jadi "dibagi 2 11-05-2026" tidak match.
+        rf"\b{split_word}\s*(?:jadi\s*)?(\d+)\s*(?:orang)?\s+({name_chunk})",
     ]
 
     participants = None
@@ -3015,7 +3073,7 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
         if not match:
             continue
 
-        if idx == 0:
+        if idx in (0, 2):
             participants = int(match.group(1))
             person_names = split_split_bill_person_names(match.group(2))
         else:
@@ -3039,13 +3097,21 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     # "bagi/dibagi 2 sama ...".
     desc = parsed.get("description") or ""
     clean_desc = strip_split_bill_phrase(desc)
+    # Kalau parser regex sudah menghapus frasa "dibagi 2" lebih dulu, nama teman
+    # bisa tersisa di akhir description, misalnya "Nasi Kuning Sapto".
+    # Setelah split_bill valid, buang nama teman dari ujung description/subject.
+    for person in person_names:
+        clean_desc = re.sub(rf"\b{re.escape(person)}\b\s*$", "", clean_desc, flags=re.IGNORECASE).strip(" .,-")
     parsed["description"] = clean_desc
 
     subject = parsed.get("subject") or ""
     if subject:
         clean_subject = strip_split_bill_phrase(subject)
+        for person in person_names:
+            clean_subject = re.sub(rf"\b{re.escape(person)}\b\s*$", "", clean_subject, flags=re.IGNORECASE).strip(" .,-")
         # Subject biasanya mengikuti description. Kalau masih mengandung kata split,
-        # pakai versi bersih agar output/sheet tidak menjadi "Nasi Dibagi Sama Sapto".
+        # atau nama teman tersisa di ujung, pakai versi bersih agar output/sheet
+        # tidak menjadi "Nasi Kuning Sapto".
         if clean_subject != subject or re.search(split_word, subject, flags=re.IGNORECASE):
             parsed["subject"] = clean_subject or clean_desc
 
@@ -3104,10 +3170,11 @@ def build_split_bill_prompt_from_parsed(parsed: dict) -> str:
         f"💰 Total dibayar: *{format_rupiah(total)}*\n"
         f"👥 Dibagi: *{participants} orang*\n"
         f"👤 Teman: *{md_safe(friend_text)}*\n"
-        f"📌 Bagian per orang: *{format_rupiah(share)}*\n"
+        f"📌 Bagian kamu/per orang: *{format_rupiah(share)}*\n"
         f"📌 Total piutang jika belum dibayar: *{format_rupiah(total_receivable)}*\n\n"
         f"{md_safe(friend_text)} sudah bayar bagian mereka?\n"
-        "Kalau belum, saya akan catat sebagai piutang per orang tanpa cashflow tambahan."
+        "Kalau *sudah*, transaksi disimpan sebesar bagian kamu saja.\n"
+        "Kalau *belum*, transaksi disimpan sebesar total yang kamu talangi dan bagian teman masuk piutang."
     )
 
 
@@ -3123,18 +3190,47 @@ def build_mixed_split_bill_prompt(mixed_items: list[dict]) -> str:
         parsed = item["parsed"]
         split_bill = parsed.get("split_bill", {}) or {}
         person_names = split_bill.get("person_names") or [split_bill.get("person_name", "-")]
+        total = float(split_bill.get("total_amount", parsed.get("amount", 0)) or 0)
         share = float(split_bill.get("share_amount", 0) or 0)
+        total_receivable = float(split_bill.get("total_receivable", share * len(person_names)) or 0)
         friend_text = ", ".join(str(p) for p in person_names if p)
         lines.append(
             f"{i}. {md_safe(parsed.get('description') or '-')} — "
-            f"{md_safe(friend_text)} @ *{format_rupiah(share)}*"
+            f"total *{format_rupiah(total)}*, bagian kamu *{format_rupiah(share)}*, "
+            f"{md_safe(friend_text)}: *{format_rupiah(total_receivable)}*"
         )
 
     lines.append(
         "\nApakah bagian teman-teman di item ini sudah dibayar?\n"
-        "Pilih *Belum* kalau mau otomatis masuk piutang per orang."
+        "Pilih *Sudah dibayar* kalau transaksi cukup disimpan sebesar bagian kamu.\n"
+        "Pilih *Belum* kalau kamu menalangi totalnya dan bagian teman otomatis masuk piutang."
     )
     return "\n".join(lines)
+
+
+def apply_split_bill_decision_to_parsed(parsed: dict, status: str) -> dict:
+    """
+    Terapkan keputusan split bill ke transaksi.
+
+    - paid: teman sudah bayar, jadi transaksi yang disimpan cukup bagian user.
+    - unpaid: user menalangi total dulu, jadi transaksi tetap total tagihan
+      dan nanti dibuat piutang tanpa cashflow tambahan.
+    """
+    split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
+    if not split_bill:
+        return parsed
+
+    split_bill["status"] = status
+
+    total_amount = float(split_bill.get("total_amount", parsed.get("amount", 0)) or 0)
+    share_amount = float(split_bill.get("share_amount", 0) or 0)
+
+    if status == "paid" and share_amount > 0:
+        parsed["amount"] = share_amount
+    elif status == "unpaid" and total_amount > 0:
+        parsed["amount"] = total_amount
+
+    return parsed
 
 
 def apply_split_bill_decision_to_mixed(mixed_items: list[dict], status: str) -> list[dict]:
@@ -3143,7 +3239,7 @@ def apply_split_bill_decision_to_mixed(mixed_items: list[dict], status: str) -> 
             continue
         parsed = item.get("parsed", {})
         if parsed.get("split_bill"):
-            parsed["split_bill"]["status"] = status
+            apply_split_bill_decision_to_parsed(parsed, status)
     return mixed_items
 
 
@@ -5457,17 +5553,21 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             preview = build_mixed_preview(mixed_items)
 
-            if mixed_needs_account(mixed_items):
-                await update.message.reply_text(
-                    f"{preview}\n\n💳 Pilih rekening untuk item yang belum punya rekening:",
-                    parse_mode="Markdown",
-                    reply_markup=account_keyboard("mixed_acc"),
-                )
-            elif mixed_split_bill_needs_decision(mixed_items):
+            # Split bill harus diputuskan dulu sebelum pilih rekening/confirm.
+            # Kalau tidak, input bulk seperti "22k dibagi 2 sama Sapto"
+            # terlihat seperti transaksi biasa Rp22.000 dan tidak langsung
+            # menanyakan apakah bagian teman sudah dibayar.
+            if mixed_split_bill_needs_decision(mixed_items):
                 await update.message.reply_text(
                     build_mixed_split_bill_prompt(mixed_items),
                     parse_mode="Markdown",
                     reply_markup=split_bill_keyboard("mixed"),
+                )
+            elif mixed_needs_account(mixed_items):
+                await update.message.reply_text(
+                    f"{preview}\n\n💳 Pilih rekening untuk item yang belum punya rekening:",
+                    parse_mode="Markdown",
+                    reply_markup=account_keyboard("mixed_acc"),
                 )
             else:
                 await update.message.reply_text(
@@ -5539,19 +5639,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     preview = build_preview(parsed)
 
-    if parsed.get("account") or parsed.get("type") == "transfer":
-        if split_bill_needs_decision(parsed):
-            await update.message.reply_text(
-                build_split_bill_prompt_from_parsed(parsed),
-                parse_mode="Markdown",
-                reply_markup=split_bill_keyboard("single"),
-            )
-        else:
-            await update.message.reply_text(
-                f"{preview}\n\nSimpan transaksi ini?",
-                parse_mode="Markdown",
-                reply_markup=confirm_keyboard("pending"),
-            )
+    # Untuk split bill, tanya status pembayaran teman dulu.
+    # Setelah user memilih paid/unpaid, baru lanjut pilih rekening atau confirm.
+    if split_bill_needs_decision(parsed):
+        await update.message.reply_text(
+            build_split_bill_prompt_from_parsed(parsed),
+            parse_mode="Markdown",
+            reply_markup=split_bill_keyboard("single"),
+        )
+    elif parsed.get("account") or parsed.get("type") == "transfer":
+        await update.message.reply_text(
+            f"{preview}\n\nSimpan transaksi ini?",
+            parse_mode="Markdown",
+            reply_markup=confirm_keyboard("pending"),
+        )
     else:
         await update.message.reply_text(
             f"{preview}\n\n💳 Dari rekening mana?",
@@ -6392,6 +6493,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["pending_mixed"] = mixed_items
             preview = build_mixed_preview(mixed_items)
 
+            if mixed_needs_account(mixed_items):
+                await query.edit_message_text(
+                    f"{preview}\n\n💳 Pilih rekening untuk item yang belum punya rekening:",
+                    parse_mode="Markdown",
+                    reply_markup=account_keyboard("mixed_acc"),
+                )
+                return
+
             await query.edit_message_text(
                 f"{preview}\n\nSimpan semua item ini?",
                 parse_mode="Markdown",
@@ -6405,9 +6514,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if parsed.get("split_bill"):
-            parsed["split_bill"]["status"] = status
+            apply_split_bill_decision_to_parsed(parsed, status)
         context.user_data["pending_parsed"] = parsed
         preview = build_preview(parsed)
+
+        if needs_account(parsed):
+            await query.edit_message_text(
+                f"{preview}\n\n💳 Dari rekening mana?",
+                parse_mode="Markdown",
+                reply_markup=account_keyboard("acc"),
+            )
+            return
 
         await query.edit_message_text(
             f"{preview}\n\nSimpan transaksi ini?",

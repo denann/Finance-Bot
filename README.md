@@ -550,3 +550,54 @@ Pastikan:
 - Redeploy/rebuild dilakukan, bukan hanya restart
 
 Jika memakai LangChain Gemini, hindari dependency yang konflik. Gunakan versi di `requirements.txt` sebagai source of truth.
+
+## AI Command Tester / Local Parser QA
+
+Project ini punya tester lokal terpisah dari deployment:
+
+```bash
+python scripts/ai_command_tester.py --sample
+```
+
+Fungsi utamanya untuk mengecek apakah input natural language sudah diparse sesuai ekspektasi sebelum bot dideploy. Tester ini aman untuk dijalankan lokal karena tidak mengirim Telegram message dan tidak menulis ke Google Sheets.
+
+Contoh test satu input:
+
+```bash
+python scripts/ai_command_tester.py --input "Nasi kuning 22k dibagi 2 sama sapto 09-05-2026" --json
+```
+
+Contoh simulasi keputusan split bill:
+
+```bash
+python scripts/ai_command_tester.py --input "Nasi kuning 22k dibagi 2 sama sapto 09-05-2026" --decision unpaid --json
+python scripts/ai_command_tester.py --input "Nasi kuning 22k dibagi 2 sama sapto 09-05-2026" --decision paid --json
+```
+
+Contoh test input banyak baris dari file txt:
+
+```bash
+python scripts/ai_command_tester.py --input-file input_test.txt --decision unpaid --json
+```
+
+Contoh menjalankan test case JSON:
+
+```bash
+python scripts/ai_command_tester.py --file tests/command_cases.json
+```
+
+Kalau `GEMINI_API_KEY` tersedia dan dependency LangChain/Gemini sudah terinstall, tester bisa memberi diagnosis AI:
+
+```bash
+python scripts/ai_command_tester.py --file tests/command_cases.json --ai
+```
+
+Format test case ada di `tests/command_cases.json`. Field penting:
+
+- `input`: command yang mau dites.
+- `decision`: opsional, `paid` atau `unpaid` untuk simulasi split bill.
+- `expect.item_count`: jumlah item yang harus terdeteksi.
+- `expect.paths`: assertion ke output JSON, misalnya `items.0.parsed.amount`.
+- `expect.prompt_contains`: teks yang wajib muncul di prompt bot.
+
+Tester ini cocok dipakai setiap kali ada perubahan parser, flow split bill, intent lokal, kategori, rekening, hutang/piutang, atau batch input.

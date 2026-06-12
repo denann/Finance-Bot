@@ -33,7 +33,21 @@ TRANSFER_KEYWORDS = [
     "setor tunai", "setor ke", "isi", "ngisi", "top up", "topup",
 ]
 
-ACCOUNT_NAMES = ["cash", "bri", "bsi", "dana", "gopay"]
+ACCOUNT_NAMES = ["cash", "bri", "bsi", "bca", "dana", "gopay", "seabank", "sea bank"]
+ACCOUNT_DISPLAY_NAMES = {
+    "cash": "Cash",
+    "bri": "BRI",
+    "bsi": "BSI",
+    "bca": "BCA",
+    "dana": "DANA",
+    "gopay": "GoPay",
+    "seabank": "Seabank",
+    "sea bank": "Seabank",
+}
+
+
+def display_account_name(account: str) -> str:
+    return ACCOUNT_DISPLAY_NAMES.get(account, account.upper() if account != "cash" else "Cash")
 
 CATEGORY_KEYWORDS = {
     "Food & Beverage": [
@@ -196,6 +210,25 @@ def parse_debt_input(text: str) -> dict | None:
 
         return " ".join(name_words).title() if name_words else None
 
+    # ── Receivable explicit: "Sapto hutang ke saya 50k" ─────────────────────
+    # Artinya Sapto punya hutang ke user, bukan user hutang ke "Saya".
+    receivable_to_me_match = re.search(
+        r"^\s*([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)\s+(?:hutang|utang)\s+ke\s+(?:saya|aku|gw|gue)\b",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if receivable_to_me_match:
+        person = re.sub(r"\s+", " ", receivable_to_me_match.group(1)).strip().title()
+        if person and person.lower() not in {"saya", "aku", "gw", "gue"}:
+            return {
+                "intent": "add_receivable",
+                "person_name": person,
+                "amount": amount,
+                "description": extract_description(text, amount),
+                "date": detect_date(text),
+                "raw_input": text,
+            }
+
     # ── Payment pattern: "Budi bayar 300k", "Budi balikin 300k" ─────────────
     person_payment_patterns = [
         "bayar", "balikin", "kembaliin", "dibalikin", "ngembaliin",
@@ -338,7 +371,7 @@ def detect_account(text: str) -> str | None:
 
     for acc in ACCOUNT_NAMES:
         if acc in text_lower:
-            return acc.upper() if acc != "cash" else "Cash"
+            return display_account_name(acc)
 
     return None
 
@@ -349,7 +382,7 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
 
     for acc in ACCOUNT_NAMES:
         if acc in text_lower:
-            display = acc.upper() if acc != "cash" else "Cash"
+            display = display_account_name(acc)
             found.append((text_lower.index(acc), display))
 
     found.sort(key=lambda x: x[0])
@@ -733,6 +766,21 @@ def extract_description(text: str, amount=None) -> str:
         flags=re.IGNORECASE,
     )
 
+    # Kalau split tanpa nama teman, bersihkan kata operasinya dari deskripsi.
+    # Contoh: "Bakso 43k dibagi 2" -> "Bakso", bukan "Bakso Dibagi".
+    # Untuk split dengan teman, frasa "dibagi ... sama Sapto" sengaja dibiarkan dulu
+    # agar handlers.py bisa membersihkan nama teman setelah split bill terdeteksi.
+    split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|split|share|patungan)"
+    friend_marker = r"(?:sama|ama|dengan|bareng)"
+    has_named_split = re.search(
+        rf"\b{split_word}\s*(?:jadi\s*)?\d*\s*(?:orang\s+)?{friend_marker}\b",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    if not has_named_split:
+        clean = re.sub(rf"\b{split_word}\b", " ", clean, flags=re.IGNORECASE)
+        clean = re.sub(r"\b(?:jadi|orang)\b", " ", clean, flags=re.IGNORECASE)
+
     # 4. Hapus kata kerja transaksi umum di awal.
     # Jangan hapus kata "transfer" kalau transfernya ke orang/non-rekening,
     # supaya deskripsi tetap "Transfer Ke Annisa", bukan cuma "Ke Annisa".
@@ -897,8 +945,17 @@ def parse_with_regex(text: str) -> dict | None:
         return None
 
     transaction_type = detect_type(text)
+
+    # Fallback untuk input expense tanpa kata kerja, terutama bulk entry:
+    # "Nasi kuning 22k 09-05-2026", "Print 6k", "Alquran 80k".
+    # Selama ada nominal dan masih ada teks deskripsi setelah nominal/tanggal
+    # dibersihkan, anggap sebagai expense agar tidak wajib fallback ke Gemini.
     if not transaction_type:
-        return None
+        plain_description = extract_description(text, amount)
+        if re.search(r"[A-Za-zÀ-ÿ]", plain_description or ""):
+            transaction_type = "expense"
+        else:
+            return None
 
     date = detect_date(text)
     description = extract_description(text, amount)
