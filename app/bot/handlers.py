@@ -8,7 +8,6 @@ from telegram.helpers import escape_markdown
 from telegram.error import BadRequest
 import shlex
 import os
-import google.generativeai as genai
 from app.config import (
     ALLOWED_USER_ID,
     SHEET_CATEGORIES,
@@ -3208,6 +3207,81 @@ def build_mixed_split_bill_prompt(mixed_items: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def get_mixed_split_bill_indexes(mixed_items: list[dict]) -> list[int]:
+    """Return index item transaksi mixed yang memiliki split bill."""
+    indexes = []
+    for idx, item in enumerate(mixed_items or []):
+        if item.get("kind") != "transaction":
+            continue
+        parsed = item.get("parsed", {})
+        if isinstance(parsed, dict) and parsed.get("split_bill"):
+            indexes.append(idx)
+    return indexes
+
+
+def get_next_mixed_split_bill_index(mixed_items: list[dict]) -> int | None:
+    """Return index split bill pertama yang belum dipilih paid/unpaid."""
+    for idx in get_mixed_split_bill_indexes(mixed_items):
+        parsed = mixed_items[idx].get("parsed", {})
+        if split_bill_needs_decision(parsed):
+            return idx
+    return None
+
+
+def build_mixed_split_bill_queue_prompt(mixed_items: list[dict]) -> str:
+    """
+    Prompt split bill untuk bulk input, tapi ditanya satu-per-satu.
+
+    Ini penting karena dalam satu bulk input bisa ada split bill yang sudah dibayar
+    dan split bill lain yang belum dibayar. Jadi tombol paid/unpaid hanya berlaku
+    untuk item yang sedang ditampilkan, bukan semua split bill sekaligus.
+    """
+    split_indexes = get_mixed_split_bill_indexes(mixed_items)
+    current_index = get_next_mixed_split_bill_index(mixed_items)
+
+    if current_index is None:
+        return build_mixed_split_bill_queue_prompt(mixed_items)
+
+    current_pos = split_indexes.index(current_index) + 1 if current_index in split_indexes else 1
+    total_split = len(split_indexes)
+    parsed = mixed_items[current_index].get("parsed", {})
+    split_bill = parsed.get("split_bill", {}) or {}
+    person_names = split_bill.get("person_names") or [split_bill.get("person_name", "-")]
+    participants = int(split_bill.get("participants", 2) or 2)
+    total = float(split_bill.get("total_amount", parsed.get("amount", 0)) or 0)
+    share = float(split_bill.get("share_amount", 0) or 0)
+    total_receivable = float(split_bill.get("total_receivable", share * len(person_names)) or 0)
+    friend_text = ", ".join(str(p) for p in person_names if p)
+
+    return (
+        f"🤝 *Split bill {current_pos}/{total_split}*\n\n"
+        f"📝 Item: *{md_safe(parsed.get('description') or '-')}*\n"
+        f"💰 Total dibayar: *{format_rupiah(total)}*\n"
+        f"👥 Dibagi: *{participants} orang*\n"
+        f"👤 Teman: *{md_safe(friend_text)}*\n"
+        f"📌 Bagian kamu/per orang: *{format_rupiah(share)}*\n"
+        f"📌 Total piutang jika belum dibayar: *{format_rupiah(total_receivable)}*\n\n"
+        f"{md_safe(friend_text)} sudah bayar bagian untuk item ini?\n"
+        "Pilihan ini *hanya berlaku untuk item ini*. Setelah dijawab, saya lanjut ke split bill berikutnya."
+    )
+
+
+def apply_split_bill_decision_to_current_mixed(mixed_items: list[dict], status: str) -> tuple[list[dict], int | None]:
+    """Terapkan paid/unpaid hanya ke split bill mixed yang sedang aktif."""
+    current_index = get_next_mixed_split_bill_index(mixed_items)
+    if current_index is None:
+        return mixed_items, None
+
+    item = mixed_items[current_index]
+    parsed = item.get("parsed", {})
+    if isinstance(parsed, dict) and parsed.get("split_bill"):
+        apply_split_bill_decision_to_parsed(parsed, status)
+        item["parsed"] = parsed
+        mixed_items[current_index] = item
+
+    return mixed_items, current_index
+
+
 def apply_split_bill_decision_to_parsed(parsed: dict, status: str) -> dict:
     """
     Terapkan keputusan split bill ke transaksi.
@@ -5559,7 +5633,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # menanyakan apakah bagian teman sudah dibayar.
             if mixed_split_bill_needs_decision(mixed_items):
                 await update.message.reply_text(
-                    build_mixed_split_bill_prompt(mixed_items),
+                    build_mixed_split_bill_queue_prompt(mixed_items),
                     parse_mode="Markdown",
                     reply_markup=split_bill_keyboard("mixed"),
                 )
@@ -6399,7 +6473,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if mixed_split_bill_needs_decision(prepared_items):
             await query.edit_message_text(
-                build_mixed_split_bill_prompt(prepared_items),
+                build_mixed_split_bill_queue_prompt(prepared_items),
                 parse_mode="Markdown",
                 reply_markup=split_bill_keyboard("mixed"),
             )
@@ -6433,7 +6507,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["pending_mixed"] = mixed_like
             context.user_data.pop("pending_batch", None)
             await query.edit_message_text(
-                build_mixed_split_bill_prompt(mixed_like),
+                build_mixed_split_bill_queue_prompt(mixed_like),
                 parse_mode="Markdown",
                 reply_markup=split_bill_keyboard("mixed"),
             )
@@ -6489,8 +6563,24 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("❌ Sesi split bill expired. Coba input ulang.")
                 return
 
-            mixed_items = apply_split_bill_decision_to_mixed(mixed_items, status)
+            # Untuk bulk input, paid/unpaid harus diterapkan satu-per-satu.
+            # Jangan apply ke semua split bill sekaligus, karena dalam satu bulk bisa
+            # ada item yang sudah dibayar dan item lain yang belum dibayar.
+            mixed_items, decided_index = apply_split_bill_decision_to_current_mixed(mixed_items, status)
             context.user_data["pending_mixed"] = mixed_items
+
+            if decided_index is None:
+                await query.edit_message_text("❌ Tidak ada split bill yang menunggu keputusan.")
+                return
+
+            if mixed_split_bill_needs_decision(mixed_items):
+                await query.edit_message_text(
+                    build_mixed_split_bill_queue_prompt(mixed_items),
+                    parse_mode="Markdown",
+                    reply_markup=split_bill_keyboard("mixed"),
+                )
+                return
+
             preview = build_mixed_preview(mixed_items)
 
             if mixed_needs_account(mixed_items):
