@@ -187,23 +187,25 @@ def apply_split_operation(text: str, base_amount: int) -> int:
     text_lower = text.lower()
 
     # Jangan bagi amount utama untuk split bill dengan teman.
-    # Contoh: "Tissue 10k bagi 4 sama opik alpat sapto"
-    # amount transaksi utama harus tetap 10000; piutang dihitung di handlers.py.
-    if re.search(r"\b(?:bagi|patungan|split)\s*(?:jadi\s*)?\d+\s+(?:sama|ama|dengan|bareng)\b", text_lower):
+    # Contoh:
+    # - "Tissue 10k bagi 4 sama opik alpat sapto"
+    # - "Nasi kuning 22k dibagi 2 sama sapto"
+    # amount transaksi utama harus tetap total asli; piutang dihitung di handlers.py.
+    split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
+    friend_marker = r"(?:sama|ama|dengan|bareng)"
+
+    if re.search(rf"\b{split_word}\s*(?:jadi\s*)?\d+\s+(?:orang\s+)?{friend_marker}\b", text_lower):
         return base_amount
-    if re.search(r"\b(?:sama|ama|dengan|bareng)\s+[a-zA-ZÀ-ÿ\s]{1,60}\s+(?:bagi|patungan|split)\s*(?:jadi\s*)?\d+\b", text_lower):
+    if re.search(rf"\b{friend_marker}\s+[a-zA-ZÀ-ÿ\s]{{1,60}}\s+{split_word}\s*(?:jadi\s*)?\d+\b", text_lower):
         return base_amount
 
-    # Pola: "dibagi N", "bagi N", "split N", "/ N"
+    # Pola: "dibagi N", "di bagi N", "di-bagi N", "bagi N", "split N", "/ N"
     split_patterns = [
-        r"dibagi\s+(\d+)",
-        r"bagi\s+(\d+)",
-        r"split\s+(\d+)",
+        rf"{split_word}\s*(?:jadi\s*)?(\d+)",
         r"/\s*(\d+)",
         r"untuk\s+(\d+)\s+orang",
         r"bertiga|berdua|berempat|berlima",
         r"(\d+)\s+orang",
-        r"patungan\s+(\d+)",
     ]
 
     # Handle kata khusus

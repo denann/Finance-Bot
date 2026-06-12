@@ -2896,14 +2896,23 @@ def build_batch_preview(parsed_items: list[dict]) -> str:
 
 def strip_split_bill_phrase(text: str) -> str:
     clean = str(text or "")
+
+    # Dipanggil setelah split bill terdeteksi, jadi aman membersihkan frasa
+    # "bagi/dibagi ... sama ..." dari description. Description dari parser
+    # sering sudah kehilangan angka pembagi, misalnya:
+    # "Nasi Kuning Dibagi Sama Sapto".
+    split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
+    friend_marker = r"(?:sama|ama|dengan|bareng)"
+    name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{0,80}"
+
     clean = re.sub(
-        r"\b(bagi|patungan|split)\s*(?:jadi\s*)?\d+\s+(?:sama|ama|dengan|bareng)\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,40}",
+        rf"\b{split_word}\s*(?:jadi\s*)?\d*\s*(?:orang\s+)?{friend_marker}\s+{name_chunk}",
         " ",
         clean,
         flags=re.IGNORECASE,
     )
     clean = re.sub(
-        r"\b(?:sama|ama|dengan|bareng)\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,40}\s+(?:bagi|patungan|split)\s*(?:jadi\s*)?\d+",
+        rf"\b{friend_marker}\s+{name_chunk}\s+{split_word}\s*(?:jadi\s*)?\d*",
         " ",
         clean,
         flags=re.IGNORECASE,
@@ -2989,14 +2998,13 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     if amount <= 0:
         return None
 
-    # Parser regex kadang mengubah "10k bagi 4" menjadi 2500.
-    # Untuk split bill, transaksi utama harus tetap sebesar total asli yang dibayar.
-    parsed["amount"] = amount
-
     text = str(raw or "")
+    split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
+    friend_marker = r"(?:sama|ama|dengan|bareng)"
+    name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{0,80}"
     patterns = [
-        r"\b(?:bagi|patungan|split)\s*(?:jadi\s*)?(\d+)\s+(?:sama|ama|dengan|bareng)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{0,80})",
-        r"\b(?:sama|ama|dengan|bareng)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{0,80})\s+(?:bagi|patungan|split)\s*(?:jadi\s*)?(\d+)",
+        rf"\b{split_word}\s*(?:jadi\s*)?(\d+)\s*(?:orang)?\s+{friend_marker}\s+({name_chunk})",
+        rf"\b{friend_marker}\s+({name_chunk})\s+{split_word}\s*(?:jadi\s*)?(\d+)",
     ]
 
     participants = None
@@ -3018,12 +3026,28 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     if not participants or participants < 2 or not person_names:
         return None
 
+    # Parser regex/LLM bisa saja sudah membagi "22k dibagi 2" menjadi 11k.
+    # Setelah split bill valid, transaksi utama dikembalikan ke total yang dibayar,
+    # sedangkan share/piutang dihitung terpisah. Jangan mutasi parsed kalau pola
+    # split bill tidak valid, agar kasus gagal tidak tiba-tiba berubah nominal.
+    parsed["amount"] = amount
+
     share_amount = amount / participants
     total_receivable = share_amount * len(person_names)
 
-    # Bersihkan deskripsi supaya tidak ikut menyimpan frasa "bagi 2 sama ...".
+    # Bersihkan deskripsi/subject supaya tidak ikut menyimpan frasa
+    # "bagi/dibagi 2 sama ...".
     desc = parsed.get("description") or ""
-    parsed["description"] = strip_split_bill_phrase(desc)
+    clean_desc = strip_split_bill_phrase(desc)
+    parsed["description"] = clean_desc
+
+    subject = parsed.get("subject") or ""
+    if subject:
+        clean_subject = strip_split_bill_phrase(subject)
+        # Subject biasanya mengikuti description. Kalau masih mengandung kata split,
+        # pakai versi bersih agar output/sheet tidak menjadi "Nasi Dibagi Sama Sapto".
+        if clean_subject != subject or re.search(split_word, subject, flags=re.IGNORECASE):
+            parsed["subject"] = clean_subject or clean_desc
 
     return {
         "person_name": " ".join(person_names),  # backward compatibility
@@ -4170,25 +4194,31 @@ def parse_amount_text(value: str) -> float:
     
 def extract_split_bill_total_amount(raw_text: str) -> float | None:
     """
-    Ambil nominal asli SEBELUM kata bagi/patungan/split.
+    Ambil nominal asli dari input split bill.
+
     Contoh:
     - Tissue 10k bagi 4 sama opik alpat sapto -> 10000
-    - Ayam 26k bagi 2 sama sapto -> 26000
+    - Ayam 26k dibagi 2 sama sapto -> 26000
+    - Ayam 26k sama sapto dibagi 2 -> 26000
     """
     text = str(raw_text or "").strip()
+    amount_token = r"(?P<amount>\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta|m)?)"
+    split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
+    friend_marker = r"(?:sama|ama|dengan|bareng)"
 
-    match = re.search(
-        r"(?P<amount>\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta|m)?)\s+"
-        r"(?:bagi|dibagi|patungan|split|share)\s+"
-        r"(?P<count>\d+)",
-        text,
-        flags=re.IGNORECASE,
-    )
+    patterns = [
+        # 22k dibagi 2 sama sapto
+        rf"{amount_token}\s+{split_word}\s*(?:jadi\s*)?\d+",
+        # 22k sama sapto dibagi 2
+        rf"{amount_token}\s+{friend_marker}\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{{0,80}}\s+{split_word}\s*(?:jadi\s*)?\d+",
+    ]
 
-    if not match:
-        return None
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return parse_amount_text(match.group("amount"))
 
-    return parse_amount_text(match.group("amount"))
+    return None
 
 async def set_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """

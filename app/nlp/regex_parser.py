@@ -846,7 +846,7 @@ def extract_note(text: str) -> str:
 
     # Kalau catatan berisi pola split, bersihkan jadi konteks orangnya saja
     # "dibagi 2 sama sapto" -> "sama sapto"
-    note = re.sub(r"\b(di\s*bagi|dibagi|bagi|split|patungan)\s*\d+\b", "", note)
+    note = re.sub(r"\b(di\s*-?\s*bagi|dibagi|bagi|split|share|patungan)\s*(?:jadi\s*)?\d+\b", "", note)
 
     # Buang sisa angka orang
     note = re.sub(r"\b\d+\s*orang\b", "", note)
