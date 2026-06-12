@@ -229,6 +229,29 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
+    # ── Incoming transfer from person: "transfer dari Alpat 50k" ─────────────
+    # Ini bukan outcome dan bukan transfer antar rekening sendiri.
+    # Dalam flow debt, frasa ini biasanya berarti pembayaran piutang dari orang tersebut.
+    incoming_transfer_match = re.search(
+        r"^\s*(?:transfer(?:an)?|tf|trf)\s+(?:masuk\s+)?dari\s+([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*\d|\s*(?:rp|idr))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if incoming_transfer_match:
+        person = re.sub(r"\s+", " ", incoming_transfer_match.group(1)).strip()
+        # Jangan override transfer antar rekening: "transfer dari BCA ke DANA 250k".
+        # Kalau setelah "dari" diawali account sendiri, biarkan parse_with_regex yang menangani.
+        first_token = person.split()[0] if person else ""
+        if person and first_token not in ACCOUNT_NAMES:
+            return {
+                "intent": "add_payment",
+                "person_name": person.title(),
+                "amount": amount,
+                "description": f"Transfer dari {person.title()}",
+                "date": detect_date(text),
+                "raw_input": text,
+            }
+
     # ── Payment pattern: "Budi bayar 300k", "Budi balikin 300k" ─────────────
     person_payment_patterns = [
         "bayar", "balikin", "kembaliin", "dibalikin", "ngembaliin",
