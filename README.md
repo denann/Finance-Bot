@@ -2,7 +2,7 @@
 
 Telegram Personal Finance Bot untuk mencatat, mengelola, dan menganalisis keuangan pribadi menggunakan natural language, Google Sheets, dan Gemini.
 
-Bot ini dirancang sebagai personal finance assistant: user cukup mengetik transaksi seperti `beli kopi 25k`, `gaji masuk 8 juta`, `Tissue 10k bagi 4 sama Opik Alpat Sapto`, atau mengirim gambar struk. Bot akan mem-parse input, meminta konfirmasi, menyimpan data ke Google Sheets, memperbarui saldo, dan menyediakan laporan serta insight keuangan.
+Bot ini dirancang sebagai personal finance assistant: user cukup mengetik transaksi seperti `beli kopi 25k`, `gaji masuk 8 juta`, `Tissue 10k bagi 4 sama budi, andi, toni`, atau mengirim gambar struk. Bot akan mem-parse input, meminta konfirmasi, menyimpan data ke Google Sheets, memperbarui saldo, dan menyediakan laporan serta insight keuangan.
 
 ---
 
@@ -125,11 +125,11 @@ Contoh:
 
 ```text
 Budi minjem 300k
-minjem uang Annisa 220k
+minjem uang Ahmad 220k
 hutang ke Budi 300k
 Budi bayar 100k
 bayar hutang Budi 100k
-minjemin ke Akmal 70.100k - 19k 15-05-2026
+minjemin ke Dono 100k - 19k 15-05-2026
 ```
 
 Command:
@@ -152,8 +152,8 @@ Catatan:
 Contoh:
 
 ```text
-Tissue 10k bagi 4 sama Opik Alpat Sapto 11-06-2026
-Ayam dcelup 26k bagi 2 sama Sapto
+Tissue 10k bagi 4 sama Doni Toni Budi 11-06-2026
+Ayam dcelup 26k bagi 2 sama Doni
 ```
 
 Bot akan menghitung bagian per orang dan bertanya apakah teman sudah bayar.
@@ -163,13 +163,13 @@ Jika belum, bot akan mencatat piutang per orang tanpa cashflow tambahan.
 Contoh expected:
 
 ```text
-Tissue 10k bagi 4 sama Opik Alpat Sapto
+Tissue 10k bagi 4 sama Doni Toni Budi
 Total: Rp10.000
 Bagian per orang: Rp2.500
 Piutang:
-- Opik Rp2.500
-- Alpat Rp2.500
-- Sapto Rp2.500
+- Doni Rp2.500
+- Toni Rp2.500
+- Budi Rp2.500
 ```
 
 ---
@@ -299,15 +299,15 @@ Tambah aset nominal langsung:
 Tambah aset berbasis unit:
 
 ```text
-add emas 41 gram
+add emas 1000 gram
 add laptop 1 buah
-/asset_add Emas Antam | 41 gram | Gold | Tabungan emas
+/asset_add Emas Antam |1000 gram | Gold | Tabungan emas
 ```
 
 Flow aset berbasis unit:
 
 ```text
-add emas 41 gram
+add emas 1000 gram
 → bot tanya harga 1 gram
 → user balas 2.41 juta
 → bot preview Simpan/Batal
