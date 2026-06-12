@@ -705,6 +705,38 @@ def build_asset_added_text(asset: dict) -> str:
     )
 
 
+def build_asset_confirm_preview(data: dict) -> str:
+    """Preview tambah aset sebelum disimpan."""
+    quantity = data.get("quantity")
+    unit = data.get("unit", "") or ""
+    price = float(data.get("price_per_unit", 0) or 0)
+
+    if quantity not in [None, ""] and str(unit).strip():
+        current_value = float(data.get("amount") or (float(quantity or 0) * price))
+        data["amount"] = current_value
+
+        return (
+            "📦 *Preview Tambah Aset*\n\n"
+            f"Nama: *{md_safe(data.get('name') or '-')}*\n"
+            f"Kategori: *{md_safe(data.get('category') or 'Other Asset')}*\n"
+            f"Jumlah: *{quantity} {md_safe(unit)}*\n"
+            f"Harga/{md_safe(unit)}: *{format_rupiah(price)}*\n"
+            f"Nilai saat ini: *{format_rupiah(current_value)}*\n"
+            f"Deskripsi: {md_safe(data.get('description') or '-')}\n\n"
+            "Simpan aset ini?"
+        )
+
+    current_value = float(data.get("amount", 0) or 0)
+    return (
+        "📦 *Preview Tambah Aset*\n\n"
+        f"Nama: *{md_safe(data.get('name') or '-')}*\n"
+        f"Kategori: *{md_safe(data.get('category') or 'Other Asset')}*\n"
+        f"Nilai: *{format_rupiah(current_value)}*\n"
+        f"Deskripsi: {md_safe(data.get('description') or '-')}\n\n"
+        "Simpan aset ini?"
+    )
+
+
 async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /asset_add Nama | nominal | kategori | deskripsi
@@ -724,23 +756,13 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        asset = add_asset(
-            name=data["name"],
-            current_value=data["amount"],
-            category=data["category"],
-            description=data["description"],
-            asset_type=data.get("asset_type", "manual"),
-            quantity=data.get("quantity"),
-            unit=data.get("unit", ""),
-            price_source=data.get("price_source", ""),
-            price_per_unit=data.get("price_per_unit"),
-        )
-
-        reply = build_asset_added_text(asset)
+        context.user_data["pending_asset_confirm"] = data
+        context.user_data.pop("pending_asset_price", None)
 
         await update.message.reply_text(
-            reply,
+            build_asset_confirm_preview(data),
             parse_mode="Markdown",
+            reply_markup=confirm_keyboard("asset"),
         )
 
     except Exception as e:
@@ -2962,9 +2984,14 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     if not parsed or parsed.get("type") != "expense":
         return None
 
-    amount = float(parsed.get("amount", 0) or 0)
+    original_total = extract_split_bill_total_amount(raw)
+    amount = float(original_total or parsed.get("amount", 0) or 0)
     if amount <= 0:
         return None
+
+    # Parser regex kadang mengubah "10k bagi 4" menjadi 2500.
+    # Untuk split bill, transaksi utama harus tetap sebesar total asli yang dibayar.
+    parsed["amount"] = amount
 
     text = str(raw or "")
     patterns = [
@@ -4121,6 +4148,48 @@ async def budget_history_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
+def parse_amount_text(value: str) -> float:
+    raw = str(value or "").strip().lower()
+    raw = raw.replace(" ", "")
+
+    multiplier = 1
+
+    if raw.endswith(("rb", "ribu", "k")):
+        multiplier = 1_000
+        raw = re.sub(r"(rb|ribu|k)$", "", raw)
+    elif raw.endswith(("jt", "juta", "m")):
+        multiplier = 1_000_000
+        raw = re.sub(r"(jt|juta|m)$", "", raw)
+
+    raw = raw.replace(",", ".")
+
+    try:
+        return float(raw) * multiplier
+    except Exception:
+        return 0
+    
+def extract_split_bill_total_amount(raw_text: str) -> float | None:
+    """
+    Ambil nominal asli SEBELUM kata bagi/patungan/split.
+    Contoh:
+    - Tissue 10k bagi 4 sama opik alpat sapto -> 10000
+    - Ayam 26k bagi 2 sama sapto -> 26000
+    """
+    text = str(raw_text or "").strip()
+
+    match = re.search(
+        r"(?P<amount>\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta|m)?)\s+"
+        r"(?:bagi|dibagi|patungan|split|share)\s+"
+        r"(?P<count>\d+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    if not match:
+        return None
+
+    return parse_amount_text(match.group("amount"))
+
 async def set_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Input bebas:
@@ -5250,27 +5319,16 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pending_asset["price_per_unit"] = unit_price
         pending_asset["needs_unit_price"] = False
 
-        try:
-            asset = add_asset(
-                name=pending_asset["name"],
-                current_value=pending_asset.get("amount"),
-                category=pending_asset.get("category", "Other Asset"),
-                description=pending_asset.get("description", ""),
-                asset_type=pending_asset.get("asset_type", "unit"),
-                quantity=pending_asset.get("quantity"),
-                unit=pending_asset.get("unit", ""),
-                price_source=pending_asset.get("price_source", "manual"),
-                price_per_unit=pending_asset.get("price_per_unit"),
-            )
-        except Exception as e:
-            await update.message.reply_text(f"❌ Gagal menyimpan aset: {str(e)}")
-            return
+        quantity = float(pending_asset.get("quantity", 0) or 0)
+        pending_asset["amount"] = quantity * unit_price
 
+        context.user_data["pending_asset_confirm"] = pending_asset
         context.user_data.pop("pending_asset_price", None)
 
         await update.message.reply_text(
-            build_asset_added_text(asset),
+            build_asset_confirm_preview(pending_asset),
             parse_mode="Markdown",
+            reply_markup=confirm_keyboard("asset"),
         )
         return
 
@@ -6330,6 +6388,45 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("confirm:"):
         confirm_target = data.split(":")[1] if ":" in data else ""
+
+        if confirm_target == "asset":
+            pending_asset = context.user_data.get("pending_asset_confirm")
+
+            if not pending_asset:
+                await query.edit_message_text("❌ Sesi tambah aset expired. Coba input ulang.")
+                return
+
+            await query.edit_message_text(
+                "⏳ *Sedang menyimpan aset...*",
+                parse_mode="Markdown",
+            )
+
+            try:
+                asset = add_asset(
+                    name=pending_asset["name"],
+                    current_value=pending_asset.get("amount"),
+                    category=pending_asset.get("category", "Other Asset"),
+                    description=pending_asset.get("description", ""),
+                    asset_type=pending_asset.get("asset_type", "manual"),
+                    quantity=pending_asset.get("quantity"),
+                    unit=pending_asset.get("unit", ""),
+                    price_source=pending_asset.get("price_source", "manual"),
+                    price_per_unit=pending_asset.get("price_per_unit"),
+                )
+            except Exception as e:
+                await query.edit_message_text(f"❌ Gagal menyimpan aset: {str(e)}")
+                context.user_data.pop("pending_asset_confirm", None)
+                return
+
+            await query.edit_message_text(
+                build_asset_added_text(asset),
+                parse_mode="Markdown",
+            )
+
+            context.user_data.pop("pending_asset_confirm", None)
+            context.user_data.pop("pending_asset_price", None)
+            return
+
         if confirm_target == "edit_txn":
             pending_edit = context.user_data.get("pending_edit_txn")
 
@@ -7138,6 +7235,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_edit_txn", None)
         context.user_data.pop("pending_debt_void", None)
         context.user_data.pop("pending_asset_price", None)
+        context.user_data.pop("pending_asset_confirm", None)
 
         await query.edit_message_text("❌ Input dibatalkan.")
         return
