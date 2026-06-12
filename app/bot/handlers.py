@@ -3988,7 +3988,7 @@ async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"  {bar} {item['pct_used']}%"
             )
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await reply_long_markdown(update, "\n".join(lines))
 
     # Insight otomatis setelah /bulanan.
     # Dikirim sebagai pesan terpisah tanpa parse_mode agar output Gemini tidak merusak Markdown Telegram.
