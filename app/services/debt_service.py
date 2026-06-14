@@ -467,6 +467,28 @@ def get_debt_by_id_any_status(debt_id: str) -> tuple[int | None, dict | None]:
     return None, None
 
 
+def build_active_debt_display_map() -> dict[str, dict]:
+    """
+    Bangun mapping nomor debt berdasarkan urutan tampilan /hutang.
+
+    Ini dipakai sebagai fallback saat context.user_data['last_debt_map'] hilang
+    karena bot restart/redeploy. Urutannya harus sama dengan hutang_handler:
+    payables dulu, lalu receivables.
+    """
+    summary = get_debt_summary()
+    display_map = {}
+    display_no = 1
+
+    for section in (summary.get("payables") or [], summary.get("receivables") or []):
+        display_map[str(display_no)] = {
+            "debt_id": section.get("id"),
+            "row_index": section.get("_row_index"),
+        }
+        display_no += 1
+
+    return display_map
+
+
 def resolve_debt_ref(ref: str, last_debt_map: dict | None = None) -> tuple[int | None, dict | None, str | None]:
     """
     Resolve argumen /debt_void.
@@ -493,6 +515,13 @@ def resolve_debt_ref(ref: str, last_debt_map: dict | None = None) -> tuple[int |
             return row, debt, None if debt else "Debt tidak ditemukan."
 
     if clean.isdigit():
+        # Fallback kalau mapping session /hutang hilang karena restart/redeploy.
+        fallback_map = build_active_debt_display_map()
+        mapped = fallback_map.get(clean)
+        if mapped and mapped.get("debt_id"):
+            row, debt = get_debt_by_id_any_status(mapped.get("debt_id"))
+            return row, debt, None if debt else "Debt tidak ditemukan."
+
         return None, None, "Nomor debt tidak valid. Jalankan /hutang dulu, lalu pakai nomor yang muncul."
 
     row, debt = get_debt_by_id_any_status(clean)
@@ -617,13 +646,18 @@ def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
     candidates = find_debt_initial_cashflow_candidates(debt)
 
     if len(candidates) == 0:
-        # Beberapa piutang sengaja dibuat TANPA cashflow, misalnya split bill:
-        # transaksi utama sudah tersimpan sebagai expense, lalu bagian teman hanya dicatat
-        # sebagai piutang tanpa mengubah saldo rekening. Untuk kasus ini /debt_void
-        # tetap aman: cukup tandai debt sebagai void tanpa reverse saldo dan tanpa delete txn.
+        # Piutang sering dibuat TANPA cashflow terpisah, terutama dari split bill:
+        # transaksi utama tetap expense, sedangkan bagian teman hanya dicatat sebagai
+        # piutang di sheet debts. Karena tidak ada saldo rekening yang pernah berubah
+        # dari debt row ini, void yang aman adalah debt-only void: cukup tandai debt
+        # sebagai settled/void tanpa mencari/menghapus transaksi cashflow.
+        #
+        # Patch penting: jangan bergantung pada description berisi "split bill".
+        # Data lama bisa saja tidak punya label itu, sehingga /debt_void 5 gagal
+        # dengan pesan "Cashflow transaksi terkait debt tidak ditemukan" meskipun
+        # itemnya memang piutang aktif dari /hutang.
         debt_type = str(debt.get("type", "")).strip()
-        desc = str(debt.get("description", "") or "").lower()
-        if debt_type == "receivable" and ("split bill" in desc or "tanpa cashflow" in desc):
+        if debt_type == "receivable":
             return {
                 "success": True,
                 "message": "ok",
@@ -633,11 +667,19 @@ def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
                 "candidate_txns": [],
                 "reverse_deltas": {},
                 "void_mode": "debt_only",
+                "warning": (
+                    "Cashflow terkait tidak ditemukan. Piutang akan di-void tanpa "
+                    "mengubah saldo rekening. Ini aman untuk piutang split bill/tanpa cashflow."
+                ),
             }
 
         return {
             "success": False,
-            "message": "Cashflow transaksi terkait debt tidak ditemukan. Cek manual di sheet transactions.",
+            "message": (
+                "Cashflow transaksi terkait debt tidak ditemukan. Untuk utang/payable, "
+                "bot perlu cashflow awal supaya saldo bisa direverse dengan aman. "
+                "Cek manual di sheet transactions."
+            ),
             "debt": debt,
             "debt_row_index": row_index,
             "cashflow_txn": None,
@@ -672,6 +714,105 @@ def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
         "candidate_txns": candidates,
         "reverse_deltas": reverse_deltas,
     }
+
+
+def update_debt(debt_ref: str, updates: dict, last_debt_map: dict | None = None) -> dict:
+    """
+    Edit debt/piutang aktif dengan aman.
+
+    Field yang didukung:
+    - person_name
+    - type: payable / receivable
+    - amount: update original_amount + remaining_amount, hanya jika belum ada mutasi pembayaran
+    - description
+    - due_date
+    """
+    row_index, debt, error = resolve_debt_ref(debt_ref, last_debt_map)
+
+    if error:
+        return {"success": False, "message": error, "debt": debt}
+
+    if not debt or not row_index:
+        return {"success": False, "message": "Debt tidak ditemukan.", "debt": debt}
+
+    if is_settled_value(debt.get("is_settled", "FALSE")):
+        return {"success": False, "message": "Debt ini sudah settled/void, jadi tidak bisa diedit.", "debt": debt}
+
+    cleaned = {}
+    for key, value in (updates or {}).items():
+        if value is None:
+            continue
+        cleaned[key] = value
+
+    if not cleaned:
+        return {"success": False, "message": "Tidak ada field yang diedit.", "debt": debt}
+
+    try:
+        changed = {}
+
+        if "person_name" in cleaned:
+            new_person = normalize_person_name(cleaned.get("person_name"))
+            if not new_person:
+                return {"success": False, "message": "Nama orang tidak boleh kosong.", "debt": debt}
+            update_cell(SHEET_DEBTS, row_index, DEBT_PERSON_COL, new_person)
+            changed["person_name"] = {"old": debt.get("person_name"), "new": new_person}
+
+        if "type" in cleaned:
+            new_type = str(cleaned.get("type") or "").strip().lower()
+            if new_type not in {"payable", "receivable"}:
+                return {"success": False, "message": "Tipe debt harus payable/receivable.", "debt": debt}
+            update_cell(SHEET_DEBTS, row_index, DEBT_TYPE_COL, new_type)
+            changed["type"] = {"old": debt.get("type"), "new": new_type}
+
+        if "amount" in cleaned:
+            new_amount = float(cleaned.get("amount") or 0)
+            if new_amount <= 0:
+                return {"success": False, "message": "Nominal debt tidak valid.", "debt": debt}
+
+            original = float(debt.get("original_amount", 0) or 0)
+            remaining = float(debt.get("remaining_amount", 0) or 0)
+            if abs(original - remaining) > 0.0001:
+                return {
+                    "success": False,
+                    "message": (
+                        "Debt ini sudah punya mutasi/pembayaran. Untuk keamanan, nominal tidak bisa diedit otomatis. "
+                        "Void dulu atau rapikan manual di sheet."
+                    ),
+                    "debt": debt,
+                }
+
+            update_cell(SHEET_DEBTS, row_index, DEBT_ORIGINAL_AMOUNT_COL, new_amount)
+            update_cell(SHEET_DEBTS, row_index, DEBT_REMAINING_AMOUNT_COL, new_amount)
+            changed["amount"] = {"old": remaining, "new": new_amount}
+
+        if "description" in cleaned:
+            new_description = str(cleaned.get("description") or "").strip()
+            update_cell(SHEET_DEBTS, row_index, DEBT_DESCRIPTION_COL, new_description)
+            changed["description"] = {"old": debt.get("description"), "new": new_description}
+
+        if "due_date" in cleaned:
+            new_due_date = str(cleaned.get("due_date") or "").strip()
+            update_cell(SHEET_DEBTS, row_index, DEBT_DUE_DATE_COL, new_due_date)
+            changed["due_date"] = {"old": debt.get("due_date"), "new": new_due_date}
+
+        if changed:
+            append_debt_mutation(
+                debt.get("id"),
+                float(changed.get("amount", {}).get("new", 0) or 0),
+                note=f"[edit] {changed}",
+                mutation_type="edit",
+            )
+
+        _, updated_debt = get_debt_by_id_any_status(debt.get("id"))
+        return {
+            "success": True,
+            "message": "ok",
+            "debt": updated_debt or debt,
+            "old_debt": debt,
+            "changed": changed,
+        }
+    except Exception as e:
+        return {"success": False, "message": str(e), "debt": debt}
 
 
 def void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:

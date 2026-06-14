@@ -229,49 +229,14 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # ── Incoming transfer from person: "transfer dari Alpat 50k" ─────────────
-    # Ini bukan outcome dan bukan transfer antar rekening sendiri.
-    # Dalam flow debt, frasa ini biasanya berarti pembayaran piutang dari orang tersebut.
-    incoming_transfer_match = re.search(
-        r"^\s*(?:transfer(?:an)?|tf|trf)\s+(?:masuk\s+)?dari\s+([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*\d|\s*(?:rp|idr))",
-        text_lower,
-        flags=re.IGNORECASE,
-    )
-    if incoming_transfer_match:
-        person = re.sub(r"\s+", " ", incoming_transfer_match.group(1)).strip()
-        # Jangan override transfer antar rekening: "transfer dari BCA ke DANA 250k".
-        # Kalau setelah "dari" diawali account sendiri, biarkan parse_with_regex yang menangani.
-        first_token = person.split()[0] if person else ""
-        if person and first_token not in ACCOUNT_NAMES:
-            return {
-                "intent": "add_payment",
-                "person_name": person.title(),
-                "amount": amount,
-                "description": f"Transfer dari {person.title()}",
-                "date": detect_date(text),
-                "raw_input": text,
-            }
+    # Catatan: frasa seperti "transfer/transaksi dari Annisa 55k"
+    # sekarang diperlakukan sebagai income biasa di detect_type(),
+    # bukan pembayaran utang/piutang. Debt payment harus pakai keyword eksplisit
+    # seperti "bayar hutang", "bayar utang", "lunasi", dst.
 
-    # ── Payment pattern: "Budi bayar 300k", "Budi balikin 300k" ─────────────
-    person_payment_patterns = [
-        "bayar", "balikin", "kembaliin", "dibalikin", "ngembaliin",
-    ]
-
-    for kw in person_payment_patterns:
-        if kw in text_lower:
-            person = extract_person_before(text_lower, kw)
-
-            # Hindari salah baca transaksi biasa seperti "bayar kos 1jt"
-            # Kalau tidak ada person sebelum kata bayar, jangan dianggap debt payment.
-            if person:
-                return {
-                    "intent": "add_payment",
-                    "person_name": person,
-                    "amount": amount,
-                    "description": f"Pembayaran dari/ke {person}",
-                    "date": detect_date(text),
-                    "raw_input": text,
-                }
+    # Hindari generic "Budi bayar 300k" sebagai debt.
+    # Sesuai rule: debt hanya untuk keyword eksplisit utang/piutang/minjem
+    # atau split bill. Jadi pembayaran debt diproses oleh block eksplisit di bawah.
 
     # ── Payment explicit: "bayar hutang Budi 300k" ───────────────────────────
     for kw in DEBT_PAYMENT_KEYWORDS:
@@ -349,6 +314,22 @@ def parse_debt_input(text: str) -> dict | None:
 
 def detect_type(text: str) -> str | None:
     text_lower = normalize_text(text)
+
+    # Income dari orang/non-rekening.
+    # Contoh: "Transaksi dari Annisa 55k", "transfer dari Alpat 50k",
+    # "kiriman dari Unknown 55k" harus jadi income biasa, bukan debt payment
+    # dan bukan transfer antar rekening.
+    incoming_from_person_match = re.search(
+        r"^\s*(?:transaksi|transfer(?:an)?|tf|trf|kiriman|uang)\s+(?:masuk\s+)?dari\s+"
+        r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr|ke\s+|via\s+|pakai\s+|pake\s+))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if incoming_from_person_match:
+        source = re.sub(r"\s+", " ", incoming_from_person_match.group(1)).strip()
+        first_token = source.split()[0] if source else ""
+        if source and first_token not in ACCOUNT_NAMES:
+            return "income"
 
     # Transfer antar rekening hanya dianggap transfer kalau ada nama rekening
     # yang dikenali (Cash/BRI/BSI/DANA/GoPay).
@@ -807,13 +788,13 @@ def extract_description(text: str, amount=None) -> str:
     # 4. Hapus kata kerja transaksi umum di awal.
     # Jangan hapus kata "transfer" kalau transfernya ke orang/non-rekening,
     # supaya deskripsi tetap "Transfer Ke Annisa", bukan cuma "Ke Annisa".
-    account_pattern = r"(?:cash|bri|bsi|dana|gopay)"
+    account_pattern = r"(?:cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank)"
     person_transfer = re.match(rf"^\s*transfer\s+ke\s+(?!{account_pattern}\b)", clean, flags=re.IGNORECASE)
 
     if person_transfer:
-        start_verbs = r"beli|bayar|byr|jajan|makan|minum|top\s*up|topup|isi|ngisi|gaji|dapet|dapat|terima|masuk"
+        start_verbs = r"beli|bayar|byr|jajan|makan|minum|top\s*up|topup|isi|ngisi|gaji|dapet|dapat|terima|masuk|transaksi|kiriman"
     else:
-        start_verbs = r"beli|bayar|byr|jajan|makan|minum|transfer|top\s*up|topup|isi|ngisi|gaji|dapet|dapat|terima|masuk"
+        start_verbs = r"beli|bayar|byr|jajan|makan|minum|transfer|transferan|tf|trf|top\s*up|topup|isi|ngisi|gaji|dapet|dapat|terima|masuk|transaksi|kiriman"
 
     clean = re.sub(
         rf"^\s*({start_verbs})\b",
@@ -824,11 +805,15 @@ def extract_description(text: str, amount=None) -> str:
 
     # 5. Hapus info rekening sederhana.
     clean = re.sub(
-        r"\b(dari|ke|pakai|pake|via)\s+(cash|bri|bsi|dana|gopay)\b",
+        r"\b(dari|ke|pakai|pake|via)\s+(cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank)\b",
         " ",
         clean,
         flags=re.IGNORECASE,
     )
+
+    # Hapus sisa prefix "dari" untuk income dari orang.
+    # Contoh: "Transaksi dari Annisa 55k" -> "Annisa".
+    clean = re.sub(r"^\s*dari\s+", " ", clean, flags=re.IGNORECASE)
 
     # 6. Rapikan spasi.
     clean = re.sub(r"\s+", " ", clean).strip(" .,-;:")

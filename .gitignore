@@ -6,5 +6,5 @@ credentials.json
 service_account.json
 .venv/
 venv/
-scripts/
 tests/
+scripts/

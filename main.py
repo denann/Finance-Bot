@@ -28,6 +28,7 @@ from app.bot.handlers import (
     cari_handler,
     hutang_handler,
     debt_void_handler,
+    debt_edit_handler,
     last_handler,
     transaksi_handler,
     delete_txn_handler,
@@ -36,6 +37,7 @@ from app.bot.handlers import (
     message_handler,
     image_handler,
     callback_handler,
+    error_handler,
     export_handler,
     recurring_handler,
     recurring_add_handler,
@@ -78,6 +80,7 @@ telegram_app.add_handler(CommandHandler("budget", budget_handler))
 telegram_app.add_handler(CommandHandler("budget_history", budget_history_handler))
 telegram_app.add_handler(CommandHandler("hutang", hutang_handler))
 telegram_app.add_handler(CommandHandler("debt_void", debt_void_handler))
+telegram_app.add_handler(CommandHandler("debt_edit", debt_edit_handler))
 telegram_app.add_handler(CommandHandler("cari", cari_handler))
 telegram_app.add_handler(CommandHandler("last", last_handler))
 telegram_app.add_handler(CommandHandler("transaksi", transaksi_handler))
@@ -120,6 +123,7 @@ telegram_app.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
 )
 telegram_app.add_handler(CallbackQueryHandler(callback_handler))
+telegram_app.add_error_handler(error_handler)
 set_telegram_app(telegram_app)
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────

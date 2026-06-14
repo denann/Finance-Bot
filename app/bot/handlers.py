@@ -1,4 +1,6 @@
 import re
+import ast
+import operator
 import io
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -37,7 +39,7 @@ from app.services.net_worth_service import (
 )
 
 from app.bot.keyboards import account_keyboard, confirm_keyboard
-from app.nlp.regex_parser import parse_with_regex, parse_debt_input
+from app.nlp.regex_parser import parse_with_regex, parse_debt_input, detect_date, strip_date_phrases
 from app.nlp.gemini_parser import parse_with_pending_fallback
 from app.nlp.gemini_image_parser import parse_transactions_from_image
 from app.sheets.client import get_all_records, get_spreadsheet
@@ -51,6 +53,7 @@ from app.services.transaction_service import (
     preview_edit_transaction_by_ref,
     edit_transaction_by_ref,
     get_transactions_for_export,
+    calculate_account_deltas,
     EXPORT_TRANSACTION_COLUMNS,
 )
 
@@ -94,6 +97,7 @@ from app.services.debt_service import (
     get_debt_by_person,
     preview_void_debt,
     void_debt,
+    update_debt,
 )
 import csv
 import os
@@ -174,6 +178,121 @@ async def reply_long_markdown(update: Update, text: str):
             await update.message.reply_text(part)
 
 
+async def reply_message_safely(message, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
+    """Kirim pesan biasa secara aman, termasuk pesan panjang dan Markdown error.
+
+    Jika pesan di-split, tombol ditempel di chunk terakhir supaya user baca dulu
+    lalu tombol muncul di bawah.
+    """
+    text = str(text or "").strip() or " "
+    chunks = split_long_message(text)
+    for idx, chunk in enumerate(chunks):
+        markup = reply_markup if idx == len(chunks) - 1 else None
+        try:
+            await message.reply_text(chunk, parse_mode=parse_mode, reply_markup=markup, **kwargs)
+        except BadRequest:
+            await message.reply_text(chunk, reply_markup=markup, **kwargs)
+
+
+async def reply_update_safely(update: Update, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
+    if update.message:
+        await reply_message_safely(update.message, text, parse_mode=parse_mode, reply_markup=reply_markup, **kwargs)
+
+
+async def safe_edit_message(query, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
+    """Edit pesan callback secara aman.
+
+    Telegram membatasi panjang edit_message_text sekitar 4096 karakter.
+    Kalau pesan terlalu panjang, bagian pertama akan diedit ke message lama,
+    sisanya dikirim sebagai reply lanjutan supaya callback tidak crash.
+    Markdown error juga otomatis fallback ke plain text.
+    """
+    text = str(text or "").strip()
+    if not text:
+        text = " "
+
+    chunks = split_long_message(text)
+    first = chunks[0]
+
+    if len(chunks) > 1:
+        suffix = "\n\n📄 *Pesan terlalu panjang, detail lanjutan dikirim di bawah.*"
+        max_first_len = TELEGRAM_SAFE_MESSAGE_LIMIT - len(suffix) - 10
+        first = first[:max_first_len].rstrip() + suffix
+
+    async def _edit(payload: str, mode: str | None, markup):
+        return await query.message.edit_text(
+            payload,
+            parse_mode=mode,
+            reply_markup=markup,
+            **kwargs,
+        )
+
+    try:
+        await _edit(first, parse_mode, reply_markup)
+    except BadRequest as exc:
+        err = str(exc).lower()
+        if "message is not modified" in err:
+            pass
+        elif "message_too_long" in err or "message is too long" in err or len(first) > 4096:
+            safe_first = first[:3500].rstrip() + "\n\n📄 Pesan terlalu panjang, detail lanjutan dikirim di bawah."
+            try:
+                await _edit(safe_first, None, reply_markup)
+            except Exception:
+                await query.message.reply_text(safe_first, reply_markup=reply_markup)
+        else:
+            try:
+                await _edit(first, None, reply_markup)
+            except BadRequest:
+                await query.message.reply_text(first, reply_markup=reply_markup)
+
+    for chunk in chunks[1:]:
+        try:
+            await query.message.reply_text(chunk, parse_mode=parse_mode)
+        except BadRequest:
+            await query.message.reply_text(chunk)
+
+
+async def show_callback_loading(query, text: str = "⏳ *Memproses pilihan...*"):
+    """Tampilkan loading singkat dan hapus inline keyboard agar tombol tidak double-click."""
+    try:
+        await safe_edit_message(query, text, parse_mode="Markdown")
+    except Exception:
+        # Loading tidak boleh menggagalkan action utama.
+        pass
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Error handler global agar exception callback tetap diberi tahu ke Telegram."""
+    error = getattr(context, "error", None)
+    err_text = str(error or "Unknown error")
+
+    if isinstance(error, BadRequest) and ("Message_too_long" in err_text or "Message is too long" in err_text):
+        user_msg = (
+            "❌ *Terjadi error saat menampilkan pesan.*\n\n"
+            "Output terlalu panjang untuk Telegram. Saya sudah menahan crash-nya, "
+            "coba ulangi atau kirim input dalam beberapa batch yang lebih kecil."
+        )
+    else:
+        user_msg = (
+            "❌ *Terjadi error saat memproses tombol/input.*\n\n"
+            f"Detail: `{md_safe(err_text[:250])}`\n\n"
+            "Coba ulangi dari step terakhir. Kalau masih muncul, kirim log ini untuk dicek."
+        )
+
+    try:
+        effective_message = getattr(update, "effective_message", None)
+        callback_query = getattr(update, "callback_query", None)
+
+        if effective_message:
+            await effective_message.reply_text(user_msg, parse_mode="Markdown")
+        elif callback_query and callback_query.message:
+            await callback_query.message.reply_text(user_msg, parse_mode="Markdown")
+    except Exception:
+        pass
+
+    print(f"[ERROR_HANDLER] {type(error).__name__ if error else 'Unknown'}: {err_text}")
+
+
 
 def parse_asset_quantity_input(value: str) -> dict | None:
     """
@@ -219,19 +338,19 @@ def parse_asset_quantity_input(value: str) -> dict | None:
     }
 
 
-def parse_human_amount(value: str | None) -> float:
-    """Parse angka manusia: 2410000, 2.41jt, 2,41 juta, 91.457k."""
+def _parse_human_amount_atom(value: str | None) -> float:
+    """Parse satu token nominal: 2410000, 2.41jt, 2,41 juta, 91.457k."""
     raw = str(value or "").strip().lower()
     if not raw:
         return 0.0
 
     multiplier = 1
-    if re.search(r"\b(jt|juta)\b", raw):
+    if re.search(r"(jt|juta)\b", raw):
         multiplier = 1_000_000
-    elif re.search(r"\b(rb|ribu|k)\b", raw):
+    elif re.search(r"(rb|ribu|k)\b", raw):
         multiplier = 1_000
 
-    raw = re.sub(r"\b(jt|juta|rb|ribu|k)\b", "", raw).strip()
+    raw = re.sub(r"(jt|juta|rb|ribu|k)\b", "", raw).strip()
 
     # Kalau ada suffix k/juta, titik/koma dianggap desimal: 2.41jt -> 2.41 * 1jt.
     if multiplier != 1:
@@ -245,6 +364,79 @@ def parse_human_amount(value: str | None) -> float:
     # Tanpa suffix, titik/koma dianggap pemisah ribuan.
     raw = re.sub(r"[^0-9]", "", raw)
     return float(raw or 0)
+
+
+def _safe_eval_amount_expression(expr: str) -> float:
+    """Evaluasi ekspresi nominal sederhana seperti 94k/2 atau 37.5k x 3.
+
+    Hanya operator +, -, *, / yang diizinkan. Tidak memakai eval langsung.
+    """
+    allowed_ops = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.USub: operator.neg,
+        ast.UAdd: operator.pos,
+    }
+
+    def _eval(node):
+        if isinstance(node, ast.Expression):
+            return _eval(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.Num):  # pragma: no cover, compatibility lama
+            return float(node.n)
+        if isinstance(node, ast.UnaryOp) and type(node.op) in allowed_ops:
+            return allowed_ops[type(node.op)](_eval(node.operand))
+        if isinstance(node, ast.BinOp) and type(node.op) in allowed_ops:
+            right = _eval(node.right)
+            if isinstance(node.op, ast.Div) and right == 0:
+                raise ValueError("division by zero")
+            return allowed_ops[type(node.op)](_eval(node.left), right)
+        raise ValueError("unsafe amount expression")
+
+    tree = ast.parse(expr, mode="eval")
+    return float(_eval(tree))
+
+
+def parse_human_amount(value: str | None) -> float:
+    """Parse angka manusia, termasuk ekspresi edit seperti `94k/2`.
+
+    Contoh:
+    - `94k/2` -> 47000
+    - `37.5k` -> 37500
+    - `2.41jt` -> 2410000
+    """
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return 0.0
+
+    # Jangan perlakukan tanggal seperti 01-05-2026 sebagai ekspresi matematika.
+    if re.fullmatch(r"\d{1,2}[-/]\d{1,2}[-/]\d{2,4}", raw):
+        return _parse_human_amount_atom(raw)
+
+    has_math_operator = bool(re.search(r"[+*/x×:]|(?<=\s)-(?:\s|\d)", raw))
+    if has_math_operator:
+        # Ubah token nominal bersuffix menjadi angka penuh sebelum dievaluasi.
+        token_pattern = re.compile(r"\d+(?:[.,]\d+)?\s*(?:jt|juta|rb|ribu|k)?", re.IGNORECASE)
+
+        def repl(match: re.Match) -> str:
+            token = match.group(0)
+            return str(_parse_human_amount_atom(token))
+
+        expr = token_pattern.sub(repl, raw)
+        expr = expr.replace("×", "*").replace("x", "*").replace(":", "/")
+        expr = re.sub(r"\s+", "", expr)
+        if re.fullmatch(r"[0-9.+\-*/()]+", expr):
+            try:
+                result = _safe_eval_amount_expression(expr)
+                if result > 0:
+                    return result
+            except Exception:
+                pass
+
+    return _parse_human_amount_atom(raw)
 
 
 def guess_asset_category_and_name(name: str, category: str | None = None) -> tuple[str, str]:
@@ -1832,6 +2024,10 @@ KNOWN_COMMANDS = {
         "description": "Batalkan utang/piutang salah input secara aman.",
         "destructive": True,
     },
+    "debt_edit": {
+        "description": "Edit utang/piutang aktif dari hasil /hutang.",
+        "destructive": True,
+    },
     "insight": {
         "description": "Buat insight/narasi finansial dengan Gemini.",
         "destructive": False,
@@ -2776,7 +2972,197 @@ def build_mixed_preview(mixed_items: list[dict]) -> str:
     lines.append(f"✅ Transaksi Income : *{format_rupiah(total_income)}*")
     lines.append(f"💸 Total Nominal Debt: *{format_rupiah(total_debt)}*")
 
+    account_summary = build_account_delta_summary_from_transaction_items(mixed_items)
+    if account_summary:
+        lines.append(account_summary)
+
     return "\n".join(lines)
+
+def parse_income_missing_amount(line: str) -> dict | None:
+    """Deteksi income masuk dari orang yang belum punya nominal.
+
+    Contoh yang harus ditanya nominalnya:
+    - Transfer dari Sapto tgl 6
+    - Transaksi dari Annisa
+
+    Ini sengaja tidak dianggap debt/payment. Debt hanya dari keyword utang/piutang/minjem
+    atau split bill eksplisit.
+    """
+    raw = str(line or "").strip()
+    if not raw:
+        return None
+
+    # Kalau setelah frasa tanggal dibuang masih ada nominal, biarkan parser normal yang handle.
+    without_date = strip_date_phrases(raw)
+    if parse_human_amount(without_date) > 0 and re.search(r"\d", without_date):
+        return None
+
+    # Jangan ambil internal transfer rekening: transfer dari BSI ke DANA.
+    low = raw.lower()
+    if re.search(r"\bdari\s+[^\n]+?\s+ke\s+", low):
+        return None
+
+    match = re.search(
+        r"^\s*(?:transaksi|transfer(?:an)?|tf|trf|kiriman|uang)\s+(?:masuk\s+)?dari\s+(.+?)\s*$",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    person_raw = match.group(1).strip()
+    # Buang frasa tanggal dari nama orang.
+    person_raw = re.sub(r"\b(?:tgl|tanggal)\s*\d{1,2}(?:[-/]\d{1,2}(?:[-/]\d{2,4})?)?\b", " ", person_raw, flags=re.IGNORECASE)
+    person_raw = re.sub(r"\b(?:hari\s+ini|kemarin|besok)\b", " ", person_raw, flags=re.IGNORECASE)
+    person = re.sub(r"\s+", " ", person_raw).strip(" .,-;")
+
+    if not person:
+        return None
+
+    account_like = {"cash", "bri", "bsi", "bca", "dana", "gopay", "seabank", "sea bank"}
+    if person.lower() in account_like:
+        return None
+
+    return {
+        "type": "income",
+        "amount": None,
+        "category": "Other Income",
+        "account": None,
+        "to_account": None,
+        "subject": person.title(),
+        "description": person.title(),
+        "catatan": raw,
+        "tipe_pengeluaran": "",
+        "date": detect_date(raw),
+        "parsed_by": "missing_amount",
+        "needs_amount": True,
+    }
+
+
+def build_missing_amount_prompt(raw: str, parsed: dict, current: int | None = None, total: int | None = None) -> str:
+    prefix = ""
+    if current is not None and total is not None and total > 1:
+        prefix = f"🧩 *Nominal kurang {current}/{total}*\n\n"
+
+    desc = md_safe(parsed.get("description") or raw)
+    date = md_safe(parsed.get("date") or "-")
+    return (
+        f"{prefix}🤔 Saya mendeteksi income, tapi nominalnya belum ada.\n\n"
+        f"📝 Item: *{desc}*\n"
+        f"📅 Tanggal: *{date}*\n"
+        f"📌 Input: `{md_safe(raw)}`\n\n"
+        "Nominalnya berapa? Contoh: `13k`, `50000`, atau `94k/2`."
+    )
+
+
+def finalize_missing_amount_item(item: dict, amount: float) -> dict:
+    parsed = dict(item.get("parsed") or {})
+    parsed["amount"] = amount
+    parsed.pop("needs_amount", None)
+    parsed["parsed_by"] = parsed.get("parsed_by") or "missing_amount"
+    return {
+        "kind": "transaction",
+        "parsed": parsed,
+        "raw": item.get("raw") or parsed.get("catatan") or "",
+    }
+
+
+async def continue_after_missing_amount_mixed(update: Update, context: ContextTypes.DEFAULT_TYPE, mixed_items: list[dict]) -> None:
+    context.user_data["pending_mixed"] = mixed_items
+    context.user_data.pop("pending_parsed", None)
+    context.user_data.pop("pending_raw", None)
+    context.user_data.pop("pending_batch", None)
+    context.user_data.pop("pending_debt", None)
+    context.user_data.pop("pending_debt_batch", None)
+    context.user_data.pop("mixed_review_preview_sent", None)
+
+    preview = build_mixed_preview(mixed_items)
+
+    if mixed_split_bill_needs_decision(mixed_items):
+        await reply_update_safely(
+            update,
+            build_mixed_split_bill_queue_prompt(mixed_items),
+            parse_mode="Markdown",
+            reply_markup=mixed_split_bill_keyboard(mixed_items),
+        )
+    else:
+        await reply_update_safely(
+            update,
+            f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+            parse_mode="Markdown",
+            reply_markup=edit_or_continue_keyboard("mixed"),
+        )
+
+
+async def handle_pending_missing_amount(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
+    state = context.user_data.get("pending_missing_amount")
+    if not state:
+        return False
+
+    amount = parse_human_amount(user_text)
+    if not amount or amount <= 0:
+        await update.message.reply_text(
+            "❌ Nominalnya belum kebaca. Coba tulis seperti `13k`, `50000`, atau `94k/2`.",
+            parse_mode="Markdown",
+        )
+        return True
+
+    scope = state.get("scope")
+    if scope == "mixed":
+        mixed_items = state.get("mixed_items") or []
+        missing_indices = state.get("missing_indices") or []
+        current = int(state.get("current") or 0)
+
+        if current >= len(missing_indices):
+            context.user_data.pop("pending_missing_amount", None)
+            await update.message.reply_text("❌ Tidak ada input kurang nominal yang sedang menunggu jawaban.")
+            return True
+
+        idx = missing_indices[current]
+        if 0 <= idx < len(mixed_items):
+            mixed_items[idx] = finalize_missing_amount_item(mixed_items[idx], amount)
+
+        current += 1
+        if current < len(missing_indices):
+            state["mixed_items"] = mixed_items
+            state["current"] = current
+            context.user_data["pending_missing_amount"] = state
+            next_idx = missing_indices[current]
+            next_item = mixed_items[next_idx]
+            await update.message.reply_text(
+                build_missing_amount_prompt(next_item.get("raw", ""), next_item.get("parsed", {}), current + 1, len(missing_indices)),
+                parse_mode="Markdown",
+            )
+            return True
+
+        context.user_data.pop("pending_missing_amount", None)
+        await continue_after_missing_amount_mixed(update, context, mixed_items)
+        return True
+
+    if scope == "single":
+        item = state.get("item") or {}
+        finalized = finalize_missing_amount_item(item, amount)
+        parsed = finalized["parsed"]
+        context.user_data["pending_parsed"] = parsed
+        context.user_data["pending_raw"] = finalized.get("raw") or user_text
+        context.user_data.pop("pending_missing_amount", None)
+        context.user_data.pop("pending_batch", None)
+        context.user_data.pop("pending_debt", None)
+        context.user_data.pop("pending_debt_batch", None)
+        context.user_data.pop("pending_mixed", None)
+
+        preview = build_preview(parsed)
+        await reply_update_safely(
+            update,
+            f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+            parse_mode="Markdown",
+            reply_markup=edit_or_continue_keyboard("single"),
+        )
+        return True
+
+    context.user_data.pop("pending_missing_amount", None)
+    return False
+
 
 def parse_mixed_item(line: str) -> dict:
     """
@@ -2784,7 +3170,7 @@ def parse_mixed_item(line: str) -> dict:
 
     Return:
     {
-        "kind": "debt"|"transaction"|"failed",
+        "kind": "debt"|"transaction"|"missing_amount"|"failed",
         "parsed": dict,
         "raw": str
     }
@@ -2794,6 +3180,14 @@ def parse_mixed_item(line: str) -> dict:
         return {
             "kind": "debt",
             "parsed": debt_parsed,
+            "raw": line,
+        }
+
+    missing_amount_income = parse_income_missing_amount(line)
+    if missing_amount_income:
+        return {
+            "kind": "missing_amount",
+            "parsed": missing_amount_income,
             "raw": line,
         }
 
@@ -2824,6 +3218,407 @@ def mixed_needs_account(mixed_items: list[dict]) -> bool:
 
     return False
 
+
+def edit_or_continue_keyboard(scope: str) -> InlineKeyboardMarkup:
+    """Keyboard setelah preview: edit dulu atau lanjut ke rekening/simpan."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✏️ Edit dulu", callback_data=f"editflow:edit:{scope}"),
+            InlineKeyboardButton("➡️ Lanjut", callback_data=f"editflow:continue:{scope}"),
+        ],
+        [InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{scope}")],
+    ])
+
+
+def build_account_delta_summary_from_transaction_items(items: list[dict]) -> str:
+    """Ringkasan dampak saldo per rekening dari item transaksi yang sudah punya account."""
+    transaction_items = []
+    for item in items or []:
+        parsed = item.get("parsed", item) if isinstance(item, dict) else {}
+        if isinstance(parsed, dict) and parsed.get("type") in ["expense", "income", "transfer"]:
+            transaction_items.append({"parsed": parsed})
+
+    deltas = calculate_account_deltas(transaction_items)
+    if not deltas:
+        return ""
+
+    lines = ["\n💳 *Ringkasan per rekening:*"]
+    for account_name, delta in deltas.items():
+        sign = "+" if float(delta or 0) >= 0 else "-"
+        lines.append(f"• {md_safe(account_name)}: {sign}{format_rupiah(abs(float(delta or 0)))}")
+    return "\n".join(lines)
+
+
+def build_mixed_short_summary(mixed_items: list[dict]) -> str:
+    """Ringkasan pendek untuk transisi setelah preview panjang sudah pernah ditampilkan."""
+    total_expense = 0.0
+    total_income = 0.0
+    total_transfer = 0.0
+    total_debt = 0.0
+    transaction_count = 0
+    debt_count = 0
+
+    for item in mixed_items or []:
+        kind = item.get("kind")
+        parsed = item.get("parsed", {}) or {}
+        amount = float(parsed.get("amount", 0) or 0)
+        if kind == "transaction":
+            transaction_count += 1
+            txn_type = parsed.get("type")
+            if txn_type == "expense":
+                total_expense += amount
+            elif txn_type == "income":
+                total_income += amount
+            elif txn_type == "transfer":
+                total_transfer += amount
+        elif kind == "debt":
+            debt_count += 1
+            total_debt += amount
+
+    lines = ["🧾 *Ringkasan batch:*"]
+    lines.append(f"• Total item: *{len(mixed_items or [])}*")
+    if transaction_count:
+        lines.append(f"• Transaksi: *{transaction_count} item*")
+    if total_expense:
+        lines.append(f"• Expense: *{format_rupiah(total_expense)}*")
+    if total_income:
+        lines.append(f"• Income: *{format_rupiah(total_income)}*")
+    if total_transfer:
+        lines.append(f"• Transfer: *{format_rupiah(total_transfer)}*")
+    if debt_count:
+        lines.append(f"• Debt: *{debt_count} item* / {format_rupiah(total_debt)}")
+
+    account_summary = build_account_delta_summary_from_transaction_items(mixed_items)
+    if account_summary:
+        lines.append(account_summary)
+
+    return "\n".join(lines)
+
+
+def build_single_short_summary(parsed: dict) -> str:
+    """Ringkasan pendek untuk single transaction setelah preview awal sudah tampil."""
+    if not isinstance(parsed, dict):
+        return "🧾 *Ringkasan transaksi:* -"
+
+    txn_type = parsed.get("type") or "transaction"
+    description = md_safe(parsed.get("description") or parsed.get("subject") or "Transaksi")
+    amount = float(parsed.get("amount", 0) or 0)
+    category = md_safe(parsed.get("category") or "-")
+    account = md_safe(parsed.get("account") or "-")
+
+    lines = ["🧾 *Ringkasan transaksi:*"]
+    lines.append(f"• Jenis: *{md_safe(txn_type)}*")
+    lines.append(f"• Item: *{description}*")
+    lines.append(f"• Nominal: *{format_rupiah(amount)}*")
+    if category != "-":
+        lines.append(f"• Kategori: *{category}*")
+    if account != "-":
+        lines.append(f"• Rekening: *{account}*")
+
+    account_summary = build_account_delta_summary_from_transaction_items([{"parsed": parsed}])
+    if account_summary:
+        lines.append(account_summary)
+
+    return "\n".join(lines)
+
+
+def build_updated_item_summary(item: dict, index: int | None = None) -> str:
+    """Ringkasan pendek item yang baru diedit."""
+    prefix = f"Item {index}" if index else "Item"
+    kind = item.get("kind") if isinstance(item, dict) else None
+    parsed = item.get("parsed", {}) if isinstance(item, dict) else {}
+
+    if kind == "transaction":
+        label = md_safe(parsed.get("description") or parsed.get("subject") or "Transaksi")
+        amount = float(parsed.get("amount", 0) or 0)
+        category = md_safe(parsed.get("category") or "-")
+        account = md_safe(parsed.get("account") or "-")
+        return (
+            f"✅ *{prefix} sudah diupdate.*\n"
+            f"• {label}\n"
+            f"• {format_rupiah(amount)} | {category}\n"
+            f"• Rekening: {account}"
+        )
+
+    if kind == "debt":
+        person = md_safe(parsed.get("person_name") or "-")
+        amount = float(parsed.get("amount", 0) or 0)
+        account = md_safe(parsed.get("account") or "-")
+        return (
+            f"✅ *{prefix} debt sudah diupdate.*\n"
+            f"• {person}\n"
+            f"• {format_rupiah(amount)}\n"
+            f"• Rekening: {account}"
+        )
+
+    return f"✅ *{prefix} sudah diupdate.*"
+
+
+def build_preview_edit_help(scope: str = "single") -> str:
+    item_hint = "" if scope == "single" else "\nKamu sedang mengedit item yang dipilih."
+    return (
+        "✏️ *Mau edit apa?*" + item_hint + "\n\n"
+        "Ketik salah satu format berikut:\n"
+        "`nominal 25000`\n"
+        "`kategori Food & Beverage`\n"
+        "`deskripsi Kopi susu`\n"
+        "`subjek Annisa`\n"
+        "`tipe income` atau `tipe expense`\n"
+        "`tanggal 2026-06-12`\n"
+        "`rekening BCA`\n\n"
+        "Bisa juga pakai `field=value`, contoh `category=Food & Beverage`."
+    )
+
+
+def build_mixed_edit_choose_prompt(mixed_items: list[dict]) -> str:
+    lines = ["✏️ *Mau edit item nomor berapa?*\n"]
+    for i, item in enumerate(mixed_items or [], 1):
+        kind = item.get("kind")
+        parsed = item.get("parsed", {})
+        if kind == "transaction":
+            label = parsed.get("description") or parsed.get("subject") or item.get("raw", "-")
+            amount = parsed.get("amount", 0)
+            lines.append(f"{i}. {md_safe(label)} — {format_rupiah(float(amount or 0))}")
+        elif kind == "debt":
+            label = parsed.get("person_name") or item.get("raw", "-")
+            amount = parsed.get("amount", 0)
+            lines.append(f"{i}. Debt {md_safe(label)} — {format_rupiah(float(amount or 0))}")
+        else:
+            lines.append(f"{i}. {md_safe(item.get('raw', '-'))}")
+    lines.append("\nBalas dengan angka, contoh: `2`.")
+    return "\n".join(lines)
+
+
+def parse_preview_edit_updates(text: str) -> dict:
+    """Parse update sederhana untuk preview sebelum simpan."""
+    raw = str(text or "").strip()
+    updates: dict = {}
+
+    key_aliases = {
+        "amount": "amount", "nominal": "amount", "jumlah": "amount",
+        "category": "category", "kategori": "category",
+        "description": "description", "desc": "description", "deskripsi": "description",
+        "subject": "subject", "subjek": "subject",
+        "type": "type", "tipe": "type", "jenis": "type",
+        "date": "date", "tanggal": "date", "tgl": "date",
+        "account": "account", "rekening": "account", "akun": "account",
+        "to_account": "to_account", "ke_rekening": "to_account", "rekening_tujuan": "to_account",
+        "catatan": "catatan", "note": "catatan",
+        "tipe_pengeluaran": "tipe_pengeluaran", "pengeluaran": "tipe_pengeluaran",
+    }
+
+    eq_match = re.match(r"^([a-zA-Z_]+)\s*=\s*(.+)$", raw)
+    if eq_match:
+        key = key_aliases.get(eq_match.group(1).lower())
+        value = eq_match.group(2).strip()
+    else:
+        natural_match = re.match(
+            r"^(nominal|jumlah|amount|kategori|category|deskripsi|description|desc|subjek|subject|tipe|type|jenis|tanggal|tgl|date|rekening|account|akun|catatan|note|tipe_pengeluaran|pengeluaran|ke_rekening|to_account|rekening_tujuan)\s+(.+)$",
+            raw,
+            flags=re.IGNORECASE,
+        )
+        if not natural_match:
+            return {}
+        key = key_aliases.get(natural_match.group(1).lower())
+        value = natural_match.group(2).strip()
+
+    if not key or value == "":
+        return {}
+
+    if key == "amount":
+        amount = parse_human_amount(value)
+        if amount <= 0:
+            return {}
+        updates[key] = amount
+    elif key == "type":
+        normalized = value.lower().strip()
+        type_aliases = {
+            "income": "income", "pemasukan": "income", "masuk": "income",
+            "expense": "expense", "pengeluaran": "expense", "keluar": "expense",
+            "transfer": "transfer",
+        }
+        if normalized not in type_aliases:
+            return {}
+        updates[key] = type_aliases[normalized]
+    elif key == "date":
+        from app.nlp.regex_parser import parse_explicit_date
+        parsed_date = parse_explicit_date(value) or value
+        updates[key] = parsed_date
+    elif key in ["account", "to_account"]:
+        value_clean = value.strip()
+        updates[key] = value_clean.upper() if value_clean.lower() in ["bca", "bri", "bsi", "dana"] else value_clean.title()
+    else:
+        updates[key] = value.strip()
+
+    return updates
+
+
+def apply_preview_edit_updates_to_parsed(parsed: dict, updates: dict) -> dict:
+    if not isinstance(parsed, dict):
+        return parsed
+
+    parsed.update(updates)
+
+    txn_type = parsed.get("type")
+    if "type" in updates:
+        if txn_type == "income" and (not parsed.get("category") or parsed.get("category") == "Other Expense"):
+            parsed["category"] = "Other Income"
+            parsed["tipe_pengeluaran"] = ""
+        elif txn_type == "expense" and (not parsed.get("category") or parsed.get("category") == "Other Income"):
+            parsed["category"] = "Other Expense"
+
+    if "description" in updates and (not parsed.get("subject") or parsed.get("subject") in ["Pemasukan", "Transaksi"]):
+        parsed["subject"] = updates["description"]
+
+    return parsed
+
+
+async def proceed_after_preview_edit(query, context: ContextTypes.DEFAULT_TYPE, scope: str):
+    """Lanjutkan flow setelah user memilih 'Lanjut'."""
+    context.user_data.pop("pending_preview_edit", None)
+
+    if scope == "mixed":
+        mixed_items = context.user_data.get("pending_mixed")
+        if not mixed_items:
+            await safe_edit_message(query, "❌ Sesi mixed input expired. Coba input ulang.")
+            return
+
+        if mixed_split_bill_needs_decision(mixed_items):
+            await safe_edit_message(query, 
+                build_mixed_split_bill_queue_prompt(mixed_items),
+                parse_mode="Markdown",
+                reply_markup=mixed_split_bill_keyboard(mixed_items),
+            )
+            return
+
+        short_summary = build_mixed_short_summary(mixed_items)
+        if mixed_needs_account(mixed_items):
+            await safe_edit_message(query, 
+                f"{short_summary}\n\n💳 Pilih rekening untuk item yang belum punya rekening:",
+                parse_mode="Markdown",
+                reply_markup=account_keyboard("mixed_acc"),
+            )
+            return
+
+        await safe_edit_message(query, 
+            f"{short_summary}\n\nSimpan semua item ini?",
+            parse_mode="Markdown",
+            reply_markup=confirm_keyboard("mixed"),
+        )
+        return
+
+    parsed = context.user_data.get("pending_parsed")
+    if not parsed:
+        await safe_edit_message(query, "❌ Sesi transaksi expired. Coba input ulang.")
+        return
+
+    if split_bill_needs_decision(parsed):
+        await safe_edit_message(query, 
+            build_split_bill_prompt_from_parsed(parsed),
+            parse_mode="Markdown",
+            reply_markup=split_bill_keyboard("single"),
+        )
+        return
+
+    short_summary = build_single_short_summary(parsed)
+    if needs_account(parsed):
+        await safe_edit_message(query, 
+            f"{short_summary}\n\n💳 Dari rekening mana?",
+            parse_mode="Markdown",
+            reply_markup=account_keyboard("acc"),
+        )
+        return
+
+    await safe_edit_message(query, 
+        f"{short_summary}\n\nSimpan transaksi ini?",
+        parse_mode="Markdown",
+        reply_markup=confirm_keyboard("pending"),
+    )
+
+
+async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
+    """Handle balasan user untuk edit preview sebelum pilih rekening/simpan."""
+    state = context.user_data.get("pending_preview_edit")
+    if not state:
+        return False
+
+    scope = state.get("scope")
+    step = state.get("step")
+
+    if scope == "mixed" and step == "choose_item":
+        try:
+            item_index = int(str(user_text).strip()) - 1
+        except Exception:
+            await update.message.reply_text("❌ Balas dengan nomor item, contoh: `2`.", parse_mode="Markdown")
+            return True
+
+        mixed_items = context.user_data.get("pending_mixed") or []
+        if item_index < 0 or item_index >= len(mixed_items):
+            await update.message.reply_text("❌ Nomor item tidak valid. Coba pilih nomor yang ada di preview.")
+            return True
+
+        state["step"] = "edit_item"
+        state["index"] = item_index
+        context.user_data["pending_preview_edit"] = state
+        await update.message.reply_text(build_preview_edit_help("mixed"), parse_mode="Markdown")
+        return True
+
+    updates = parse_preview_edit_updates(user_text)
+    if not updates:
+        await update.message.reply_text(
+            "❌ Format edit belum kebaca.\n\n" + build_preview_edit_help(scope or "single"),
+            parse_mode="Markdown",
+        )
+        return True
+
+    if scope == "mixed":
+        mixed_items = context.user_data.get("pending_mixed") or []
+        item_index = int(state.get("index", -1))
+        if item_index < 0 or item_index >= len(mixed_items):
+            context.user_data.pop("pending_preview_edit", None)
+            await update.message.reply_text("❌ Sesi edit mixed tidak valid. Coba input ulang.")
+            return True
+
+        item = mixed_items[item_index]
+        if item.get("kind") == "transaction":
+            item["parsed"] = apply_preview_edit_updates_to_parsed(item.get("parsed", {}), updates)
+        elif item.get("kind") == "debt":
+            debt_updates = dict(updates)
+            if "subject" in debt_updates:
+                debt_updates["person_name"] = debt_updates.pop("subject")
+            item.setdefault("parsed", {}).update(debt_updates)
+        mixed_items[item_index] = item
+        context.user_data["pending_mixed"] = mixed_items
+        context.user_data.pop("pending_preview_edit", None)
+
+        item_summary = build_updated_item_summary(item, item_index + 1)
+        short_summary = build_mixed_short_summary(mixed_items)
+        await reply_update_safely(
+            update,
+            f"{item_summary}\n\n{short_summary}\n\nMau edit lagi atau lanjut?",
+            parse_mode="Markdown",
+            reply_markup=edit_or_continue_keyboard("mixed"),
+        )
+        return True
+
+    parsed = context.user_data.get("pending_parsed")
+    if not parsed:
+        context.user_data.pop("pending_preview_edit", None)
+        await update.message.reply_text("❌ Sesi edit transaksi expired. Coba input ulang.")
+        return True
+
+    parsed = apply_preview_edit_updates_to_parsed(parsed, updates)
+    context.user_data["pending_parsed"] = parsed
+    context.user_data.pop("pending_preview_edit", None)
+
+    short_summary = build_single_short_summary(parsed)
+    await reply_update_safely(
+        update,
+        f"✅ Preview sudah diupdate.\n\n{short_summary}\n\nMau edit lagi atau lanjut?",
+        parse_mode="Markdown",
+        reply_markup=edit_or_continue_keyboard("single"),
+    )
+    return True
 
 
 def format_split_bill_preview_line(parsed: dict) -> str:
@@ -2887,6 +3682,10 @@ def build_preview(parsed: dict) -> str:
     if parsed.get("to_account"):
         lines.append(f"➡️ Ke Rekening: {parsed.get('to_account')}")
 
+    account_summary = build_account_delta_summary_from_transaction_items([{"parsed": parsed}])
+    if account_summary:
+        lines.append(account_summary)
+
     return "\n".join(lines)
 
 
@@ -2934,6 +3733,10 @@ def build_batch_preview(parsed_items: list[dict]) -> str:
     lines.append("\n*Ringkasan:*")
     lines.append(f"❌ Total Pengeluaran: *{format_rupiah(total_expense)}*")
     lines.append(f"✅ Total Pemasukan   : *{format_rupiah(total_income)}*")
+
+    account_summary = build_account_delta_summary_from_transaction_items(parsed_items)
+    if account_summary:
+        lines.append(account_summary)
 
     return "\n".join(lines)
 
@@ -3144,14 +3947,28 @@ def mixed_split_bill_needs_decision(mixed_items: list[dict]) -> bool:
     return False
 
 
-def split_bill_keyboard(scope: str = "single") -> InlineKeyboardMarkup:
+def split_bill_keyboard(scope: str = "single", item_index: int | None = None) -> InlineKeyboardMarkup:
+    """Keyboard keputusan split bill.
+
+    Untuk mixed/bulk, callback_data membawa index item split bill yang sedang
+    ditampilkan. Ini membuat callback idempotent: jika user double-click atau
+    Telegram mengirim callback lama lagi, klik lama tidak akan diam-diam
+    diterapkan ke split bill berikutnya.
+    """
+    suffix = f":{item_index}" if item_index is not None else ""
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("✅ Sudah dibayar", callback_data=f"split:paid:{scope}"),
-            InlineKeyboardButton("🟢 Belum, masuk piutang", callback_data=f"split:unpaid:{scope}"),
+            InlineKeyboardButton("✅ Sudah dibayar", callback_data=f"split:paid:{scope}{suffix}"),
+            InlineKeyboardButton("🟢 Belum, masuk piutang", callback_data=f"split:unpaid:{scope}{suffix}"),
         ],
         [InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{scope}")],
     ])
+
+
+def mixed_split_bill_keyboard(mixed_items: list[dict]) -> InlineKeyboardMarkup:
+    """Keyboard split bill mixed dengan index item aktif di callback_data."""
+    current_index = get_next_mixed_split_bill_index(mixed_items)
+    return split_bill_keyboard("mixed", current_index)
 
 
 def build_split_bill_prompt_from_parsed(parsed: dict) -> str:
@@ -3271,15 +4088,38 @@ def apply_split_bill_decision_to_current_mixed(mixed_items: list[dict], status: 
     current_index = get_next_mixed_split_bill_index(mixed_items)
     if current_index is None:
         return mixed_items, None
+    mixed_items, decided_index, _ = apply_split_bill_decision_to_mixed_index(mixed_items, current_index, status)
+    return mixed_items, decided_index
 
-    item = mixed_items[current_index]
+
+def apply_split_bill_decision_to_mixed_index(mixed_items: list[dict], item_index: int, status: str) -> tuple[list[dict], int | None, str]:
+    """Terapkan paid/unpaid ke index split bill tertentu.
+
+    Return: (mixed_items, decided_index, result_status)
+    result_status:
+    - applied: keputusan baru berhasil diterapkan
+    - already_decided: callback duplicate/stale untuk item yang sudah diputuskan
+    - invalid: index tidak valid atau item bukan split bill
+    """
+    if item_index is None or item_index < 0 or item_index >= len(mixed_items or []):
+        return mixed_items, None, "invalid"
+
+    item = mixed_items[item_index]
+    if item.get("kind") != "transaction":
+        return mixed_items, None, "invalid"
+
     parsed = item.get("parsed", {})
-    if isinstance(parsed, dict) and parsed.get("split_bill"):
-        apply_split_bill_decision_to_parsed(parsed, status)
-        item["parsed"] = parsed
-        mixed_items[current_index] = item
+    split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
+    if not split_bill:
+        return mixed_items, None, "invalid"
 
-    return mixed_items, current_index
+    if split_bill.get("status"):
+        return mixed_items, item_index, "already_decided"
+
+    apply_split_bill_decision_to_parsed(parsed, status)
+    item["parsed"] = parsed
+    mixed_items[item_index] = item
+    return mixed_items, item_index, "applied"
 
 
 def apply_split_bill_decision_to_parsed(parsed: dict, status: str) -> dict:
@@ -3748,7 +4588,10 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`Budi minjem 300rb`\n"
         "`Budi bayar 100rb`\n"
         "`bayar hutang Budi 100rb`\n"
-        "`/debt_void 1` — batalkan debt salah input dari hasil `/hutang`\n\n"
+        "`/debt_void 1` — batalkan debt salah input dari hasil `/hutang`\n"
+        "`/debt_edit 1 nominal 100k` — edit nominal utang/piutang\n"
+        "`/debt_edit 1 nama Budi` — edit nama orang\n"
+        "`/debt_edit 1 tipe piutang` — ubah arah jadi piutang\n\n"
 
         "*5. Input Banyak Sekaligus*\n"
         "`beli kopi 10k beli nasi 20k`\n"
@@ -3768,6 +4611,8 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/bulanan` — ringkasan bulan ini + insight otomatis Gemini\n"
         "`/bulanan 2026-06` — ringkasan bulan tertentu + insight otomatis Gemini\n"
         "`/hutang` — utang/piutang aktif\n"
+        "`/debt_void 1` — batalkan debt salah input\n"
+        "`/debt_edit 1 nominal 100k` — edit utang/piutang aktif\n"
         "`/cari kopi` — cari transaksi dengan keyword kopi\n\n"
 
         "*8. Budget*\n"
@@ -4635,6 +5480,149 @@ async def debt_void_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=confirm_keyboard("debt_void"),
     )
 
+def normalize_debt_edit_type(value: str) -> str | None:
+    text = str(value or "").strip().lower()
+    mapping = {
+        "payable": "payable",
+        "utang": "payable",
+        "hutang": "payable",
+        "saya hutang": "payable",
+        "utang saya": "payable",
+        "receivable": "receivable",
+        "piutang": "receivable",
+        "dihutangi": "receivable",
+        "diutangin": "receivable",
+        "orang hutang": "receivable",
+    }
+    return mapping.get(text)
+
+
+def parse_debt_edit_args(args: list[str]) -> tuple[str | None, dict, str | None]:
+    if len(args) < 3:
+        return None, {}, (
+            "Format edit debt belum lengkap.\n\n"
+            "Contoh:\n"
+            "`/debt_edit 5 nominal 100k`\n"
+            "`/debt_edit 5 nama Akmal`\n"
+            "`/debt_edit 5 tipe piutang`\n"
+            "`/debt_edit 5 deskripsi Split bill wifi`\n"
+            "`/debt_edit 5 jatuh_tempo 2026-06-30`"
+        )
+
+    debt_ref = args[0].strip()
+    field = args[1].strip().lower().replace("-", "_")
+    value = " ".join(args[2:]).strip()
+
+    aliases = {
+        "nominal": "amount",
+        "amount": "amount",
+        "jumlah": "amount",
+        "sisa": "amount",
+        "nama": "person_name",
+        "orang": "person_name",
+        "person": "person_name",
+        "person_name": "person_name",
+        "tipe": "type",
+        "type": "type",
+        "jenis": "type",
+        "deskripsi": "description",
+        "description": "description",
+        "catatan": "description",
+        "keterangan": "description",
+        "jatuh_tempo": "due_date",
+        "duedate": "due_date",
+        "due_date": "due_date",
+        "tempo": "due_date",
+        "tanggal": "due_date",
+    }
+
+    normalized_field = aliases.get(field)
+    if not normalized_field:
+        return debt_ref, {}, (
+            "Field edit debt tidak dikenali.\n"
+            "Field yang bisa diedit: `nominal`, `nama`, `tipe`, `deskripsi`, `jatuh_tempo`."
+        )
+
+    updates = {}
+    if normalized_field == "amount":
+        amount = parse_amount_text(value)
+        if not amount or amount <= 0:
+            return debt_ref, {}, "Nominal tidak valid. Contoh: `/debt_edit 5 nominal 100k`"
+        updates["amount"] = amount
+    elif normalized_field == "type":
+        debt_type = normalize_debt_edit_type(value)
+        if not debt_type:
+            return debt_ref, {}, "Tipe tidak valid. Gunakan `utang/payable` atau `piutang/receivable`."
+        updates["type"] = debt_type
+    elif normalized_field == "due_date":
+        detected = detect_date(value)
+        updates["due_date"] = detected or value
+    elif normalized_field == "person_name":
+        if not value:
+            return debt_ref, {}, "Nama orang tidak boleh kosong."
+        updates["person_name"] = value
+    elif normalized_field == "description":
+        updates["description"] = value
+
+    return debt_ref, updates, None
+
+
+def build_debt_edit_result_text(result: dict) -> str:
+    debt = result.get("debt") or {}
+    changed = result.get("changed") or {}
+    debt_type = str(debt.get("type") or "").strip()
+    type_label = "Utang Anda" if debt_type == "payable" else "Piutang Anda"
+
+    lines = ["✅ *Debt berhasil diedit!*\n"]
+    lines.append(f"👤 Nama: *{md_safe(debt.get('person_name', '-'))}*")
+    lines.append(f"📌 Tipe: *{md_safe(type_label)}*")
+    lines.append(f"💰 Sisa: *{format_rupiah(float(debt.get('remaining_amount', 0) or 0))}*")
+    due_date = str(debt.get("due_date") or "").strip()
+    if due_date:
+        lines.append(f"📅 Jatuh tempo: `{md_safe(due_date)}`")
+
+    if changed:
+        lines.append("\nField yang berubah:")
+        for field, diff in changed.items():
+            old = diff.get("old")
+            new = diff.get("new")
+            if field == "amount":
+                old = format_rupiah(float(old or 0))
+                new = format_rupiah(float(new or 0))
+            lines.append(f"• `{field}`: {md_safe(old)} → *{md_safe(new)}*")
+
+    lines.append("\nCek ulang dengan `/hutang`.")
+    return "\n".join(lines)
+
+
+async def debt_edit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /debt_edit <nomor_dari_hutang_atau_debt_id> <field> <value>
+    """
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    debt_ref, updates, error = parse_debt_edit_args(context.args or [])
+    if error:
+        await update.message.reply_text(f"❌ {error}", parse_mode="Markdown")
+        return
+
+    last_debt_map = context.user_data.get("last_debt_map", {})
+    result = update_debt(debt_ref, updates, last_debt_map)
+    if not result.get("success"):
+        await update.message.reply_text(
+            f"❌ *Debt gagal diedit.*\n{md_safe(result.get('message'))}",
+            parse_mode="Markdown",
+        )
+        return
+
+    await update.message.reply_text(
+        build_debt_edit_result_text(result),
+        parse_mode="Markdown",
+    )
+
+
 async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -4689,8 +5677,10 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     net_label = "🟢 Anda lebih banyak dihutangi" if net >= 0 else "🔴 Anda lebih banyak berhutang"
     lines.append(f"\n{net_label}: *{format_rupiah(abs(net))}*")
     lines.append(
-        "\nBatalkan debt salah input:\n"
-        "`/debt_void 1`\n"
+        "\nKelola debt dari daftar ini:\n"
+        "`/debt_void 1` — batalkan debt salah input\n"
+        "`/debt_edit 1 nominal 100k` — edit nominal\n"
+        "`/debt_edit 1 nama Budi` — edit nama orang\n"
         "Angka mengikuti nomor dari hasil `/hutang` ini."
     )
 
@@ -5478,6 +6468,7 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("pending_batch", None)
     context.user_data.pop("pending_debt", None)
     context.user_data.pop("pending_debt_batch", None)
+    context.user_data.pop("mixed_review_preview_sent", None)
 
     preview = build_mixed_preview(mixed_items)
 
@@ -5502,6 +6493,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_text = update.message.text.strip()
+
+    missing_amount_handled = await handle_pending_missing_amount(update, context, user_text)
+    if missing_amount_handled:
+        return
+
+    preview_edit_handled = await handle_pending_preview_edit(update, context, user_text)
+    if preview_edit_handled:
+        return
 
     # ── Pending asset unit price ─────────────────────────────────────────────
     pending_asset = context.user_data.get("pending_asset_price")
@@ -5590,6 +6589,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(input_lines) > 1:
         mixed_items = []
         failed_lines = []
+        missing_amount_indices = []
 
         for line in input_lines:
             item = parse_mixed_item(line)
@@ -5597,6 +6597,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if item["kind"] == "failed":
                 failed_lines.append(line)
                 continue
+
+            if item["kind"] == "missing_amount":
+                missing_amount_indices.append(len(mixed_items))
 
             mixed_items.append(item)
 
@@ -5618,12 +6621,33 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if mixed_items:
+            if missing_amount_indices:
+                context.user_data["pending_missing_amount"] = {
+                    "scope": "mixed",
+                    "mixed_items": mixed_items,
+                    "missing_indices": missing_amount_indices,
+                    "current": 0,
+                }
+                first_idx = missing_amount_indices[0]
+                first_item = mixed_items[first_idx]
+                await update.message.reply_text(
+                    build_missing_amount_prompt(
+                        first_item.get("raw", ""),
+                        first_item.get("parsed", {}),
+                        1,
+                        len(missing_amount_indices),
+                    ),
+                    parse_mode="Markdown",
+                )
+                return
+
             context.user_data["pending_mixed"] = mixed_items
             context.user_data.pop("pending_parsed", None)
             context.user_data.pop("pending_raw", None)
             context.user_data.pop("pending_batch", None)
             context.user_data.pop("pending_debt", None)
             context.user_data.pop("pending_debt_batch", None)
+            context.user_data.pop("mixed_review_preview_sent", None)
 
             preview = build_mixed_preview(mixed_items)
 
@@ -5635,22 +6659,36 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(
                     build_mixed_split_bill_queue_prompt(mixed_items),
                     parse_mode="Markdown",
-                    reply_markup=split_bill_keyboard("mixed"),
-                )
-            elif mixed_needs_account(mixed_items):
-                await update.message.reply_text(
-                    f"{preview}\n\n💳 Pilih rekening untuk item yang belum punya rekening:",
-                    parse_mode="Markdown",
-                    reply_markup=account_keyboard("mixed_acc"),
+                    reply_markup=mixed_split_bill_keyboard(mixed_items),
                 )
             else:
-                await update.message.reply_text(
-                    f"{preview}\n\nSimpan semua item ini?",
+                await reply_update_safely(
+                    update,
+                    f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
                     parse_mode="Markdown",
-                    reply_markup=confirm_keyboard("mixed"),
+                    reply_markup=edit_or_continue_keyboard("mixed"),
                 )
 
             return
+
+    # Single income yang kurang nominal.
+    # Contoh: "Transfer dari Sapto tgl 6" -> tanya nominal dulu,
+    # bukan gagal parse dan bukan debt/payment.
+    missing_amount_income = parse_income_missing_amount(user_text)
+    if missing_amount_income:
+        context.user_data["pending_missing_amount"] = {
+            "scope": "single",
+            "item": {
+                "kind": "missing_amount",
+                "parsed": missing_amount_income,
+                "raw": user_text,
+            },
+        }
+        await update.message.reply_text(
+            build_missing_amount_prompt(user_text, missing_amount_income),
+            parse_mode="Markdown",
+        )
+        return
 
     # Single transaction
     parsed = parse_input(user_text)
@@ -5721,18 +6759,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=split_bill_keyboard("single"),
         )
-    elif parsed.get("account") or parsed.get("type") == "transfer":
-        await update.message.reply_text(
-            f"{preview}\n\nSimpan transaksi ini?",
-            parse_mode="Markdown",
-            reply_markup=confirm_keyboard("pending"),
-        )
     else:
-        await update.message.reply_text(
-            f"{preview}\n\n💳 Dari rekening mana?",
+        await reply_update_safely(
+            update,
+            f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
             parse_mode="Markdown",
-            reply_markup=account_keyboard("acc"),
+            reply_markup=edit_or_continue_keyboard("single"),
         )
+
 
 def build_transactions_full_text(transactions: list[dict], title: str) -> str:
     lines = [f"🧾 *{md_safe(title)}*\n"]
@@ -6241,16 +7275,52 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     query = update.callback_query
-    await query.answer()
+    await query.answer("⏳ Memproses...", show_alert=False)
 
-    data = query.data
+    data = query.data or ""
+    await show_callback_loading(query)
+
+    if data.startswith("editflow:"):
+        parts = data.split(":")
+        action = parts[1] if len(parts) > 1 else ""
+        scope = parts[2] if len(parts) > 2 else "single"
+
+        if action == "continue":
+            await proceed_after_preview_edit(query, context, scope)
+            return
+
+        if action == "edit":
+            if scope == "mixed":
+                mixed_items = context.user_data.get("pending_mixed")
+                if not mixed_items:
+                    await safe_edit_message(query, "❌ Sesi mixed input expired. Coba input ulang.")
+                    return
+                context.user_data["pending_preview_edit"] = {"scope": "mixed", "step": "choose_item"}
+                await safe_edit_message(query, 
+                    build_mixed_edit_choose_prompt(mixed_items),
+                    parse_mode="Markdown",
+                )
+                return
+
+            if not context.user_data.get("pending_parsed"):
+                await safe_edit_message(query, "❌ Sesi transaksi expired. Coba input ulang.")
+                return
+            context.user_data["pending_preview_edit"] = {"scope": "single", "step": "edit_item"}
+            await safe_edit_message(query, 
+                build_preview_edit_help("single"),
+                parse_mode="Markdown",
+            )
+            return
+
+        await safe_edit_message(query, "❌ Aksi edit tidak valid.")
+        return
 
     if data.startswith("debt_batch_acc:"):
         account = data.split(":")[1]
         debt_batch = context.user_data.get("pending_debt_batch")
 
         if not debt_batch:
-            await query.edit_message_text("❌ Sesi batch debt expired. Coba input ulang.")
+            await safe_edit_message(query, "❌ Sesi batch debt expired. Coba input ulang.")
             return
 
         prepared_batch = []
@@ -6304,7 +7374,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for item in failed_items:
                     lines.append(f"• `{item['raw']}` — {item['message']}")
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "\n".join(lines),
                 parse_mode="Markdown",
             )
@@ -6323,7 +7393,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for item in failed_items:
                 preview += f"\n• `{item['raw']}` — {item['message']}"
 
-        await query.edit_message_text(
+        await safe_edit_message(query, 
             preview,
             parse_mode="Markdown",
             reply_markup=confirm_keyboard("debt_batch"),
@@ -6335,7 +7405,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         debt_parsed = context.user_data.get("pending_debt")
 
         if not debt_parsed:
-            await query.edit_message_text("❌ Sesi debt expired. Coba input ulang.")
+            await safe_edit_message(query, "❌ Sesi debt expired. Coba input ulang.")
             return
 
         intent = debt_parsed.get("intent")
@@ -6346,7 +7416,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             debts = get_debt_by_person(person)
 
             if not debts:
-                await query.edit_message_text(
+                await safe_edit_message(query, 
                     f"❓ Tidak ada utang/piutang aktif dengan *{person}*.",
                     parse_mode="Markdown",
                 )
@@ -6354,7 +7424,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             if len(debts) > 1:
-                await query.edit_message_text(
+                await safe_edit_message(query, 
                     f"⚠️ Ada lebih dari 1 saldo aktif dengan *{person}*.\n\n"
                     f"Data lama masih duplicate. Rapikan dulu via /hutang "
                     f"atau nanti kita buat fitur merge debt legacy.",
@@ -6376,7 +7446,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             debt_type_for_payment=debt_type_for_payment,
         )
 
-        await query.edit_message_text(
+        await safe_edit_message(query, 
             preview,
             parse_mode="Markdown",
             reply_markup=confirm_keyboard("debt"),
@@ -6388,7 +7458,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mixed_items = context.user_data.get("pending_mixed")
 
         if not mixed_items:
-            await query.edit_message_text("❌ Sesi mixed input expired. Coba input ulang.")
+            await safe_edit_message(query, "❌ Sesi mixed input expired. Coba input ulang.")
             return
 
         prepared_items = []
@@ -6455,7 +7525,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for item in failed_items:
                     lines.append(f"• `{item['raw']}` — {item['message']}")
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "\n".join(lines),
                 parse_mode="Markdown",
             )
@@ -6464,23 +7534,25 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["pending_mixed"] = prepared_items
 
-        preview = build_mixed_preview(prepared_items)
-
-        if failed_items:
-            preview += "\n\n⚠️ *Catatan item yang tidak masuk preview:*"
-            for item in failed_items:
-                preview += f"\n• `{item['raw']}` — {item['message']}"
-
         if mixed_split_bill_needs_decision(prepared_items):
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 build_mixed_split_bill_queue_prompt(prepared_items),
                 parse_mode="Markdown",
-                reply_markup=split_bill_keyboard("mixed"),
+                reply_markup=mixed_split_bill_keyboard(prepared_items),
             )
             return
 
-        await query.edit_message_text(
-            f"{preview}\n\nSimpan semua item ini?",
+        short_summary = build_mixed_short_summary(prepared_items)
+
+        if failed_items:
+            short_summary += "\n\n⚠️ *Catatan item yang tidak masuk:*"
+            for item in failed_items[:5]:
+                short_summary += f"\n• `{md_safe(item['raw'])}` — {md_safe(item['message'])}"
+            if len(failed_items) > 5:
+                short_summary += f"\n• ...dan {len(failed_items) - 5} item lain."
+
+        await safe_edit_message(query, 
+            f"✅ Rekening *{md_safe(account)}* dipilih.\n\n{short_summary}\n\nSimpan semua item ini?",
             parse_mode="Markdown",
             reply_markup=confirm_keyboard("mixed"),
         )
@@ -6491,7 +7563,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         batch = context.user_data.get("pending_batch")
 
         if not batch:
-            await query.edit_message_text("❌ Sesi batch expired. Coba input ulang.")
+            await safe_edit_message(query, "❌ Sesi batch expired. Coba input ulang.")
             return
 
         for item in batch:
@@ -6506,14 +7578,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mixed_like = [{"kind": "transaction", "parsed": item["parsed"], "raw": item.get("raw", "")} for item in batch]
             context.user_data["pending_mixed"] = mixed_like
             context.user_data.pop("pending_batch", None)
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 build_mixed_split_bill_queue_prompt(mixed_like),
                 parse_mode="Markdown",
-                reply_markup=split_bill_keyboard("mixed"),
+                reply_markup=mixed_split_bill_keyboard(mixed_like),
             )
             return
 
-        await query.edit_message_text(
+        await safe_edit_message(query, 
             f"{preview}\n\nSimpan semua transaksi ini?",
             parse_mode="Markdown",
             reply_markup=confirm_keyboard("batch"),
@@ -6525,24 +7597,24 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parsed = context.user_data.get("pending_parsed")
 
         if not parsed:
-            await query.edit_message_text("❌ Sesi expired. Coba input ulang.")
+            await safe_edit_message(query, "❌ Sesi expired. Coba input ulang.")
             return
 
         parsed["account"] = account
         context.user_data["pending_parsed"] = parsed
 
         if split_bill_needs_decision(parsed):
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 build_split_bill_prompt_from_parsed(parsed),
                 parse_mode="Markdown",
                 reply_markup=split_bill_keyboard("single"),
             )
             return
 
-        preview = build_preview(parsed)
+        short_summary = build_single_short_summary(parsed)
 
-        await query.edit_message_text(
-            f"{preview}\n\nSimpan transaksi ini?",
+        await safe_edit_message(query, 
+            f"✅ Rekening *{md_safe(account)}* dipilih.\n\n{short_summary}\n\nSimpan transaksi ini?",
             parse_mode="Markdown",
             reply_markup=confirm_keyboard("pending"),
         )
@@ -6554,53 +7626,82 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         scope = parts[2] if len(parts) > 2 else "single"
 
         if status not in ["paid", "unpaid"]:
-            await query.edit_message_text("❌ Pilihan split bill tidak valid.")
+            await safe_edit_message(query, "❌ Pilihan split bill tidak valid.")
             return
 
         if scope == "mixed":
             mixed_items = context.user_data.get("pending_mixed")
             if not mixed_items:
-                await query.edit_message_text("❌ Sesi split bill expired. Coba input ulang.")
+                await safe_edit_message(query, "❌ Sesi split bill expired. Coba input ulang.")
                 return
 
             # Untuk bulk input, paid/unpaid harus diterapkan satu-per-satu.
-            # Jangan apply ke semua split bill sekaligus, karena dalam satu bulk bisa
-            # ada item yang sudah dibayar dan item lain yang belum dibayar.
-            mixed_items, decided_index = apply_split_bill_decision_to_current_mixed(mixed_items, status)
+            # Callback mixed sekarang membawa index item aktif. Ini mencegah bug
+            # double-click/stale callback: klik lama tidak boleh otomatis
+            # memutuskan split bill berikutnya, dan duplicate callback tidak boleh
+            # menimpa preview akhir dengan pesan "Tidak ada split bill...".
+            expected_index = None
+            if len(parts) > 3:
+                try:
+                    expected_index = int(parts[3])
+                except Exception:
+                    expected_index = None
+
+            if expected_index is not None:
+                mixed_items, decided_index, decision_result = apply_split_bill_decision_to_mixed_index(
+                    mixed_items,
+                    expected_index,
+                    status,
+                )
+            else:
+                mixed_items, decided_index = apply_split_bill_decision_to_current_mixed(mixed_items, status)
+                decision_result = "applied" if decided_index is not None else "invalid"
+
             context.user_data["pending_mixed"] = mixed_items
 
-            if decided_index is None:
-                await query.edit_message_text("❌ Tidak ada split bill yang menunggu keputusan.")
+            if decision_result == "invalid" and not mixed_split_bill_needs_decision(mixed_items):
+                # Semua split bill sudah selesai. Kemungkinan ini callback duplicate
+                # dari tombol lama. Jangan tampilkan error; lanjutkan ke preview agar
+                # user tetap bisa menyimpan data.
+                pass
+            elif decision_result == "invalid":
+                await safe_edit_message(query, 
+                    build_mixed_split_bill_queue_prompt(mixed_items),
+                    parse_mode="Markdown",
+                    reply_markup=mixed_split_bill_keyboard(mixed_items),
+                )
                 return
 
             if mixed_split_bill_needs_decision(mixed_items):
-                await query.edit_message_text(
+                await safe_edit_message(query, 
                     build_mixed_split_bill_queue_prompt(mixed_items),
                     parse_mode="Markdown",
-                    reply_markup=split_bill_keyboard("mixed"),
+                    reply_markup=mixed_split_bill_keyboard(mixed_items),
+                )
+                return
+
+            if context.user_data.get("mixed_review_preview_sent"):
+                short_summary = build_mixed_short_summary(mixed_items)
+                await safe_edit_message(query, 
+                    f"✅ Split bill sudah diproses.\n\n{short_summary}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+                    parse_mode="Markdown",
+                    reply_markup=edit_or_continue_keyboard("mixed"),
                 )
                 return
 
             preview = build_mixed_preview(mixed_items)
+            context.user_data["mixed_review_preview_sent"] = True
 
-            if mixed_needs_account(mixed_items):
-                await query.edit_message_text(
-                    f"{preview}\n\n💳 Pilih rekening untuk item yang belum punya rekening:",
-                    parse_mode="Markdown",
-                    reply_markup=account_keyboard("mixed_acc"),
-                )
-                return
-
-            await query.edit_message_text(
-                f"{preview}\n\nSimpan semua item ini?",
+            await safe_edit_message(query, 
+                f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
                 parse_mode="Markdown",
-                reply_markup=confirm_keyboard("mixed"),
+                reply_markup=edit_or_continue_keyboard("mixed"),
             )
             return
 
         parsed = context.user_data.get("pending_parsed")
         if not parsed:
-            await query.edit_message_text("❌ Sesi split bill expired. Coba input ulang.")
+            await safe_edit_message(query, "❌ Sesi split bill expired. Coba input ulang.")
             return
 
         if parsed.get("split_bill"):
@@ -6608,18 +7709,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["pending_parsed"] = parsed
         preview = build_preview(parsed)
 
-        if needs_account(parsed):
-            await query.edit_message_text(
-                f"{preview}\n\n💳 Dari rekening mana?",
-                parse_mode="Markdown",
-                reply_markup=account_keyboard("acc"),
-            )
-            return
-
-        await query.edit_message_text(
-            f"{preview}\n\nSimpan transaksi ini?",
+        await safe_edit_message(query, 
+            f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
             parse_mode="Markdown",
-            reply_markup=confirm_keyboard("pending"),
+            reply_markup=edit_or_continue_keyboard("single"),
         )
         return
 
@@ -6630,10 +7723,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending_asset = context.user_data.get("pending_asset_confirm")
 
             if not pending_asset:
-                await query.edit_message_text("❌ Sesi tambah aset expired. Coba input ulang.")
+                await safe_edit_message(query, "❌ Sesi tambah aset expired. Coba input ulang.")
                 return
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "⏳ *Sedang menyimpan aset...*",
                 parse_mode="Markdown",
             )
@@ -6651,11 +7744,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     price_per_unit=pending_asset.get("price_per_unit"),
                 )
             except Exception as e:
-                await query.edit_message_text(f"❌ Gagal menyimpan aset: {str(e)}")
+                await safe_edit_message(query, f"❌ Gagal menyimpan aset: {str(e)}")
                 context.user_data.pop("pending_asset_confirm", None)
                 return
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 build_asset_added_text(asset),
                 parse_mode="Markdown",
             )
@@ -6668,12 +7761,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending_edit = context.user_data.get("pending_edit_txn")
 
             if not pending_edit:
-                await query.edit_message_text(
+                await safe_edit_message(query, 
                     "❌ Sesi edit transaksi expired. Coba ulangi `/last`."
                 )
                 return
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "⏳ *Sedang mengedit transaksi dan memperbaiki saldo...*",
                 parse_mode="Markdown",
             )
@@ -6685,7 +7778,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             if not result.get("success"):
-                await query.edit_message_text(
+                await safe_edit_message(query, 
                     f"❌ *Gagal edit transaksi.*\n{result.get('message')}",
                     parse_mode="Markdown",
                 )
@@ -6724,7 +7817,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for account, balance in new_balances.items():
                     lines.append(f"• {account}: *{format_rupiah(balance)}*")
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "\n".join(lines),
                 parse_mode="Markdown",
             )
@@ -6738,12 +7831,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             txn_ids = pending_refs.get("txn_ids", [])
 
             if not row_indices and not txn_ids:
-                await query.edit_message_text(
+                await safe_edit_message(query, 
                     "❌ Sesi hapus transaksi expired. Coba ulangi `/last`."
                 )
                 return
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "⏳ *Sedang menghapus transaksi dan memperbaiki saldo...*",
                 parse_mode="Markdown",
             )
@@ -6777,7 +7870,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     for row in result["missing_rows"]:
                         lines.append(f"• `{row}`")
 
-                await query.edit_message_text(
+                await safe_edit_message(query, 
                     "\n".join(lines),
                     parse_mode="Markdown",
                 )
@@ -6822,7 +7915,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for row in result["missing_rows"]:
                     lines.append(f"• `{row}`")
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "\n".join(lines),
                 parse_mode="Markdown",
             )
@@ -6835,13 +7928,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending_void = context.user_data.get("pending_debt_void")
 
             if not pending_void:
-                await query.edit_message_text("❌ Sesi debt void expired. Coba ulangi `/hutang` lalu `/debt_void 1`.")
+                await safe_edit_message(query, "❌ Sesi debt void expired. Coba ulangi `/hutang` lalu `/debt_void 1`.")
                 return
 
             debt_ref = pending_void.get("debt_ref")
             last_debt_map = context.user_data.get("last_debt_map", {})
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "⏳ *Sedang membatalkan debt dan memperbaiki saldo...*",
                 parse_mode="Markdown",
             )
@@ -6849,7 +7942,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             result = void_debt(debt_ref, last_debt_map)
 
             if not result.get("success"):
-                await query.edit_message_text(
+                await safe_edit_message(query, 
                     f"❌ *Gagal void debt.*\n{result.get('message')}",
                     parse_mode="Markdown",
                 )
@@ -6884,7 +7977,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for account, balance in new_balances.items():
                     lines.append(f"• {md_safe(account)}: *{format_rupiah(balance)}*")
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "\n".join(lines),
                 parse_mode="Markdown",
             )
@@ -6896,10 +7989,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             debt_parsed = context.user_data.get("pending_debt")
 
             if not debt_parsed:
-                await query.edit_message_text("❌ Sesi debt expired. Coba input ulang.")
+                await safe_edit_message(query, "❌ Sesi debt expired. Coba input ulang.")
                 return
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "⏳ *Sedang menyimpan debt dan cashflow...*",
                 parse_mode="Markdown",
             )
@@ -6913,7 +8006,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raw = debt_parsed.get("raw_input") or ""
 
             if not person:
-                await query.edit_message_text("❌ Nama orang tidak terdeteksi. Coba input ulang.")
+                await safe_edit_message(query, "❌ Nama orang tidak terdeteksi. Coba input ulang.")
                 context.user_data.pop("pending_debt", None)
                 return
 
@@ -6929,20 +8022,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 target_debt_id = debt_parsed.get("target_debt_id")
 
                 if not target_debt_id:
-                    await query.edit_message_text("❌ Target debt tidak ditemukan. Coba input ulang.")
+                    await safe_edit_message(query, "❌ Target debt tidak ditemukan. Coba input ulang.")
                     context.user_data.pop("pending_debt", None)
                     return
 
                 debt_result = add_payment(target_debt_id, amount)
 
             else:
-                await query.edit_message_text("❌ Intent debt tidak valid. Coba input ulang.")
+                await safe_edit_message(query, "❌ Intent debt tidak valid. Coba input ulang.")
                 context.user_data.pop("pending_debt", None)
                 return
 
             if not debt_result or not debt_result.get("success"):
                 message = debt_result.get("message") if debt_result else "Unknown error"
-                await query.edit_message_text(f"❌ Gagal menyimpan debt: {message}")
+                await safe_edit_message(query, f"❌ Gagal menyimpan debt: {message}")
                 context.user_data.pop("pending_debt", None)
                 return
 
@@ -6984,7 +8077,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     lines.append(f"\n⚠️ Debt tersimpan, tapi cashflow gagal: {transaction_result.get('message')}")
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "\n".join(lines),
                 parse_mode="Markdown",
             )
@@ -7000,10 +8093,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             debt_batch = context.user_data.get("pending_debt_batch")
 
             if not debt_batch:
-                await query.edit_message_text("❌ Sesi batch debt expired. Coba input ulang.")
+                await safe_edit_message(query, "❌ Sesi batch debt expired. Coba input ulang.")
                 return
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "⏳ *Sedang menyimpan batch debt dan cashflow...*",
                 parse_mode="Markdown",
             )
@@ -7090,7 +8183,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for item in failed_items:
                     result_lines.append(f"• `{item['raw']}` — {item['message']}")
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "\n".join(result_lines),
                 parse_mode="Markdown",
             )
@@ -7106,10 +8199,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mixed_items = context.user_data.get("pending_mixed")
 
             if not mixed_items:
-                await query.edit_message_text("❌ Sesi mixed input expired. Coba input ulang.")
+                await safe_edit_message(query, "❌ Sesi mixed input expired. Coba input ulang.")
                 return
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "⏳ *Sedang menyimpan semua item...*",
                 parse_mode="Markdown",
             )
@@ -7286,7 +8379,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for item in failed_items:
                     result_lines.append(f"• `{item['raw']}` — {item['message']}")
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "\n".join(result_lines),
                 parse_mode="Markdown",
             )
@@ -7303,10 +8396,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             batch = context.user_data.get("pending_batch")
 
             if not batch:
-                await query.edit_message_text("❌ Sesi batch expired. Coba input ulang.")
+                await safe_edit_message(query, "❌ Sesi batch expired. Coba input ulang.")
                 return
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "⏳ *Sedang menyimpan semua transaksi...*",
                 parse_mode="Markdown",
             )
@@ -7382,7 +8475,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if result.get("message") and result.get("message") != "ok":
                 lines.append(f"\n⚠️ {result['message']}")
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 "\n".join(lines),
                 parse_mode="Markdown",
             )
@@ -7398,10 +8491,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raw = context.user_data.get("pending_raw", "")
 
         if not parsed:
-            await query.edit_message_text("❌ Sesi expired. Coba input ulang.")
+            await safe_edit_message(query, "❌ Sesi expired. Coba input ulang.")
             return
 
-        await query.edit_message_text(
+        await safe_edit_message(query, 
             "⏳ *Sedang menyimpan transaksi...*",
             parse_mode="Markdown",
         )
@@ -7438,7 +8531,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if budget_check["alert"]:
                         budget_info += f"\n\n{budget_check['alert_msg']}"
 
-            await query.edit_message_text(
+            await safe_edit_message(query, 
                 f"✅ *Transaksi tersimpan!*\n"
                 f"🔖 ID: `{result['transaction_id']}`"
                 f"{balance_info}"
@@ -7454,7 +8547,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_debt_batch", None)
             return
 
-        await query.edit_message_text(
+        await safe_edit_message(query, 
             f"❌ Gagal menyimpan: {result['message']}"
         )
         return
@@ -7474,7 +8567,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_asset_price", None)
         context.user_data.pop("pending_asset_confirm", None)
 
-        await query.edit_message_text("❌ Input dibatalkan.")
+        await safe_edit_message(query, "❌ Input dibatalkan.")
         return
 
     if data.startswith("pay_debt:"):
@@ -7501,14 +8594,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"📊 Sisa   : {format_rupiah(result['remaining'])}"
                 )
 
-            await query.edit_message_text(msg, parse_mode="Markdown")
+            await safe_edit_message(query, msg, parse_mode="Markdown")
             context.user_data.pop("pending_payment", None)
             return
 
-        await query.edit_message_text(
+        await safe_edit_message(query, 
             f"❌ Gagal: {result['message']}"
         )
         return
 
-    await query.edit_message_text("❌ Tombol tidak dikenali atau sesi sudah tidak valid.")
+    await safe_edit_message(query, "❌ Tombol tidak dikenali atau sesi sudah tidak valid.")
 
