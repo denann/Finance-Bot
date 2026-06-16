@@ -1,99 +1,126 @@
 import uvicorn
+from datetime import time
+from zoneinfo import ZoneInfo
 from fastapi import FastAPI
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
-    CallbackQueryHandler,
     filters,
 )
-from app.config import (
-    APP_PORT,
-    TELEGRAM_BOT_TOKEN,
-    WEBHOOK_URL,
-    TELEGRAM_WEBHOOK_SECRET,
-)
-from app.sheets.client import get_spreadsheet
+
 from app.api.webhook import router as webhook_router, set_telegram_app
 from app.bot.handlers import (
-    start_handler,
-    help_handler,
-    saldo_handler,
-    harian_handler,
-    mingguan_handler,
-    bulanan_handler,
+    ask_handler,
+    asset_add_handler,
+    asset_off_handler,
+    asset_update_handler,
+    assets_handler,
+    audit_handler,
     budget_handler,
     budget_history_handler,
-    set_budget_handler,
+    bulanan_handler,
+    callback_handler,
     cari_handler,
-    hutang_handler,
-    debt_void_handler,
+    coach_handler,
     debt_edit_handler,
-    last_handler,
-    transaksi_handler,
+    debt_void_handler,
     delete_txn_handler,
     edit_txn_handler,
-    unknown_command_handler,
-    message_handler,
-    image_handler,
-    callback_handler,
     error_handler,
     export_handler,
-    recurring_handler,
-    recurring_add_handler,
-    recurring_run_handler,
-    recurring_off_handler,
-    recurring_edit_handler,
+    harian_handler,
     health_handler,
-    networth_handler,
-    assets_handler,
-    liabilities_handler,
-    asset_add_handler,
-    asset_update_handler,
-    asset_off_handler,
-    liability_add_handler,
-    liability_update_handler,
-    liability_off_handler,
-    networth_snapshot_handler,
-    networth_history_handler,
+    help_handler,
+    hutang_handler,
+    image_handler,
     insight_handler,
-    ask_handler,
-    audit_handler,
-    coach_handler,
+    last_handler,
+    liabilities_handler,
+    liability_add_handler,
+    liability_off_handler,
+    liability_update_handler,
+    message_handler,
+    mingguan_handler,
+    networth_handler,
+    networth_history_handler,
+    networth_snapshot_handler,
+    recurring_add_handler,
+    recurring_edit_handler,
+    recurring_handler,
+    recurring_off_handler,
+    recurring_run_handler,
+    saldo_handler,
+    scheduled_export_transactions,
+    set_budget_handler,
+    start_handler,
+    transaksi_handler,
+    unknown_command_handler,
+)
+from app.config import (
+    ALLOWED_USER_ID,
+    APP_PORT,
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_WEBHOOK_SECRET,
+    WEBHOOK_URL,
 )
 from app.scheduler.jobs import create_scheduler
+from app.sheets.client import get_spreadsheet
+
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(title="Finance Bot")
 app.include_router(webhook_router)
 
+
 # ── Telegram ──────────────────────────────────────────────────────────────────
 telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
+
+# ── Basic Commands ────────────────────────────────────────────────────────────
 telegram_app.add_handler(CommandHandler("start", start_handler))
 telegram_app.add_handler(CommandHandler("help", help_handler))
+telegram_app.add_handler(CommandHandler("health", health_handler))
+
+
+# ── Transaction Commands ──────────────────────────────────────────────────────
 telegram_app.add_handler(CommandHandler("saldo", saldo_handler))
 telegram_app.add_handler(CommandHandler("harian", harian_handler))
 telegram_app.add_handler(CommandHandler("mingguan", mingguan_handler))
 telegram_app.add_handler(CommandHandler("bulanan", bulanan_handler))
-telegram_app.add_handler(CommandHandler("budget", budget_handler))
-telegram_app.add_handler(CommandHandler("budget_history", budget_history_handler))
-telegram_app.add_handler(CommandHandler("hutang", hutang_handler))
-telegram_app.add_handler(CommandHandler("debt_void", debt_void_handler))
-telegram_app.add_handler(CommandHandler("debt_edit", debt_edit_handler))
 telegram_app.add_handler(CommandHandler("cari", cari_handler))
 telegram_app.add_handler(CommandHandler("last", last_handler))
 telegram_app.add_handler(CommandHandler("transaksi", transaksi_handler))
 telegram_app.add_handler(CommandHandler("delete_txn", delete_txn_handler))
 telegram_app.add_handler(CommandHandler("edit_txn", edit_txn_handler))
-telegram_app.add_handler(CommandHandler("export", export_handler))
+
+
+# ── Export Commands ───────────────────────────────────────────────────────────
+telegram_app.add_handler(CommandHandler("download_data", export_handler))
+
+
+# ── Budget Commands ───────────────────────────────────────────────────────────
+telegram_app.add_handler(CommandHandler("budget", budget_handler))
+telegram_app.add_handler(CommandHandler("budget_history", budget_history_handler))
 telegram_app.add_handler(MessageHandler(filters.Regex(r"(?i)^budget\b"), set_budget_handler))
+
+
+# ── Debt Commands ─────────────────────────────────────────────────────────────
+telegram_app.add_handler(CommandHandler("hutang", hutang_handler))
+telegram_app.add_handler(CommandHandler("debt_void", debt_void_handler))
+telegram_app.add_handler(CommandHandler("debt_edit", debt_edit_handler))
+
+
+# ── Recurring Transaction Commands ────────────────────────────────────────────
 telegram_app.add_handler(CommandHandler("recurring", recurring_handler))
 telegram_app.add_handler(CommandHandler("recurring_add", recurring_add_handler))
 telegram_app.add_handler(CommandHandler("recurring_run", recurring_run_handler))
 telegram_app.add_handler(CommandHandler("recurring_edit", recurring_edit_handler))
 telegram_app.add_handler(CommandHandler("recurring_off", recurring_off_handler))
-telegram_app.add_handler(CommandHandler("health", health_handler))
+
+
+# ── Net Worth Commands ────────────────────────────────────────────────────────
 telegram_app.add_handler(CommandHandler("networth", networth_handler))
 telegram_app.add_handler(CommandHandler("assets", assets_handler))
 telegram_app.add_handler(CommandHandler("liabilities", liabilities_handler))
@@ -109,37 +136,70 @@ telegram_app.add_handler(CommandHandler("liability_off", liability_off_handler))
 telegram_app.add_handler(CommandHandler("networth_snapshot", networth_snapshot_handler))
 telegram_app.add_handler(CommandHandler("networth_history", networth_history_handler))
 
-# Gemini / RAG finance insight (read-only)
+
+# ── Gemini / RAG Finance Insight Commands ─────────────────────────────────────
 telegram_app.add_handler(CommandHandler("insight", insight_handler))
 telegram_app.add_handler(CommandHandler("ask", ask_handler))
 telegram_app.add_handler(CommandHandler("audit", audit_handler))
 telegram_app.add_handler(CommandHandler("coach", coach_handler))
 
+
+# ── Message & Callback Handlers ───────────────────────────────────────────────
 telegram_app.add_handler(MessageHandler(filters.COMMAND, unknown_command_handler))
+
 telegram_app.add_handler(
     MessageHandler(filters.PHOTO | filters.Document.IMAGE, image_handler)
 )
+
 telegram_app.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
 )
+
 telegram_app.add_handler(CallbackQueryHandler(callback_handler))
 telegram_app.add_error_handler(error_handler)
+
 set_telegram_app(telegram_app)
+
+
+# ── Daily Telegram Export Job ─────────────────────────────────────────────────
+async def scheduled_data_export(context):
+    try:
+        await scheduled_export_transactions(
+            bot=context.bot,
+            chat_id=int(ALLOWED_USER_ID),
+            period=None,
+        )
+    except Exception as e:
+        print(f"[AUTO EXPORT ERROR] {e}")
+
+
+if telegram_app.job_queue:
+    telegram_app.job_queue.run_daily(
+        scheduled_data_export,
+        time=time(hour=23, minute=55, tzinfo=ZoneInfo("Asia/Jakarta")),
+        name="daily_data_export",
+    )
+else:
+    print("⚠️ JobQueue belum aktif. Install: python-telegram-bot[job-queue]")
+
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 scheduler = create_scheduler()
 
 
-# ── Startup & shutdown ────────────────────────────────────────────────────────
+# ── Startup & Shutdown ────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
     await telegram_app.initialize()
     await telegram_app.start()
+
     await telegram_app.bot.set_webhook(
         url=f"{WEBHOOK_URL}/webhook",
         secret_token=TELEGRAM_WEBHOOK_SECRET,
     )
+
     scheduler.start()
+
     print(f"✅ Bot started. Webhook: {WEBHOOK_URL}/webhook")
     print(f"✅ Scheduler started. Jobs: {[job.name for job in scheduler.get_jobs()]}")
 
@@ -162,14 +222,25 @@ async def test_sheets():
     try:
         spreadsheet = get_spreadsheet()
         sheets = [ws.title for ws in spreadsheet.worksheets()]
+
         return {
             "status": "connected",
             "spreadsheet_title": spreadsheet.title,
             "sheets_found": sheets,
         }
+
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {
+            "status": "error",
+            "message": str(e),
+        }
 
 
+# ── Local Run ─────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=APP_PORT, reload=False)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=APP_PORT,
+        reload=False,
+    )

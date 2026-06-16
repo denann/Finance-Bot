@@ -8,6 +8,7 @@ from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMark
 from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
 from telegram.error import BadRequest
+from telegram import InputFile
 import shlex
 import os
 from app.config import (
@@ -1857,6 +1858,78 @@ async def export_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 os.remove(file_path)
         except Exception:
             pass
+
+async def scheduled_export_transactions(bot, chat_id: int, period=None):
+    """
+    Auto export transaksi untuk scheduler.
+
+    period:
+    - None      = export semua transaksi
+    - "today"   = export transaksi hari ini
+    - "week"    = export transaksi minggu ini
+    - "month"   = export transaksi bulan ini
+    - "2026-06" = export transaksi bulan tertentu
+    """
+    export_result = get_transactions_for_export(period)
+
+    if not export_result.get("success"):
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f"❌ Auto export gagal.\n{export_result.get('message')}",
+        )
+        return
+
+    records = export_result.get("records", [])
+    filter_info = export_result.get("filter", {})
+
+    if not records:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "📭 Auto export: tidak ada transaksi untuk periode "
+                f"{filter_info.get('label', '-')}."
+            ),
+        )
+        return
+
+    filename_suffix = filter_info.get(
+        "filename_suffix",
+        datetime.now().strftime("%Y-%m"),
+    )
+    filename = f"transactions_{filename_suffix}.csv"
+
+    temp_dir = tempfile.gettempdir()
+    file_path = os.path.join(temp_dir, filename)
+
+    try:
+        write_transactions_to_csv(records, file_path)
+
+        with open(file_path, "rb") as f:
+            await bot.send_document(
+                chat_id=chat_id,
+                document=InputFile(f, filename=filename),
+                filename=filename,
+                caption=(
+                    "⏰ *Auto Export Data Finance*\n"
+                    "Jadwal: 23:55 WIB\n\n"
+                    f"{build_export_caption(export_result)}"
+                ),
+                parse_mode="Markdown",
+            )
+
+    except Exception as e:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f"❌ Auto export gagal membuat file CSV: {str(e)}",
+        )
+
+    finally:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception:
+            pass
+
 
 GEMINI_INTENT_CONFIDENCE_EXECUTE = 0.80
 GEMINI_INTENT_CONFIDENCE_CLARIFY = 0.60
@@ -7275,7 +7348,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     query = update.callback_query
-    await query.answer("⏳ Memproses...", show_alert=False)
 
     data = query.data or ""
     await show_callback_loading(query)
