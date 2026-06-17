@@ -210,6 +210,109 @@ def parse_debt_input(text: str) -> dict | None:
 
         return " ".join(name_words).title() if name_words else None
 
+    def clean_fronting_description(person: str, mode: str) -> str:
+        desc = extract_description(text, amount) or ""
+        desc_lower = desc.lower()
+        person_pattern = re.escape(str(person or "").lower())
+
+        # Hapus pembuka seperti "saya nitip sapto beli ..." agar deskripsi
+        # debt lebih enak dibaca. Kalau gagal bersih, tetap fallback ke desc asli.
+        desc_lower = re.sub(r"^\s*(?:saya|aku|gw|gue)\s+", "", desc_lower)
+        if mode == "ditalangin":
+            desc_lower = re.sub(
+                rf"\b(?:nitip|ditalangin|ditalangi|dibayarin|duluin)\b\s*(?:sama|ke)?\s*{person_pattern}\b",
+                "",
+                desc_lower,
+                flags=re.IGNORECASE,
+            )
+        else:
+            desc_lower = re.sub(
+                rf"\b(?:ngetalangin|nalangin|talangin|talangi)\b\s*(?:si\s+)?{person_pattern}\b",
+                "",
+                desc_lower,
+                flags=re.IGNORECASE,
+            )
+
+        desc_lower = re.sub(r"^\s*(?:beli|beliin|belikan|bayar|buat|untuk)\s+", "", desc_lower)
+        desc_lower = re.sub(r"\s+", " ", desc_lower).strip()
+
+        if desc_lower:
+            return desc_lower.title()
+        return desc or "Talangan"
+
+    # ── Talangan tanpa cashflow: "saya nitip Sapto beli nasi kuning 12k" ──
+    # Artinya Sapto membayar dulu untuk user. Belum ada uang masuk/keluar dari
+    # rekening user, jadi hanya dicatat sebagai utang (payable), bukan income.
+    ditalangin_match = re.search(
+        r"\b(?:saya|aku|gw|gue)?\s*(?:nitip|ditalangin|ditalangi|dibayarin|duluin)\s+"
+        r"(?:sama|ke)?\s*(?:si\s+)?([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)"
+        r"(?=\s+(?:beli|beliin|belikan|bayar|buat|untuk)\b|\s*(?:\d|rp|idr))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if ditalangin_match:
+        person = re.sub(r"\s+", " ", ditalangin_match.group(1)).strip().title()
+        if person and person.lower() not in {"saya", "aku", "gw", "gue"}:
+            item_desc = clean_fronting_description(person, "ditalangin")
+            return {
+                "intent": "add_payable",
+                "person_name": person,
+                "amount": amount,
+                "description": f"Ditalangin {person}: {item_desc}",
+                "date": detect_date(text),
+                "raw_input": text,
+                "cashflow_mode": "debt_only",
+                "fronting_mode": "ditalangin",
+            }
+
+    # ── Talangin orang: "saya talangin Sapto beli nasi 12k" ───────────────
+    # Ini berarti user keluar uang sekarang, lalu Sapto punya piutang ke user.
+    # Tetap minta rekening karena cashflow benar-benar terjadi.
+    talangin_match = re.search(
+        r"\b(?:saya|aku|gw|gue)?\s*(?:ngetalangin|nalangin|talangin|talangi)\s+"
+        r"(?:si\s+)?([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)"
+        r"(?=\s+(?:beli|beliin|belikan|bayar|buat|untuk)\b|\s*(?:\d|rp|idr))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if talangin_match:
+        person = re.sub(r"\s+", " ", talangin_match.group(1)).strip().title()
+        if person and person.lower() not in {"saya", "aku", "gw", "gue"}:
+            item_desc = clean_fronting_description(person, "talangin")
+            return {
+                "intent": "add_receivable",
+                "person_name": person,
+                "amount": amount,
+                "description": f"Talangin {person}: {item_desc}",
+                "date": detect_date(text),
+                "raw_input": text,
+                "cashflow_mode": "cashflow",
+                "fronting_mode": "talangin",
+            }
+
+    # ── Orang membayari user: "Sapto beliin saya nasi 12k" ────────────────
+    person_paid_for_me_match = re.search(
+        r"^\s*([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)\s+"
+        r"(?:ngetalangin|nalangin|talangin|talangi|beliin|belikan|bayarin|membayari)\s+"
+        r"(?:saya|aku|gw|gue)\b",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if person_paid_for_me_match:
+        person = re.sub(r"\s+", " ", person_paid_for_me_match.group(1)).strip().title()
+        if person and person.lower() not in {"saya", "aku", "gw", "gue"}:
+            item_desc = clean_fronting_description(person, "ditalangin")
+            return {
+                "intent": "add_payable",
+                "person_name": person,
+                "amount": amount,
+                "description": f"Ditalangin {person}: {item_desc}",
+                "date": detect_date(text),
+                "raw_input": text,
+                "cashflow_mode": "debt_only",
+                "fronting_mode": "ditalangin",
+            }
+
     # ── Receivable explicit: "Sapto hutang ke saya 50k" ─────────────────────
     # Artinya Sapto punya hutang ke user, bukan user hutang ke "Saya".
     receivable_to_me_match = re.search(

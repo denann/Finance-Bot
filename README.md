@@ -130,7 +130,14 @@ hutang ke Budi 300k
 Budi bayar 100k
 bayar hutang Budi 100k
 minjemin ke Dono 100k - 19k 15-05-2026
+saya nitip Sapto beli nasi kuning 12k
+saya talangin Sapto beli nasi kuning 12k
 ```
+
+Mode talangan:
+
+- `saya nitip Sapto beli nasi kuning 12k` = Sapto membayar dulu untuk Anda. Bot mencatat **utang ke Sapto** tanpa cashflow, jadi tidak ada pemasukan palsu.
+- `saya talangin Sapto beli nasi kuning 12k` = Anda membayar dulu untuk Sapto. Bot mencatat **piutang Sapto** dan tetap menanyakan rekening karena ada cash out.
 
 Command:
 
@@ -248,11 +255,11 @@ Untuk transaksi debt cashflow, gunakan `/debt_void`, bukan `/delete_txn`.
 Command:
 
 ```text
-/export
-/export today
-/export week
-/export month
-/export 2026-06
+/download_data
+/download_data today
+/download_data week
+/download_data month
+/download_data 2026-06
 ```
 
 Export bersifat read-only dan menghasilkan file CSV transaksi.

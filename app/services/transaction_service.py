@@ -1,29 +1,18 @@
 from datetime import datetime, timedelta
-from app.sheets.client import (
-    append_row,
-    append_rows,
-    get_all_records,
-    find_row_index,
-    update_cell,
-    delete_rows,
-)
-from app.config import (
-    SHEET_TRANSACTIONS,
-    SHEET_ACCOUNTS,
-)
-from app.sheets.client import (
-    append_row,
-    append_rows,
-    get_all_records,
-    find_row_index,
-    update_cell,
-    delete_rows,
-    update_row,
-    get_sheet,
-)
-import uuid
-from datetime import datetime
 import re
+import uuid
+
+from app.config import SHEET_ACCOUNTS, SHEET_TRANSACTIONS
+from app.sheets.client import (
+    append_row,
+    append_rows,
+    delete_rows,
+    find_row_index,
+    get_all_records,
+    get_sheet,
+    update_cell,
+    update_row,
+)
 
 EXPORT_TRANSACTION_COLUMNS = [
     "id",
@@ -48,7 +37,7 @@ def get_current_month_str() -> str:
 
 def normalize_export_period(period: str | None = None) -> dict:
     """
-    Normalize argumen /export.
+    Normalize argumen /download_data.
 
     Support:
     - None      -> bulan ini
@@ -123,7 +112,7 @@ def normalize_export_period(period: str | None = None) -> dict:
         }
 
     raise ValueError(
-        "Format export tidak dikenali. Gunakan: /export, /export today, /export week, /export month, atau /export 2026-06."
+        "Format export tidak dikenali. Gunakan: /download_data, /download_data today, /download_data week, /download_data month, atau /download_data 2026-06."
     )
 
 
@@ -272,14 +261,34 @@ def build_transaction_row(parsed: dict, raw_input: str) -> tuple[str, list]:
 
 
 def validate_transaction(parsed: dict) -> tuple[bool, str]:
-    txn_type = parsed.get("type")
-    amount = float(parsed.get("amount", 0) or 0)
+    txn_type = str(parsed.get("type") or "").strip().lower()
+
+    try:
+        amount = float(parsed.get("amount", 0) or 0)
+    except Exception:
+        return False, "Nominal transaksi tidak valid."
+
+    account = str(parsed.get("account") or "").strip()
+    to_account = str(parsed.get("to_account") or "").strip()
 
     if txn_type not in ["expense", "income", "transfer"]:
         return False, "Tipe transaksi tidak valid."
 
+    # Normalisasi agar row yang tersimpan konsisten lowercase.
+    parsed["type"] = txn_type
+
     if amount <= 0:
         return False, "Nominal transaksi tidak valid."
+
+    if txn_type in ["expense", "income"] and not account:
+        return False, "Rekening wajib dipilih."
+
+    if txn_type == "transfer":
+        if not account or not to_account:
+            return False, "Transfer wajib punya rekening asal dan tujuan."
+
+        if account.lower() == to_account.lower():
+            return False, "Rekening asal dan tujuan tidak boleh sama."
 
     return True, "ok"
 
@@ -349,6 +358,28 @@ def get_account_index_map() -> dict:
         }
 
     return result
+
+
+def validate_accounts_exist(account_deltas: dict) -> tuple[bool, list[str]]:
+    """
+    Validasi semua rekening yang akan terdampak sebelum operasi write.
+
+    Google Sheets tidak punya transaksi atomic seperti database. Helper ini
+    mencegah kasus paling umum: row transactions sudah berubah, tetapi saldo
+    gagal karena nama rekening tidak ditemukan.
+    """
+    if not account_deltas:
+        return True, []
+
+    accounts_map = get_account_index_map()
+    missing = []
+
+    for account_name in account_deltas:
+        key = str(account_name or "").strip().lower()
+        if key and key not in accounts_map:
+            missing.append(str(account_name))
+
+    return len(missing) == 0, missing
 
 
 def calculate_account_deltas(parsed_items: list[dict]) -> dict:
@@ -421,11 +452,26 @@ def apply_account_deltas(account_deltas: dict) -> dict:
     new_balances = {}
     failed_accounts = []
 
+    # Pre-check semua account dulu. Kalau ada yang hilang, jangan update
+    # sebagian saldo karena itu bisa bikin data makin inkonsisten.
+    for account_name in account_deltas:
+        account_key = str(account_name).strip().lower()
+        if account_key and account_key not in accounts_map:
+            failed_accounts.append(account_name)
+
+    if failed_accounts:
+        return {
+            "success": False,
+            "new_balances": {},
+            "failed_accounts": failed_accounts,
+        }
+
     for account_name, delta in account_deltas.items():
         account_key = str(account_name).strip().lower()
         account_info = accounts_map.get(account_key)
 
         if not account_info:
+            # Harusnya tidak kejadian karena sudah pre-check, tapi tetap aman.
             failed_accounts.append(account_name)
             continue
 
@@ -459,6 +505,21 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
             "new_balance": None,
         }
 
+    deltas = calculate_account_deltas([
+        {
+            "parsed": parsed,
+            "raw": raw_input,
+        }
+    ])
+    accounts_ok, missing_accounts = validate_accounts_exist(deltas)
+    if not accounts_ok:
+        return {
+            "success": False,
+            "transaction_id": None,
+            "message": "Rekening tidak ditemukan: " + ", ".join(missing_accounts),
+            "new_balance": None,
+        }
+
     txn_id, row = build_transaction_row(parsed, raw_input)
 
     try:
@@ -475,13 +536,6 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
     new_balance = None
 
     try:
-        deltas = calculate_account_deltas([
-            {
-                "parsed": parsed,
-                "raw": raw_input,
-            }
-        ])
-
         balance_result = apply_account_deltas(deltas)
 
         account = parsed.get("to_account") or parsed.get("account")
@@ -575,6 +629,23 @@ def save_transactions_batch(parsed_items: list[dict]) -> dict:
             "new_balances": {},
         }
 
+    deltas = calculate_account_deltas(valid_items)
+    accounts_ok, missing_accounts = validate_accounts_exist(deltas)
+    if not accounts_ok:
+        return {
+            "success": False,
+            "message": "Rekening tidak ditemukan: " + ", ".join(missing_accounts),
+            "success_count": 0,
+            "failed_items": failed_items + [
+                {
+                    "raw": "validasi rekening",
+                    "message": "Rekening tidak ditemukan: " + ", ".join(missing_accounts),
+                }
+            ],
+            "saved_ids": [],
+            "new_balances": {},
+        }
+
     try:
         append_rows(SHEET_TRANSACTIONS, rows)
         sort_transactions_sheet_by_date(desc=True)
@@ -595,7 +666,6 @@ def save_transactions_batch(parsed_items: list[dict]) -> dict:
         }
 
     try:
-        deltas = calculate_account_deltas(valid_items)
         balance_result = apply_account_deltas(deltas)
 
         if balance_result.get("failed_accounts"):
@@ -990,6 +1060,16 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
 
     try:
         balance_result = apply_account_deltas(reverse_deltas)
+        if balance_result.get("failed_accounts"):
+            return {
+                "success": False,
+                "message": "Rekening tidak ditemukan: " + ", ".join(balance_result["failed_accounts"]),
+                "deleted_count": 0,
+                "deleted_ids": [],
+                "blocked": blocked,
+                "missing_ids": missing_ids,
+                "new_balances": {},
+            }
     except Exception as e:
         return {
             "success": False,
@@ -1069,6 +1149,17 @@ def delete_transactions_by_refs(
 
     try:
         balance_result = apply_account_deltas(reverse_deltas)
+        if balance_result.get("failed_accounts"):
+            return {
+                "success": False,
+                "message": "Rekening tidak ditemukan: " + ", ".join(balance_result["failed_accounts"]),
+                "deleted_count": 0,
+                "deleted_ids": [],
+                "blocked": blocked,
+                "missing_ids": missing_ids,
+                "missing_rows": missing_rows,
+                "new_balances": {},
+            }
     except Exception as e:
         return {
             "success": False,
@@ -1377,7 +1468,7 @@ def validate_edit_transaction(txn: dict) -> tuple[bool, str]:
         if not account or not to_account:
             return False, "Transfer wajib punya account dan to_account."
 
-        if account == to_account:
+        if account.lower() == to_account.lower():
             return False, "Account asal dan tujuan transfer tidak boleh sama."
 
     return True, "ok"
@@ -1474,6 +1565,11 @@ def edit_transaction_by_ref(
 
     try:
         balance_result = apply_account_deltas(net_deltas)
+        if balance_result.get("failed_accounts"):
+            return {
+                "success": False,
+                "message": "Rekening tidak ditemukan: " + ", ".join(balance_result["failed_accounts"]),
+            }
     except Exception as e:
         return {
             "success": False,

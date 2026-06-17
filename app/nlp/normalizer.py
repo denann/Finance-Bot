@@ -172,7 +172,6 @@ def extract_amount_from_text(text: str) -> int | None:
         best = apply_split_operation(text, best)
     return best
 
-import re
 
 def apply_split_operation(text: str, base_amount: int) -> int:
     """

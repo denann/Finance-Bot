@@ -1,6 +1,6 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import Bot
 from app.config import TELEGRAM_BOT_TOKEN, ALLOWED_USER_ID
 from app.services.report_service import (

@@ -590,6 +590,29 @@ def find_debt_initial_cashflow_candidates(debt: dict) -> list[dict]:
     return candidates
 
 
+def is_debt_without_initial_cashflow(debt: dict) -> bool:
+    """
+    Deteksi debt yang memang dibuat tanpa transaksi cashflow awal.
+
+    Contoh: split bill receivable, atau fitur talangan/ditalangin seperti
+    "saya nitip Sapto beli nasi 12k". Debt seperti ini aman di-void tanpa
+    reverse saldo karena saldo rekening user memang belum pernah berubah.
+    """
+    debt_type = str(debt.get("type", "")).strip()
+    description = str(debt.get("description", "") or "").strip().lower()
+
+    if debt_type == "receivable":
+        return True
+
+    debt_only_markers = [
+        "ditalangin",
+        "tanpa cashflow",
+        "debt_only",
+        "nitip",
+    ]
+    return any(marker in description for marker in debt_only_markers)
+
+
 def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
     """
     Preview pembatalan debt.
@@ -656,8 +679,7 @@ def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
         # Data lama bisa saja tidak punya label itu, sehingga /debt_void 5 gagal
         # dengan pesan "Cashflow transaksi terkait debt tidak ditemukan" meskipun
         # itemnya memang piutang aktif dari /hutang.
-        debt_type = str(debt.get("type", "")).strip()
-        if debt_type == "receivable":
+        if is_debt_without_initial_cashflow(debt):
             return {
                 "success": True,
                 "message": "ok",
@@ -668,15 +690,15 @@ def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
                 "reverse_deltas": {},
                 "void_mode": "debt_only",
                 "warning": (
-                    "Cashflow terkait tidak ditemukan. Piutang akan di-void tanpa "
-                    "mengubah saldo rekening. Ini aman untuk piutang split bill/tanpa cashflow."
+                    "Cashflow terkait tidak ditemukan. Debt akan di-void tanpa "
+                    "mengubah saldo rekening. Ini aman untuk split bill/talangan/ditalangin tanpa cashflow."
                 ),
             }
 
         return {
             "success": False,
             "message": (
-                "Cashflow transaksi terkait debt tidak ditemukan. Untuk utang/payable, "
+                "Cashflow transaksi terkait debt tidak ditemukan. Untuk utang/payable biasa, "
                 "bot perlu cashflow awal supaya saldo bisa direverse dengan aman. "
                 "Cek manual di sheet transactions."
             ),
@@ -839,6 +861,15 @@ def void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
         try:
             from app.services.transaction_service import apply_account_deltas
             balance_result = apply_account_deltas(reverse_deltas)
+            if balance_result.get("failed_accounts"):
+                return {
+                    "success": False,
+                    "message": "Rekening tidak ditemukan: " + ", ".join(balance_result["failed_accounts"]),
+                    "debt": debt,
+                    "cashflow_txn": cashflow_txn,
+                    "reverse_deltas": reverse_deltas,
+                    "new_balances": {},
+                }
         except Exception as e:
             return {
                 "success": False,
