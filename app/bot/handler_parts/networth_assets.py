@@ -148,6 +148,80 @@ def parse_human_amount(value: str | None) -> float:
     return _parse_human_amount_atom(raw)
 
 
+def parse_asset_extra_fields(extra_parts: list[str]) -> dict:
+    """Parse optional asset add fields after description.
+
+    Supported:
+    - harga_beli=2559000 | tanggal_beli=2026-06-10
+    - buy_price=2.4 juta | buy_date=10/06/2026
+    - 2559000 | 2026-06-10  (positional fallback)
+    """
+    result = {
+        "purchase_price_per_unit": None,
+        "purchase_date": "",
+    }
+
+    positional = []
+    for part in extra_parts or []:
+        raw = str(part or "").strip()
+        if not raw:
+            continue
+
+        if "=" in raw:
+            key, value = raw.split("=", 1)
+            key = key.strip().lower()
+            value = value.strip()
+
+            if key in [
+                "purchase_price", "purchase_price_per_unit", "buy_price",
+                "harga_beli", "modal", "harga_modal",
+            ]:
+                result["purchase_price_per_unit"] = parse_human_amount(value)
+            elif key in ["purchase_date", "buy_date", "tanggal_beli", "tgl_beli"]:
+                result["purchase_date"] = value
+            else:
+                positional.append(raw)
+        else:
+            positional.append(raw)
+
+    if positional and not result.get("purchase_price_per_unit"):
+        maybe_price = parse_human_amount(positional[0])
+        if maybe_price > 0:
+            result["purchase_price_per_unit"] = maybe_price
+
+    if len(positional) >= 2 and not result.get("purchase_date"):
+        result["purchase_date"] = positional[1]
+
+    return result
+
+
+def format_asset_gain_lines(asset: dict, indent: str = "   ") -> list[str]:
+    gain = calculate_asset_gain(asset)
+    if not gain.get("has_purchase_info"):
+        return []
+
+    unit = asset.get("unit", "unit") or "unit"
+    purchase_price = gain.get("purchase_price_per_unit", 0)
+    purchase_total = gain.get("purchase_total", 0)
+    gain_loss = gain.get("gain_loss", 0)
+    gain_pct = gain.get("gain_loss_pct", 0)
+    sign = "+" if gain_loss >= 0 else "-"
+
+    lines = [
+        f"{indent}🧾 Harga beli/{unit}: {format_rupiah(purchase_price)}",
+        f"{indent}💼 Modal beli: {format_rupiah(purchase_total)}",
+    ]
+
+    purchase_date = asset.get("purchase_date")
+    if purchase_date:
+        lines.append(f"{indent}📆 Tanggal beli: `{purchase_date}`")
+
+    lines.append(
+        f"{indent}📈 Floating P/L: {sign}{format_rupiah(abs(gain_loss))} ({gain_pct:+.2f}%)"
+    )
+    return lines
+
+
 def guess_asset_category_and_name(name: str, category: str | None = None) -> tuple[str, str]:
     name_clean = str(name or "").strip()
     category_clean = str(category or "").strip()
@@ -204,6 +278,7 @@ def parse_pipe_add_args(args: list[str], item_type: str) -> dict:
         "Other Asset" if item_type == "asset" else "Other Liability"
     )
     description = parts[3] if len(parts) >= 4 else ""
+    asset_extra = parse_asset_extra_fields(parts[4:]) if item_type == "asset" else {}
 
     if item_type == "asset":
         qty_info = parse_asset_quantity_input(amount_raw)
@@ -220,6 +295,8 @@ def parse_pipe_add_args(args: list[str], item_type: str) -> dict:
                 "unit": qty_info["unit"],
                 "price_source": "manual",
                 "price_per_unit": qty_info.get("price_per_unit"),
+                "purchase_price_per_unit": asset_extra.get("purchase_price_per_unit"),
+                "purchase_date": asset_extra.get("purchase_date", ""),
                 "needs_unit_price": not bool(qty_info.get("price_per_unit")),
             }
 
@@ -237,6 +314,8 @@ def parse_pipe_add_args(args: list[str], item_type: str) -> dict:
         "unit": "",
         "price_source": "",
         "price_per_unit": None,
+        "purchase_price_per_unit": asset_extra.get("purchase_price_per_unit"),
+        "purchase_date": asset_extra.get("purchase_date", ""),
         "needs_unit_price": False,
     }
 
@@ -283,6 +362,8 @@ def parse_natural_asset_add(text: str) -> dict | None:
         "unit": qty_info["unit"],
         "price_source": "manual",
         "price_per_unit": None,
+        "purchase_price_per_unit": None,
+        "purchase_date": "",
         "needs_unit_price": True,
     }
 
@@ -373,10 +454,19 @@ def build_networth_text(summary: dict) -> str:
                 qty = asset.get("quantity", "-")
                 unit = asset.get("unit", "gram") or "gram"
                 price = float(asset.get("price_per_unit", 0) or 0)
+                gain = calculate_asset_gain(asset)
+                gain_suffix = ""
+                if gain.get("has_purchase_info"):
+                    gl = gain.get("gain_loss", 0)
+                    pct = gain.get("gain_loss_pct", 0)
+                    sign = "+" if gl >= 0 else "-"
+                    gain_suffix = f" | P/L {sign}{format_rupiah(abs(gl))} ({pct:+.2f}%)"
+
                 lines.append(
                     f"• {name} ({qty} {unit}) — "
                     f"{format_rupiah(value)} "
-                    f"@ {format_rupiah(price)}/gram"
+                    f"@ {format_rupiah(price)}/{unit}"
+                    f"{gain_suffix}"
                 )
             else:
                 lines.append(
@@ -414,7 +504,7 @@ def build_assets_text(assets: list[dict]) -> str:
             "📭 Belum ada aset aktif.\n\n"
             "Tambah aset:\n"
             "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja`\n"
-            "`/asset_add Emas Antam | 41 gram | Gold | Tabungan emas`\n"
+            "`/asset_add Emas Antam | 41 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
             "atau natural: `add emas 41 gram`"
         )
 
@@ -433,28 +523,37 @@ def build_assets_text(assets: list[dict]) -> str:
 
         if has_unit_info:
             last_update = asset.get("last_price_update", "-") or "-"
-            lines.append(
-                f"{i}. *{asset.get('name', '-')}*\n"
-                f"   🔢 {quantity} {unit}\n"
-                f"   🏷️ Harga/{unit}: {format_rupiah(price)}\n"
-                f"   💰 Nilai saat ini: *{format_rupiah(value)}*\n"
-                f"   📅 Harga update: `{last_update}`\n"
-                f"   📝 {asset.get('description', '-') or '-'}\n"
-                f"   🔖 `{asset.get('id', '-')}`"
-            )
+            block_lines = [
+                f"{i}. *{asset.get('name', '-')}*",
+                f"   🔢 {quantity} {unit}",
+                f"   🏷️ Harga sekarang/{unit}: {format_rupiah(price)}",
+                f"   💰 Nilai saat ini: *{format_rupiah(value)}*",
+                f"   📅 Harga update: `{last_update}`",
+            ]
+            block_lines.extend(format_asset_gain_lines(asset))
+            block_lines.extend([
+                f"   📝 {asset.get('description', '-') or '-'}",
+                f"   🔖 `{asset.get('id', '-')}`",
+            ])
+            lines.append("\n".join(block_lines))
         else:
-            lines.append(
-                f"{i}. *{asset.get('name', '-')}*\n"
-                f"   💰 {format_rupiah(value)} | {asset.get('category', '-')}\n"
-                f"   📝 {asset.get('description', '-') or '-'}\n"
-                f"   🔖 `{asset.get('id', '-')}`"
-            )
+            block_lines = [
+                f"{i}. *{asset.get('name', '-')}*",
+                f"   💰 {format_rupiah(value)} | {asset.get('category', '-')}",
+            ]
+            block_lines.extend(format_asset_gain_lines(asset))
+            block_lines.extend([
+                f"   📝 {asset.get('description', '-') or '-'}",
+                f"   🔖 `{asset.get('id', '-')}`",
+            ])
+            lines.append("\n".join(block_lines))
 
     lines.append(f"\n📦 Total aset aktif: *{format_rupiah(total)}*")
 
     lines.append(
-        "\nEdit harga satuan:\n"
-        "`/asset_update asset_id | unit_price=2420000`"
+        "\nEdit harga / harga beli:\n"
+        "`/asset_update asset_id | unit_price=2420000`\n"
+        "`/asset_update asset_id | harga_beli=2559000 | tanggal_beli=2026-06-10`"
     )
 
     return "\n".join(lines)
@@ -583,26 +682,34 @@ def build_asset_added_text(asset: dict) -> str:
     has_unit_info = bool(str(quantity or "").strip()) and bool(str(unit or "").strip())
 
     if has_unit_info:
-        return (
-            "✅ *Aset berhasil ditambahkan!*\n\n"
-            f"📦 Nama: *{asset.get('name')}*\n"
-            f"📁 Kategori: *{asset.get('category')}*\n"
-            f"🔢 Jumlah: *{quantity} {unit}*\n"
-            f"🏷️ Harga/{unit}: *{format_rupiah(price)}*\n"
-            f"📊 Nilai saat ini: *{format_rupiah(float(asset.get('current_value', 0) or 0))}*\n"
-            f"📅 Update harga: `{asset.get('last_price_update') or '-'}`\n"
-            f"📝 Deskripsi: {asset.get('description') or '-'}\n"
-            f"🔖 ID: `{asset.get('id')}`"
-        )
+        lines = [
+            "✅ *Aset berhasil ditambahkan!*\n",
+            f"📦 Nama: *{asset.get('name')}*",
+            f"📁 Kategori: *{asset.get('category')}*",
+            f"🔢 Jumlah: *{quantity} {unit}*",
+            f"🏷️ Harga sekarang/{unit}: *{format_rupiah(price)}*",
+            f"📊 Nilai saat ini: *{format_rupiah(float(asset.get('current_value', 0) or 0))}*",
+            f"📅 Update harga: `{asset.get('last_price_update') or '-'}`",
+        ]
+        lines.extend(format_asset_gain_lines(asset, indent=""))
+        lines.extend([
+            f"📝 Deskripsi: {asset.get('description') or '-'}",
+            f"🔖 ID: `{asset.get('id')}`",
+        ])
+        return "\n".join(lines)
 
-    return (
-        "✅ *Aset berhasil ditambahkan!*\n\n"
-        f"📦 Nama: *{asset.get('name')}*\n"
-        f"💰 Nilai: *{format_rupiah(float(asset.get('current_value', 0) or 0))}*\n"
-        f"📁 Kategori: *{asset.get('category')}*\n"
-        f"📝 Deskripsi: {asset.get('description') or '-'}\n"
-        f"🔖 ID: `{asset.get('id')}`"
-    )
+    lines = [
+        "✅ *Aset berhasil ditambahkan!*\n",
+        f"📦 Nama: *{asset.get('name')}*",
+        f"💰 Nilai: *{format_rupiah(float(asset.get('current_value', 0) or 0))}*",
+        f"📁 Kategori: *{asset.get('category')}*",
+    ]
+    lines.extend(format_asset_gain_lines(asset, indent=""))
+    lines.extend([
+        f"📝 Deskripsi: {asset.get('description') or '-'}",
+        f"🔖 ID: `{asset.get('id')}`",
+    ])
+    return "\n".join(lines)
 
 
 def build_asset_confirm_preview(data: dict) -> str:
@@ -610,31 +717,314 @@ def build_asset_confirm_preview(data: dict) -> str:
     quantity = data.get("quantity")
     unit = data.get("unit", "") or ""
     price = float(data.get("price_per_unit", 0) or 0)
+    purchase_price = float(data.get("purchase_price_per_unit", 0) or 0)
+    purchase_date = data.get("purchase_date", "") or ""
 
     if quantity not in [None, ""] and str(unit).strip():
         current_value = float(data.get("amount") or (float(quantity or 0) * price))
         data["amount"] = current_value
 
-        return (
-            "📦 *Preview Tambah Aset*\n\n"
-            f"Nama: *{md_safe(data.get('name') or '-')}*\n"
-            f"Kategori: *{md_safe(data.get('category') or 'Other Asset')}*\n"
-            f"Jumlah: *{quantity} {md_safe(unit)}*\n"
-            f"Harga/{md_safe(unit)}: *{format_rupiah(price)}*\n"
-            f"Nilai saat ini: *{format_rupiah(current_value)}*\n"
-            f"Deskripsi: {md_safe(data.get('description') or '-')}\n\n"
-            "Simpan aset ini?"
-        )
+        lines = [
+            "📦 *Preview Tambah Aset*\n",
+            f"Nama: *{md_safe(data.get('name') or '-')}*",
+            f"Kategori: *{md_safe(data.get('category') or 'Other Asset')}*",
+            f"Jumlah: *{quantity} {md_safe(unit)}*",
+            f"Harga sekarang/{md_safe(unit)}: *{format_rupiah(price)}*",
+            f"Nilai saat ini: *{format_rupiah(current_value)}*",
+        ]
+
+        if purchase_price > 0:
+            modal = float(quantity or 0) * purchase_price
+            floating = current_value - modal
+            pct = (floating / modal * 100) if modal > 0 else 0
+            sign = "+" if floating >= 0 else "-"
+            lines.extend([
+                f"Harga beli/{md_safe(unit)}: *{format_rupiah(purchase_price)}*",
+                f"Modal beli: *{format_rupiah(modal)}*",
+                f"Floating P/L: *{sign}{format_rupiah(abs(floating))} ({pct:+.2f}%)*",
+            ])
+
+        if purchase_date:
+            lines.append(f"Tanggal beli: `{md_safe(purchase_date)}`")
+
+        lines.extend([
+            f"Deskripsi: {md_safe(data.get('description') or '-')}",
+            "\nSimpan aset ini?",
+        ])
+        return "\n".join(lines)
 
     current_value = float(data.get("amount", 0) or 0)
-    return (
-        "📦 *Preview Tambah Aset*\n\n"
-        f"Nama: *{md_safe(data.get('name') or '-')}*\n"
-        f"Kategori: *{md_safe(data.get('category') or 'Other Asset')}*\n"
-        f"Nilai: *{format_rupiah(current_value)}*\n"
-        f"Deskripsi: {md_safe(data.get('description') or '-')}\n\n"
-        "Simpan aset ini?"
-    )
+    lines = [
+        "📦 *Preview Tambah Aset*\n",
+        f"Nama: *{md_safe(data.get('name') or '-')}*",
+        f"Kategori: *{md_safe(data.get('category') or 'Other Asset')}*",
+        f"Nilai: *{format_rupiah(current_value)}*",
+    ]
+
+    if purchase_price > 0:
+        lines.append(f"Harga beli/modal: *{format_rupiah(purchase_price)}*")
+    if purchase_date:
+        lines.append(f"Tanggal beli: `{md_safe(purchase_date)}`")
+
+    lines.extend([
+        f"Deskripsi: {md_safe(data.get('description') or '-')}",
+        "\nSimpan aset ini?",
+    ])
+    return "\n".join(lines)
+
+
+ASSET_ADD_FLOW_KEY = "pending_asset_add_flow"
+ASSET_ADD_SKIP_WORDS = {"skip", "lewati", "kosong", "-", "tidak", "tidak ada", "ga ada", "gak ada", "nggak ada"}
+ASSET_ADD_CANCEL_WORDS = {"cancel", "batal", "/cancel"}
+
+
+def _asset_flow_is_skip(text: str) -> bool:
+    return str(text or "").strip().lower() in ASSET_ADD_SKIP_WORDS
+
+
+def _asset_flow_is_cancel(text: str) -> bool:
+    return str(text or "").strip().lower() in ASSET_ADD_CANCEL_WORDS
+
+
+def _asset_flow_prompt(step: str, data: dict | None = None) -> str:
+    data = data or {}
+
+    prompts = {
+        "name": (
+            "📦 *Tambah Aset — Step 1/7*\n\n"
+            "Asetnya apa?\n\n"
+            "Contoh:\n"
+            "`Emas Antam`\n"
+            "`Laptop Kerja`"
+        ),
+        "quantity": (
+            "🔢 *Tambah Aset — Step 2/7*\n\n"
+            f"Aset: *{md_safe(data.get('name') or '-')}*\n\n"
+            "Berapa jumlah/unitnya?\n\n"
+            "Contoh aset satuan:\n"
+            "`41 gram`\n"
+            "`1 buah`\n\n"
+            "Kalau aset tidak berbasis unit, ketik nilai saat ini langsung:\n"
+            "`8000000`"
+        ),
+        "purchase_price": (
+            "🧾 *Tambah Aset — Step 3/7*\n\n"
+            "Harga belinya berapa?\n\n"
+            "Untuk aset satuan, isi harga beli per unit.\n"
+            "Contoh:\n"
+            "`2559000`\n"
+            "`2.55 juta`\n\n"
+            "Kalau belum mau diisi, ketik `lewati`."
+        ),
+        "purchase_date": (
+            "📆 *Tambah Aset — Step 4/7*\n\n"
+            "Tanggal belinya kapan?\n\n"
+            "Contoh:\n"
+            "`2026-06-10`\n"
+            "`10/06/2026`\n"
+            "`kemarin`\n\n"
+            "Kalau tidak tahu / tidak mau isi, ketik `lewati`."
+        ),
+        "current_price": (
+            "🏷️ *Tambah Aset — Step 5/7*\n\n"
+            f"Jumlah: *{data.get('quantity')} {md_safe(data.get('unit') or '')}*\n\n"
+            "Harga saat ini per unit berapa?\n\n"
+            "Contoh:\n"
+            "`2594000`\n"
+            "`2.594 juta`"
+        ),
+        "category": (
+            "📁 *Tambah Aset — Step 6/7*\n\n"
+            "Kategorinya apa?\n\n"
+            "Contoh:\n"
+            "`Gold`\n"
+            "`Electronics`\n"
+            "`Investment`\n\n"
+            "Kalau mau otomatis, ketik `lewati`."
+        ),
+        "description": (
+            "📝 *Tambah Aset — Step 7/7*\n\n"
+            "Deskripsinya apa?\n\n"
+            "Contoh:\n"
+            "`Tabungan emas`\n"
+            "`Laptop kerja`\n\n"
+            "Kalau kosong, ketik `lewati`."
+        ),
+    }
+
+    return prompts.get(step, "Input tidak dikenali. Ketik `batal` untuk membatalkan.") + "\n\nTekan tombol ❌ Batal atau ketik `batal` untuk cancel."
+
+
+def start_asset_add_flow(context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop("pending_asset_price", None)
+    context.user_data.pop("pending_asset_confirm", None)
+    context.user_data[ASSET_ADD_FLOW_KEY] = {
+        "step": "name",
+        "data": {},
+    }
+
+
+def _build_asset_data_from_flow(data: dict) -> dict:
+    name = str(data.get("name") or "").strip()
+    category = str(data.get("category") or "").strip()
+    name, category = guess_asset_category_and_name(name, category)
+
+    quantity = data.get("quantity")
+    unit = data.get("unit", "") or ""
+    price_per_unit = data.get("price_per_unit")
+    current_value = data.get("amount")
+
+    if quantity not in [None, ""] and str(unit).strip():
+        asset_type = "gold" if ("emas" in name.lower() or category.lower() in ["gold", "emas"]) else "unit"
+        amount = float(quantity or 0) * float(price_per_unit or 0)
+    else:
+        asset_type = "manual"
+        amount = float(current_value or 0)
+        quantity = None
+        unit = ""
+        price_per_unit = None
+
+    return {
+        "name": name,
+        "amount": amount,
+        "category": category,
+        "description": str(data.get("description") or "").strip(),
+        "asset_type": asset_type,
+        "quantity": quantity,
+        "unit": unit,
+        "price_source": "manual" if price_per_unit else "",
+        "price_per_unit": price_per_unit,
+        "purchase_price_per_unit": data.get("purchase_price_per_unit"),
+        "purchase_date": data.get("purchase_date", "") or "",
+        "needs_unit_price": False,
+    }
+
+
+async def handle_pending_asset_add_flow(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
+    flow = context.user_data.get(ASSET_ADD_FLOW_KEY)
+    if not flow:
+        return False
+
+    text = str(user_text or "").strip()
+
+    if _asset_flow_is_cancel(text):
+        context.user_data.pop(ASSET_ADD_FLOW_KEY, None)
+        context.user_data.pop("pending_asset_price", None)
+        context.user_data.pop("pending_asset_confirm", None)
+        await update.message.reply_text("❌ Tambah aset dibatalkan.")
+        return True
+
+    step = flow.get("step", "name")
+    data = flow.setdefault("data", {})
+
+    if step == "name":
+        if not text:
+            await update.message.reply_text(_asset_flow_prompt("name", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+            return True
+        data["name"] = text
+        flow["step"] = "quantity"
+        await update.message.reply_text(_asset_flow_prompt("quantity", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+        return True
+
+    if step == "quantity":
+        qty_info = parse_asset_quantity_input(text)
+        if qty_info:
+            data["quantity"] = qty_info["quantity"]
+            data["unit"] = qty_info["unit"]
+            if qty_info.get("price_per_unit"):
+                data["price_per_unit"] = qty_info.get("price_per_unit")
+            flow["step"] = "purchase_price"
+            await update.message.reply_text(_asset_flow_prompt("purchase_price", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+            return True
+
+        amount = parse_human_amount(text)
+        if amount > 0:
+            data["amount"] = amount
+            data["quantity"] = None
+            data["unit"] = ""
+            data["price_per_unit"] = None
+            flow["step"] = "purchase_price"
+            await update.message.reply_text(_asset_flow_prompt("purchase_price", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+            return True
+
+        await update.message.reply_text(
+            "❌ Jumlah/nilai aset belum valid.\n\n"
+            "Contoh: `41 gram`, `1 buah`, atau `8000000`.",
+            parse_mode="Markdown",
+            reply_markup=cancel_keyboard(),
+        )
+        return True
+
+    if step == "purchase_price":
+        if _asset_flow_is_skip(text):
+            data["purchase_price_per_unit"] = None
+        else:
+            purchase_price = parse_human_amount(text)
+            if purchase_price <= 0:
+                await update.message.reply_text(
+                    "❌ Harga beli belum valid. Contoh: `2559000`, `2.55 juta`, atau ketik `lewati`.",
+                    parse_mode="Markdown",
+                    reply_markup=cancel_keyboard(),
+                )
+                return True
+            data["purchase_price_per_unit"] = purchase_price
+
+        flow["step"] = "purchase_date"
+        await update.message.reply_text(_asset_flow_prompt("purchase_date", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+        return True
+
+    if step == "purchase_date":
+        if _asset_flow_is_skip(text):
+            data["purchase_date"] = ""
+        else:
+            data["purchase_date"] = detect_date(text)
+
+        if data.get("quantity") not in [None, ""] and str(data.get("unit") or "").strip() and not data.get("price_per_unit"):
+            flow["step"] = "current_price"
+            await update.message.reply_text(_asset_flow_prompt("current_price", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+            return True
+
+        flow["step"] = "category"
+        await update.message.reply_text(_asset_flow_prompt("category", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+        return True
+
+    if step == "current_price":
+        current_price = parse_human_amount(text)
+        if current_price <= 0:
+            await update.message.reply_text(
+                "❌ Harga saat ini belum valid. Contoh: `2594000` atau `2.594 juta`.",
+                parse_mode="Markdown",
+                reply_markup=cancel_keyboard(),
+            )
+            return True
+        data["price_per_unit"] = current_price
+        data["amount"] = float(data.get("quantity") or 0) * current_price
+        flow["step"] = "category"
+        await update.message.reply_text(_asset_flow_prompt("category", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+        return True
+
+    if step == "category":
+        data["category"] = "" if _asset_flow_is_skip(text) else text
+        flow["step"] = "description"
+        await update.message.reply_text(_asset_flow_prompt("description", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+        return True
+
+    if step == "description":
+        data["description"] = "" if _asset_flow_is_skip(text) else text
+        asset_data = _build_asset_data_from_flow(data)
+        context.user_data["pending_asset_confirm"] = asset_data
+        context.user_data.pop(ASSET_ADD_FLOW_KEY, None)
+
+        await update.message.reply_text(
+            build_asset_confirm_preview(asset_data),
+            parse_mode="Markdown",
+            reply_markup=confirm_keyboard("asset"),
+        )
+        return True
+
+    context.user_data.pop(ASSET_ADD_FLOW_KEY, None)
+    await update.message.reply_text("❌ Sesi tambah aset tidak valid. Coba ulangi `/asset_add`.", parse_mode="Markdown")
+    return True
 
 
 async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -646,6 +1036,15 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
+        if not context.args:
+            start_asset_add_flow(context)
+            await update.message.reply_text(
+                _asset_flow_prompt("name", {}),
+                parse_mode="Markdown",
+                reply_markup=cancel_keyboard(),
+            )
+            return
+
         data = parse_pipe_add_args(context.args, "asset")
 
         if data.get("needs_unit_price"):
@@ -671,7 +1070,7 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{str(e)}\n\n"
             "Contoh:\n"
             "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja`\n"
-            "`/asset_add Emas Antam | 41 gram | Gold | Tabungan emas`\n"
+            "`/asset_add Emas Antam | 41 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
             "`/asset_add Laptop | 1 buah | Electronics | Laptop kerja`",
             parse_mode="Markdown",
         )
@@ -747,6 +1146,7 @@ async def asset_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             "Contoh:\n"
             "`/asset_update asset_xxx | value=9000000`\n"
             "`/asset_update asset_xxx | unit_price=2420000`\n"
+            "`/asset_update asset_xxx | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
             "`/asset_update asset_xxx | name=Laptop Baru | category=Electronics`",
             parse_mode="Markdown",
         )

@@ -32,6 +32,10 @@ EXPORT_TRANSACTION_COLUMNS = [
     "tipe_hutang",
 ]
 
+# 1-based Google Sheets column numbers for transaction debt relation fields.
+HUTANG_ID_COL = 14
+TIPE_HUTANG_COL = 15
+
 
 def get_current_month_str() -> str:
     return datetime.now().strftime("%Y-%m")
@@ -206,6 +210,20 @@ DEBT_CASHFLOW_CATEGORIES = {
     "Bayar Utang",
 }
 
+SKIP_ACCOUNT_NAMES = {
+    "sudah berlalu",
+    "tanpa rekening",
+    "tidak masuk rekening",
+    "jangan ubah saldo",
+    "__skip_account__",
+}
+
+
+def is_skip_account_transaction(parsed: dict) -> bool:
+    """True jika transaksi dicatat tanpa mengubah saldo rekening."""
+    account = str(parsed.get("account") or "").strip().lower()
+    return bool(parsed.get("skip_account")) or account in SKIP_ACCOUNT_NAMES
+
 # ── ID Generator ──────────────────────────────────────────────────────────────
 
 def generate_transaction_id() -> str:
@@ -266,6 +284,51 @@ def build_transaction_row(parsed: dict, raw_input: str) -> tuple[str, list]:
     return txn_id, row
 
 
+def update_transaction_debt_relation(
+    transaction_id: str,
+    debt_ids: list[str],
+    tipe_hutang: str = "piutang",
+) -> dict:
+    """
+    Update kolom hutang_id dan tipe_hutang di sheet transactions.
+
+    Dipakai untuk split bill karena debt_id baru diketahui setelah transaksi utama
+    berhasil tersimpan. Relasi balik ini membuat row transactions mudah ditrace
+    ke debt detail yang dibuat dari transaksi tersebut.
+    """
+    transaction_id = str(transaction_id or "").strip()
+    clean_debt_ids = [str(x).strip() for x in (debt_ids or []) if str(x or "").strip()]
+    tipe_hutang = str(tipe_hutang or "").strip()
+
+    if not transaction_id:
+        return {
+            "success": False,
+            "message": "transaction_id kosong.",
+        }
+
+    if not clean_debt_ids:
+        return {
+            "success": False,
+            "message": "debt_ids kosong.",
+        }
+
+    records = get_all_records(SHEET_TRANSACTIONS)
+
+    for row_index, record in enumerate(records, start=2):
+        if str(record.get("id", "")).strip() == transaction_id:
+            update_cell(SHEET_TRANSACTIONS, row_index, HUTANG_ID_COL, ", ".join(clean_debt_ids))
+            update_cell(SHEET_TRANSACTIONS, row_index, TIPE_HUTANG_COL, tipe_hutang)
+            return {
+                "success": True,
+                "message": "ok",
+            }
+
+    return {
+        "success": False,
+        "message": f"Transaksi {transaction_id} tidak ditemukan.",
+    }
+
+
 def validate_transaction(parsed: dict) -> tuple[bool, str]:
     txn_type = str(parsed.get("type") or "").strip().lower()
 
@@ -277,7 +340,7 @@ def validate_transaction(parsed: dict) -> tuple[bool, str]:
     account = str(parsed.get("account") or "").strip()
     to_account = str(parsed.get("to_account") or "").strip()
 
-    if txn_type not in ["expense", "income", "transfer"]:
+    if txn_type not in ["expense", "income", "transfer", "debt_offset", "debt_only"]:
         return False, "Tipe transaksi tidak valid."
 
     # Normalisasi agar row yang tersimpan konsisten lowercase.
@@ -286,10 +349,19 @@ def validate_transaction(parsed: dict) -> tuple[bool, str]:
     if amount <= 0:
         return False, "Nominal transaksi tidak valid."
 
-    if txn_type in ["expense", "income"] and not account:
+    skip_account = is_skip_account_transaction(parsed)
+
+    if txn_type in ["expense", "income"] and not account and not skip_account:
         return False, "Rekening wajib dipilih."
 
+    if txn_type in ["debt_offset", "debt_only"]:
+        parsed["skip_account"] = True
+        parsed["account"] = account or ("Debt Offset" if txn_type == "debt_offset" else "Debt Only")
+
     if txn_type == "transfer":
+        if skip_account:
+            return False, "Transfer tetap wajib memilih rekening asal dan tujuan."
+
         if not account or not to_account:
             return False, "Transfer wajib punya rekening asal dan tujuan."
 
@@ -416,6 +488,9 @@ def calculate_account_deltas(parsed_items: list[dict]) -> dict:
         amount = float(parsed.get("amount", 0) or 0)
         account = parsed.get("account") or ""
         to_account = parsed.get("to_account") or ""
+
+        if is_skip_account_transaction(parsed):
+            continue
 
         if txn_type == "expense":
             add_delta(account, -amount)

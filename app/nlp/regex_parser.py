@@ -153,6 +153,7 @@ DEBT_PAYABLE_KEYWORDS = [
 ]
 
 DEBT_RECEIVABLE_KEYWORDS = [
+    "piutang ke", "piutang sama", "piutang dari",
     "minjemin", "minjemin ke", "pinjemin", "pinjemin ke", "kasih hutang",
     "pinjem", "pinjam", "minjem",
     "hutangin", "utangin",
@@ -239,6 +240,91 @@ def parse_debt_input(text: str) -> dict | None:
         if desc_lower:
             return desc_lower.title()
         return desc or "Talangan"
+
+    # ── Debt offset / kompensasi tanpa rekening ─────────────────────────────
+    # Dipakai saat hutang baru ingin langsung dipotong dari piutang aktif orang yang sama.
+    # Contoh:
+    # - potong piutang Akmal 20k buat badminton
+    # - kompensasi piutang Akmal 20k karena badminton
+    # - saya berutang ke Akmal 20k potong dari piutang buat badminton
+    # Efeknya bukan cashflow rekening, tetapi tetap dibuat row di transactions sebagai fact table.
+    offset_match = re.search(
+        r"\b(?:potong|kurangi|kompensasi|offset|netting)\s+"
+        r"(?P<target>piutang|utang|hutang)\s+"
+        r"(?:ke|sama|dari)?\s*"
+        r"(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)"
+        r"(?=\s*(?:\d|rp|idr))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if not offset_match:
+        offset_match = re.search(
+            r"\b(?:saya|aku|gue|gw|gua)\s+berh?utang\s+(?:ke|sama)\s+"
+            r"(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)"
+            r"(?=\s*(?:\d|rp|idr))"
+            r".*\b(?:potong|kompensasi|offset|netting)\s+(?:dari\s+)?(?P<target>piutang|utang|hutang)\b",
+            text_lower,
+            flags=re.IGNORECASE,
+        )
+    if offset_match:
+        person = re.sub(r"\s+", " ", offset_match.group("person")).strip().title()
+        target_word = str(offset_match.group("target") or "piutang").strip().lower()
+        # target_debt_type adalah debt aktif yang akan dikurangi.
+        # target=piutang berarti kurangi receivable; jika over, selisih jadi payable.
+        target_debt_type = "receivable" if target_word == "piutang" else "payable"
+        resulting_debt_type = "payable" if target_debt_type == "receivable" else "receivable"
+
+        if person and person.lower() not in {"saya", "aku", "gw", "gue", "gua"}:
+            return {
+                "intent": "offset_debt",
+                "person_name": person,
+                "amount": amount,
+                "description": extract_description(text, amount),
+                "date": detect_date(text),
+                "raw_input": text,
+                "target_debt_type": target_debt_type,
+                "resulting_debt_type": resulting_debt_type,
+                "cashflow_mode": "offset",
+                "fronting_mode": "debt_offset",
+                "account": "Debt Offset",
+                "skip_account": True,
+            }
+
+    # ── Ditalangin item oleh orang: "ditalangin nasi uduk sama Alpat 10k" ──
+    # Artinya orang tersebut membayar dulu untuk user. Ini debt-only, bukan cashflow.
+    ditalangin_item_by_person_match = re.search(
+        r"\b(?:saya|aku|gw|gue)?\s*"
+        r"(?:nitip|ditalangin|ditalangi|dibayarin|duluin)\s+"
+        r"(?P<item>.+?)\s+"
+        r"(?:sama|oleh)\s+(?:si\s+)?"
+        r"(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)"
+        r"(?=\s+(?:tanggal|tgl|kemarin|hari\s+ini|besok|\d|rp|idr)|\s*$)",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if ditalangin_item_by_person_match:
+        person = re.sub(
+            r"\s+",
+            " ",
+            ditalangin_item_by_person_match.group("person"),
+        ).strip().title()
+        item_desc = re.sub(
+            r"\s+",
+            " ",
+            ditalangin_item_by_person_match.group("item"),
+        ).strip().title()
+
+        if person and person.lower() not in {"saya", "aku", "gw", "gue"}:
+            return {
+                "intent": "add_payable",
+                "person_name": person,
+                "amount": amount,
+                "description": f"Ditalangin {person}: {item_desc or 'Talangan'}",
+                "date": detect_date(text),
+                "raw_input": text,
+                "cashflow_mode": "debt_only",
+                "fronting_mode": "ditalangin",
+            }
 
     # ── Talangan tanpa cashflow: "saya nitip Sapto beli nasi kuning 12k" ──
     # Artinya Sapto membayar dulu untuk user. Belum ada uang masuk/keluar dari
@@ -332,6 +418,86 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
+    # ── Receivable explicit: "piutang ke Akmal 31100" ─────────────────────
+    # Artinya Akmal punya utang ke user / user punya piutang ke Akmal.
+    explicit_piutang_match = re.search(
+        r"\bpiutang\s+(?:ke|sama|dari)?\s*"
+        r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if explicit_piutang_match:
+        person = re.sub(r"\s+", " ", explicit_piutang_match.group(1)).strip().title()
+        if person:
+            return {
+                "intent": "add_receivable",
+                "person_name": person,
+                "amount": amount,
+                "description": extract_description(text, amount),
+                "date": detect_date(text),
+                "raw_input": text,
+            }
+
+    # ── Explicit "saya berutang ke X" => payable ─────────────────────────────
+    # Kata berutang/berhutang ambigu, jadi arahnya ditentukan dari subjek kalimat.
+    self_payable_match = re.search(
+        r"\b(?:saya|aku|gue|gw|gua)\s+berh?utang\s+(?:ke|sama)\s+"
+        r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr|$))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if self_payable_match:
+        person = re.sub(r"\s+", " ", self_payable_match.group(1)).strip().title()
+        if person:
+            return {
+                "intent": "add_payable",
+                "person_name": person,
+                "amount": amount,
+                "description": extract_description(text, amount),
+                "date": detect_date(text),
+                "raw_input": text,
+            }
+
+    # ── Explicit "X berutang ke saya" => receivable ──────────────────────────
+    other_receivable_match = re.search(
+        r"\b([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)\s+berh?utang\s+"
+        r"(?:ke|sama)\s+(?:saya|aku|gue|gw|gua)\b",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if other_receivable_match:
+        person = re.sub(r"\s+", " ", other_receivable_match.group(1)).strip().title()
+        if person and person.lower() not in {"saya", "aku", "gw", "gue", "gua"}:
+            return {
+                "intent": "add_receivable",
+                "person_name": person,
+                "amount": amount,
+                "description": extract_description(text, amount),
+                "date": detect_date(text),
+                "raw_input": text,
+            }
+
+    # ── Short form "Akmal berutang 31100" => receivable ──────────────────────
+    # Kalau subjeknya orang lain, diasumsikan dia berutang ke user.
+    short_other_receivable_match = re.search(
+        r"\b(?!saya\b|aku\b|gue\b|gw\b|gua\b)"
+        r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)\s+berh?utang\b"
+        r"(?=.*(?:\d|rp|idr))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if short_other_receivable_match:
+        person = re.sub(r"\s+", " ", short_other_receivable_match.group(1)).strip().title()
+        if person and person.lower() not in {"saya", "aku", "gw", "gue", "gua"}:
+            return {
+                "intent": "add_receivable",
+                "person_name": person,
+                "amount": amount,
+                "description": extract_description(text, amount),
+                "date": detect_date(text),
+                "raw_input": text,
+            }
+
     # Catatan: frasa seperti "transfer/transaksi dari Annisa 55k"
     # sekarang diperlakukan sebagai income biasa di detect_type(),
     # bukan pembayaran utang/piutang. Debt payment harus pakai keyword eksplisit
@@ -382,7 +548,9 @@ def parse_debt_input(text: str) -> dict | None:
 
     # ── Payable: Anda punya utang ke orang ───────────────────────────────────
     for kw in DEBT_PAYABLE_KEYWORDS:
-        if kw in text_lower:
+        # Jangan pakai `if kw in text_lower` karena "piutang ke" mengandung "utang ke".
+        kw_pattern = rf"(?<![a-zA-ZÀ-ÿ]){re.escape(kw)}(?![a-zA-ZÀ-ÿ])"
+        if re.search(kw_pattern, text_lower, flags=re.IGNORECASE):
             person = extract_person_after(text_lower, kw)
             return {
                 "intent": "add_payable",

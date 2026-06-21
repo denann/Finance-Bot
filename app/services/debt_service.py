@@ -556,6 +556,173 @@ def add_payment_by_person(person_name: str, amount: float, note: str = "") -> di
     }
 
 
+
+def offset_debt_by_person(
+    person_name: str,
+    amount: float,
+    description: str = "",
+    target_debt_type: str = "receivable",
+    resulting_debt_type: str = "payable",
+) -> dict:
+    """
+    Kompensasi / potong silang hutang-piutang tanpa cashflow rekening.
+
+    Contoh kasus:
+    - User punya piutang ke Akmal 50k.
+    - User ikut badminton dan berutang ke Akmal 20k.
+    - Input: "potong piutang Akmal 20k buat badminton".
+    - Efek: piutang receivable Akmal berkurang 20k, transactions tetap mencatat fact row type=debt_offset.
+
+    target_debt_type:
+    - receivable: kurangi piutang aktif orang tsb; jika offset lebih besar, sisa jadi payable.
+    - payable: kurangi utang aktif user ke orang tsb; jika offset lebih besar, sisa jadi receivable.
+    """
+    person_name = normalize_person_name(person_name)
+    amount = float(amount or 0)
+    target_debt_type = str(target_debt_type or "receivable").strip().lower()
+    resulting_debt_type = str(resulting_debt_type or "payable").strip().lower()
+
+    if target_debt_type not in ["payable", "receivable"]:
+        return {
+            "success": False,
+            "message": "target_debt_type tidak valid.",
+            "allocations": [],
+            "affected_debt_ids": [],
+        }
+
+    if resulting_debt_type not in ["payable", "receivable"]:
+        resulting_debt_type = "payable" if target_debt_type == "receivable" else "receivable"
+
+    if not person_name:
+        return {
+            "success": False,
+            "message": "Nama orang kosong.",
+            "allocations": [],
+            "affected_debt_ids": [],
+        }
+
+    if amount <= 0:
+        return {
+            "success": False,
+            "message": "Nominal offset tidak valid.",
+            "allocations": [],
+            "affected_debt_ids": [],
+        }
+
+    debts = [
+        d for d in get_debt_by_person(person_name)
+        if str(d.get("type", "")).strip() == target_debt_type
+        and float(d.get("remaining_amount", 0) or 0) > 0
+    ]
+
+    if not debts:
+        label = "piutang" if target_debt_type == "receivable" else "utang"
+        return {
+            "success": False,
+            "message": f"Tidak ada {label} aktif dengan {person_name} untuk dipotong.",
+            "allocations": [],
+            "affected_debt_ids": [],
+        }
+
+    remaining_offset = amount
+    allocations = []
+    affected_debt_ids = []
+    today = datetime.now().strftime("%Y-%m-%d")
+    note = description or "Kompensasi hutang-piutang"
+
+    try:
+        for debt in sorted(debts, key=lambda d: int(d.get("_row_index", 10**9) or 10**9)):
+            if remaining_offset <= 0:
+                break
+
+            debt_id = str(debt.get("id", "")).strip()
+            row_index = int(debt.get("_row_index"))
+            current_remaining = float(debt.get("remaining_amount", 0) or 0)
+            if not debt_id or current_remaining <= 0:
+                continue
+
+            offset_amount = min(remaining_offset, current_remaining)
+            new_remaining = current_remaining - offset_amount
+            is_settled = new_remaining <= 0
+
+            update_cell(SHEET_DEBTS, row_index, DEBT_REMAINING_AMOUNT_COL, new_remaining)
+            update_cell(SHEET_DEBTS, row_index, DEBT_IS_SETTLED_COL, "TRUE" if is_settled else "FALSE")
+            if is_settled:
+                update_cell(SHEET_DEBTS, row_index, DEBT_SETTLED_AT_COL, today)
+
+            append_debt_mutation(
+                debt_id=debt_id,
+                amount=offset_amount,
+                note=note,
+                mutation_type="offset",
+            )
+
+            allocations.append({
+                "debt_id": debt_id,
+                "amount": offset_amount,
+                "description": debt.get("description", ""),
+                "remaining_after": new_remaining,
+                "type": target_debt_type,
+            })
+            affected_debt_ids.append(debt_id)
+            remaining_offset -= offset_amount
+
+        created_debt_id = ""
+        created_debt = None
+        if remaining_offset > 0:
+            created = add_debt(
+                resulting_debt_type,
+                person_name,
+                remaining_offset,
+                description=f"Sisa kompensasi: {note}",
+                cashflow_mode="debt_only",
+                fronting_mode="offset_remainder",
+            )
+            if not created.get("success"):
+                return {
+                    "success": False,
+                    "message": "Offset sebagian berhasil, tapi gagal membuat sisa debt: " + created.get("message", ""),
+                    "allocations": allocations,
+                    "affected_debt_ids": affected_debt_ids,
+                }
+            created_debt_id = created.get("debt_id") or ""
+            created_debt = created
+            if created_debt_id:
+                affected_debt_ids.append(created_debt_id)
+
+        active_after = get_debt_by_person(person_name)
+        total_payable = sum(float(d.get("remaining_amount", 0) or 0) for d in active_after if d.get("type") == "payable")
+        total_receivable = sum(float(d.get("remaining_amount", 0) or 0) for d in active_after if d.get("type") == "receivable")
+
+        return {
+            "success": True,
+            "message": "ok",
+            "person_name": person_name,
+            "type": "offset",
+            "target_debt_type": target_debt_type,
+            "resulting_debt_type": resulting_debt_type,
+            "amount": amount,
+            "offset_applied": amount - max(0, remaining_offset),
+            "overage": max(0, remaining_offset),
+            "created_debt_id": created_debt_id,
+            "created_debt": created_debt,
+            "affected_debt_ids": affected_debt_ids,
+            "debt_id": ", ".join(affected_debt_ids),
+            "allocations": allocations,
+            "remaining": total_receivable if total_receivable > 0 else total_payable,
+            "remaining_receivable": total_receivable,
+            "remaining_payable": total_payable,
+            "is_settled": total_receivable <= 0 and total_payable <= 0,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "message": str(e),
+            "allocations": allocations,
+            "affected_debt_ids": affected_debt_ids,
+        }
+
 def get_debt_summary() -> dict:
     """
     Hitung total utang dan piutang aktif.

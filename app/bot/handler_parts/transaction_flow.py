@@ -130,6 +130,9 @@ def needs_account(parsed: dict) -> bool:
     """
     txn_type = parsed.get("type")
 
+    if parsed.get("skip_account") and txn_type in ["expense", "income"]:
+        return False
+
     if txn_type in ["expense", "income"] and not parsed.get("account"):
         return True
 
@@ -206,6 +209,10 @@ def build_mixed_preview(mixed_items: list[dict]) -> str:
             elif intent == "add_payment":
                 label = "💸 Pembayaran Debt"
                 effect = "mengikuti posisi debt aktif"
+            elif intent == "offset_debt":
+                label = "🔁 Kompensasi Debt"
+                target_label = "piutang" if parsed.get("target_debt_type") == "receivable" else "utang"
+                effect = f"potong {target_label}, tanpa rekening"
             else:
                 label = "❓ Debt"
                 effect = "-"
@@ -752,7 +759,7 @@ async def proceed_after_preview_edit(query, context: ContextTypes.DEFAULT_TYPE, 
         short_summary = build_mixed_short_summary(mixed_items)
         if mixed_needs_account(mixed_items):
             await safe_edit_message(query, 
-                f"{short_summary}\n\n💳 Pilih rekening untuk item yang belum punya rekening:",
+                f"{short_summary}\n\n💳 Pilih rekening untuk item yang belum punya rekening, atau pilih *Sudah berlalu* jika tidak mau mengubah saldo:",
                 parse_mode="Markdown",
                 reply_markup=account_keyboard("mixed_acc"),
             )
@@ -781,7 +788,7 @@ async def proceed_after_preview_edit(query, context: ContextTypes.DEFAULT_TYPE, 
     short_summary = build_single_short_summary(parsed)
     if needs_account(parsed):
         await safe_edit_message(query, 
-            f"{short_summary}\n\n💳 Dari rekening mana?",
+            f"{short_summary}\n\n💳 Dari rekening mana?\nAtau pilih *Sudah berlalu* jika transaksi hanya catatan historis dan tidak mau mengubah saldo.",
             parse_mode="Markdown",
             reply_markup=account_keyboard("acc"),
         )
@@ -1237,10 +1244,12 @@ def build_split_bill_prompt_from_parsed(parsed: dict) -> str:
     share = float(split_bill.get("share_amount", 0) or 0)
     total_receivable = float(split_bill.get("total_receivable", share * len(person_names)) or 0)
     friend_text = ", ".join(str(p) for p in person_names if p)
+    date_text = parsed.get("date") or "-"
 
     return (
         "🤝 *Split bill terdeteksi*\n\n"
         f"📝 Item: *{md_safe(parsed.get('description') or '-')}*\n"
+        f"📅 Tanggal: *{md_safe(date_text)}*\n"
         f"💰 Total dibayar: *{format_rupiah(total)}*\n"
         f"👥 Dibagi: *{participants} orang*\n"
         f"👤 Teman: *{md_safe(friend_text)}*\n"
@@ -1268,8 +1277,10 @@ def build_mixed_split_bill_prompt(mixed_items: list[dict]) -> str:
         share = float(split_bill.get("share_amount", 0) or 0)
         total_receivable = float(split_bill.get("total_receivable", share * len(person_names)) or 0)
         friend_text = ", ".join(str(p) for p in person_names if p)
+        date_text = parsed.get("date") or "-"
         lines.append(
-            f"{i}. {md_safe(parsed.get('description') or '-')} — "
+            f"{i}. {md_safe(parsed.get('description') or '-')} "
+            f"(*{md_safe(date_text)}*) — "
             f"total *{format_rupiah(total)}*, bagian kamu *{format_rupiah(share)}*, "
             f"{md_safe(friend_text)}: *{format_rupiah(total_receivable)}*"
         )
@@ -1327,10 +1338,12 @@ def build_mixed_split_bill_queue_prompt(mixed_items: list[dict]) -> str:
     share = float(split_bill.get("share_amount", 0) or 0)
     total_receivable = float(split_bill.get("total_receivable", share * len(person_names)) or 0)
     friend_text = ", ".join(str(p) for p in person_names if p)
+    date_text = parsed.get("date") or "-"
 
     return (
         f"🤝 *Split bill {current_pos}/{total_split}*\n\n"
         f"📝 Item: *{md_safe(parsed.get('description') or '-')}*\n"
+        f"📅 Tanggal: *{md_safe(date_text)}*\n"
         f"💰 Total dibayar: *{format_rupiah(total)}*\n"
         f"👥 Dibagi: *{participants} orang*\n"
         f"👤 Teman: *{md_safe(friend_text)}*\n"
@@ -1532,6 +1545,37 @@ def build_debt_cashflow_transaction(
             tipe_hutang = "piutang"
 
 
+    if str(debt_parsed.get("cashflow_mode") or "").strip() == "debt_only":
+        if intent == "add_payable":
+            category = "Utang Tanpa Cashflow"
+            description = f"Utang tanpa cashflow ke {person}: {debt_parsed.get('description') or raw}"
+        elif intent == "add_receivable":
+            category = "Piutang Tanpa Cashflow"
+            description = f"Piutang tanpa cashflow ke {person}: {debt_parsed.get('description') or raw}"
+        elif intent == "add_payment":
+            category = "Pembayaran Debt Tanpa Cashflow"
+            description = f"Pembayaran debt tanpa cashflow {person}: {debt_parsed.get('description') or raw}"
+        else:
+            category = "Debt Tanpa Cashflow"
+            description = debt_parsed.get("description") or raw
+
+        return {
+            "type": "debt_only",
+            "amount": amount,
+            "category": category,
+            "account": "Debt Only",
+            "to_account": None,
+            "subject": person,
+            "description": description,
+            "catatan": raw,
+            "tipe_pengeluaran": "",
+            "date": transaction_date,
+            "hutang_id": hutang_id,
+            "tipe_hutang": tipe_hutang,
+            "parsed_by": "debt_only",
+            "skip_account": True,
+        }
+
     if intent == "add_receivable":
         return {
             "type": "expense",
@@ -1601,6 +1645,25 @@ def build_debt_cashflow_transaction(
                 "parsed_by": "debt",
             }
 
+    if intent == "offset_debt":
+        target_label = "piutang" if debt_parsed.get("target_debt_type") == "receivable" else "utang"
+        return {
+            "type": "debt_offset",
+            "amount": amount,
+            "category": "Kompensasi Hutang/Piutang",
+            "account": "Debt Offset",
+            "to_account": None,
+            "subject": person,
+            "description": f"Kompensasi {target_label} {person}: {debt_parsed.get('description') or raw}",
+            "catatan": raw,
+            "tipe_pengeluaran": "",
+            "date": transaction_date,
+            "hutang_id": hutang_id,
+            "tipe_hutang": "offset",
+            "parsed_by": "debt_offset",
+            "skip_account": True,
+        }
+
     return {
         "type": "pending",
         "amount": 0,
@@ -1637,6 +1700,10 @@ def build_debt_only_confirm_preview(debt_parsed: dict) -> str:
     elif intent == "add_receivable":
         title = "🟢 *Talangin / Piutang Tanpa Cashflow*"
         debt_effect = f"{md_safe(person)} punya utang ke Anda."
+    elif intent == "offset_debt":
+        title = "🔁 *Kompensasi Hutang/Piutang*"
+        target_label = "piutang" if debt_parsed.get("target_debt_type") == "receivable" else "utang"
+        debt_effect = f"Memotong {target_label} aktif dengan {md_safe(person)} tanpa rekening."
     else:
         title = "💸 *Debt Tanpa Cashflow*"
         debt_effect = "Debt dicatat tanpa transaksi kas."
@@ -1649,7 +1716,7 @@ def build_debt_only_confirm_preview(debt_parsed: dict) -> str:
         f"*Efek Debt:*\n"
         f"{debt_effect}\n\n"
         f"*Efek Transactions:*\n"
-        f"Tidak ada cash in/cash out sekarang. Tidak akan menambah pemasukan/pengeluaran dulu.\n"
+        f"Tetap dicatat di sheet transactions sebagai fact table, tetapi saldo rekening tidak berubah.\n"
         f"Mode: `{md_safe(fronting_mode)}`\n\n"
         f"Simpan debt tanpa cashflow ini?"
     )
@@ -1676,6 +1743,12 @@ def build_debt_account_prompt(debt_parsed: dict) -> str:
         desc = f"Pembayaran terkait {person}."
         effect = "Cashflow akan mengikuti posisi aktif di sheet debts"
 
+    elif intent == "offset_debt":
+        title = "🔁 *Kompensasi Hutang/Piutang*"
+        target_label = "piutang" if debt_parsed.get("target_debt_type") == "receivable" else "utang"
+        desc = f"Potong {target_label} aktif dengan {md_safe(person)}."
+        effect = "Tidak pakai rekening; tetap masuk transactions sebagai debt_offset"
+
     else:
         title = "❓ *Debt*"
         desc = "Input debt terdeteksi."
@@ -1687,7 +1760,7 @@ def build_debt_account_prompt(debt_parsed: dict) -> str:
         f"💰 Nominal: {format_rupiah(amount)}\n"
         f"📝 Detail : {desc}\n"
         f"📌 Efek  : {effect}\n\n"
-        f"💳 Pilih rekening cashflow:"
+        f"💳 Pilih rekening cashflow, atau pilih *Sudah berlalu* jika hanya ingin mencatat debt tanpa mengubah saldo:"
     )
 
 def build_debt_confirm_preview(
@@ -1716,6 +1789,10 @@ def build_debt_confirm_preview(
     elif intent == "add_payment":
         title = "💸 *Pembayaran Utang/Piutang*"
         debt_effect = f"Pembayaran terkait saldo aktif dengan {md_safe(person)}."
+    elif intent == "offset_debt":
+        title = "🔁 *Kompensasi Hutang/Piutang*"
+        target_label = "piutang" if debt_parsed.get("target_debt_type") == "receivable" else "utang"
+        debt_effect = f"Memotong {target_label} aktif dengan {md_safe(person)} tanpa uang masuk/keluar."
     else:
         title = "❓ *Debt*"
         debt_effect = "-"
@@ -1724,6 +1801,8 @@ def build_debt_confirm_preview(
         "expense": "❌ Cash Out / Pengeluaran",
         "income": "✅ Cash In / Pemasukan",
         "transfer": "🔄 Transfer",
+        "debt_offset": "🔁 Debt Offset / Tanpa Rekening",
+        "debt_only": "📝 Debt Fact / Tanpa Rekening",
     }.get(transaction_parsed.get("type"), "❓")
 
     return (
@@ -1774,6 +1853,10 @@ def build_debt_batch_confirm_preview(
         elif txn_type == "expense":
             cashflow_label = "❌ Cash Out"
             total_cash_out += amount
+        elif txn_type == "debt_offset":
+            cashflow_label = "🔁 Debt Offset / tanpa rekening"
+        elif txn_type == "debt_only":
+            cashflow_label = "📝 Debt fact / tanpa rekening"
         else:
             cashflow_label = "❓ Cashflow belum pasti"
 
@@ -1783,6 +1866,8 @@ def build_debt_batch_confirm_preview(
             debt_label = "🔴 Utang Baru"
         elif intent == "add_payment":
             debt_label = "💸 Pembayaran"
+        elif intent == "offset_debt":
+            debt_label = "🔁 Kompensasi Debt"
         else:
             debt_label = "❓ Debt"
 
@@ -1830,6 +1915,10 @@ def build_debt_batch_account_prompt(debt_items: list[dict]) -> str:
             label = "💸 Pembayaran"
             effect = "mengikuti posisi debt aktif"
 
+        elif intent == "offset_debt":
+            label = "🔁 Kompensasi Debt"
+            effect = "tanpa rekening, tetap masuk transactions"
+
         else:
             label = "❓ Debt"
             effect = "-"
@@ -1844,7 +1933,7 @@ def build_debt_batch_account_prompt(debt_items: list[dict]) -> str:
     lines.append("\n*Estimasi cashflow awal:*")
     lines.append(f"✅ Cash In : *{format_rupiah(total_cash_in)}*")
     lines.append(f"❌ Cash Out: *{format_rupiah(total_cash_out)}*")
-    lines.append("\n💳 Pilih rekening cashflow untuk semua item:")
+    lines.append("\n💳 Pilih rekening cashflow untuk semua item, atau pilih *Sudah berlalu* jika hanya ingin mencatat debt tanpa mengubah saldo:")
 
     return "\n".join(lines)
 

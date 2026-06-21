@@ -6,6 +6,7 @@ from app.bot.handler_parts.common_imports import *
 from app.bot.handler_parts.networth_assets import (
     build_asset_confirm_preview,
     build_asset_unit_price_prompt,
+    handle_pending_asset_add_flow,
     parse_natural_asset_add,
 )
 from app.bot.handler_parts.command_router import (
@@ -105,7 +106,7 @@ async def debt_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data.pop("pending_batch", None)
     context.user_data.pop("pending_debt_batch", None)
 
-    if not debt_uses_cashflow(debt_parsed):
+    if intent == "offset_debt" or not debt_uses_cashflow(debt_parsed):
         await update.message.reply_text(
             build_debt_only_confirm_preview(debt_parsed),
             parse_mode="Markdown",
@@ -872,6 +873,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     preview_edit_handled = await handle_pending_preview_edit(update, context, user_text)
     if preview_edit_handled:
+        return
+
+    asset_add_flow_handled = await handle_pending_asset_add_flow(update, context, user_text)
+    if asset_add_flow_handled:
         return
 
     # ── Pending asset unit price ─────────────────────────────────────────────

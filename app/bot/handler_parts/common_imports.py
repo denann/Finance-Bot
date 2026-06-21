@@ -41,9 +41,16 @@ from app.services.net_worth_service import (
     calculate_net_worth,
     create_net_worth_snapshot,
     get_net_worth_snapshots,
+    calculate_asset_gain,
 )
 
-from app.bot.keyboards import account_keyboard, confirm_keyboard
+from app.bot.keyboards import (
+    account_keyboard,
+    confirm_keyboard,
+    cancel_keyboard,
+    SKIP_ACCOUNT_CALLBACK_VALUE,
+    SKIP_ACCOUNT_NAME,
+)
 from app.nlp.regex_parser import parse_with_regex, parse_debt_input, detect_date, strip_date_phrases
 from app.nlp.gemini_parser import parse_with_pending_fallback
 from app.nlp.gemini_image_parser import parse_transactions_from_image
@@ -59,6 +66,7 @@ from app.services.transaction_service import (
     edit_transaction_by_ref,
     get_transactions_for_export,
     calculate_account_deltas,
+    update_transaction_debt_relation,
     EXPORT_TRANSACTION_COLUMNS,
 )
 
@@ -98,6 +106,7 @@ from app.services.debt_service import (
     add_debt,
     add_payment,
     add_payment_by_person,
+    offset_debt_by_person,
     get_debt_summary,
     get_debt_by_person,
     preview_void_debt,

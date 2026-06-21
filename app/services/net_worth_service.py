@@ -30,6 +30,8 @@ ASSET_COLUMNS = [
     "price_source",
     "price_per_unit",
     "last_price_update",
+    "purchase_price_per_unit",
+    "purchase_date",
 ]
 
 
@@ -120,6 +122,57 @@ def parse_human_money(value) -> float:
 
     raw = re.sub(r"[^0-9]", "", raw)
     return float(raw or 0)
+
+
+def normalize_date_value(value) -> str:
+    """Normalize common Indonesian date inputs to YYYY-MM-DD when possible."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    # Keep already valid ISO date.
+    if re.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}", raw):
+        y, m, d = raw.split("-")
+        return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
+
+    # Convert 10/06/2026 or 10-06-2026 into ISO.
+    match = re.fullmatch(r"(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})", raw)
+    if match:
+        d, m, y = match.groups()
+        y = int(y)
+        if y < 100:
+            y += 2000
+        return f"{y:04d}-{int(m):02d}-{int(d):02d}"
+
+    return raw
+
+
+def calculate_asset_gain(asset: dict) -> dict:
+    """Return acquisition cost, gain/loss, and gain percentage for one asset."""
+    current_value = safe_float(asset.get("current_value", 0))
+    quantity = safe_float_decimal(asset.get("quantity"))
+    purchase_price = safe_float(asset.get("purchase_price_per_unit", 0))
+
+    if purchase_price <= 0:
+        return {
+            "has_purchase_info": False,
+            "purchase_price_per_unit": 0.0,
+            "purchase_total": 0.0,
+            "gain_loss": 0.0,
+            "gain_loss_pct": 0.0,
+        }
+
+    purchase_total = purchase_price * quantity if quantity > 0 else purchase_price
+    gain_loss = current_value - purchase_total
+    gain_loss_pct = (gain_loss / purchase_total * 100) if purchase_total > 0 else 0.0
+
+    return {
+        "has_purchase_info": True,
+        "purchase_price_per_unit": purchase_price,
+        "purchase_total": purchase_total,
+        "gain_loss": gain_loss,
+        "gain_loss_pct": gain_loss_pct,
+    }
 
 
 def parse_price_to_float(value) -> float:
@@ -249,6 +302,8 @@ def add_asset(
     unit: str = "",
     price_source: str = "",
     price_per_unit: float | None = None,
+    purchase_price_per_unit: float | None = None,
+    purchase_date: str = "",
 ) -> dict:
     asset_type = str(asset_type or "manual").strip().lower()
     category = str(category or "Other Asset").strip()
@@ -257,6 +312,8 @@ def add_asset(
 
     quantity_value = safe_float_decimal(quantity) if quantity not in [None, ""] else 0.0
     unit_price = safe_float(price_per_unit) if price_per_unit not in [None, ""] else 0.0
+    purchase_unit_price = safe_float(purchase_price_per_unit) if purchase_price_per_unit not in [None, ""] else ""
+    purchase_date_value = normalize_date_value(purchase_date)
 
     # Aset berbasis satuan: emas 41 gram, laptop 1 buah, dll.
     # Nilai aset = quantity × price_per_unit. Tidak auto-scrape external source.
@@ -305,6 +362,8 @@ def add_asset(
         "price_source": price_source,
         "price_per_unit": unit_price,
         "last_price_update": today_str() if unit_price else "",
+        "purchase_price_per_unit": purchase_unit_price,
+        "purchase_date": purchase_date_value,
     }
 
     if not asset["name"]:
@@ -453,6 +512,15 @@ def normalize_asset_update_field(field: str) -> str | None:
         "harga_satuan": "price_per_unit",
         "harga": "price_per_unit",
         "last_price_update": "last_price_update",
+        "purchase_price_per_unit": "purchase_price_per_unit",
+        "purchase_price": "purchase_price_per_unit",
+        "buy_price": "purchase_price_per_unit",
+        "harga_beli": "purchase_price_per_unit",
+        "modal": "purchase_price_per_unit",
+        "purchase_date": "purchase_date",
+        "buy_date": "purchase_date",
+        "tanggal_beli": "purchase_date",
+        "tgl_beli": "purchase_date",
 
         "description": "description",
         "deskripsi": "description",
@@ -499,13 +567,16 @@ def normalize_liability_update_field(field: str) -> str | None:
 def normalize_common_update_value(field: str, value):
     raw = str(value or "").strip()
 
-    if field in ["current_value", "current_balance", "price_per_unit"]:
+    if field in ["current_value", "current_balance", "price_per_unit", "purchase_price_per_unit"]:
         amount = parse_human_money(raw)
 
         if amount < 0:
             raise ValueError("Nominal tidak boleh negatif.")
 
         return amount
+
+    if field == "purchase_date":
+        return normalize_date_value(raw)
 
     if field == "quantity":
         amount = safe_float_decimal(raw)

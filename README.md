@@ -297,6 +297,14 @@ Command:
 /networth_history
 ```
 
+Tambah aset mode tanya-jawab:
+
+```text
+/asset_add
+```
+
+Bot akan bertanya nama aset, jumlah/unit, harga beli, tanggal beli, harga saat ini, kategori, dan deskripsi. Setiap step punya opsi cancel. Tanggal beli boleh dilewati/kosong.
+
 Tambah aset nominal langsung:
 
 ```text
@@ -308,7 +316,7 @@ Tambah aset berbasis unit:
 ```text
 add emas 1000 gram
 add laptop 1 buah
-/asset_add Emas Antam |1000 gram | Gold | Tabungan emas
+/asset_add Emas Antam | 41 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10
 ```
 
 Flow aset berbasis unit:
@@ -321,11 +329,23 @@ add emas 1000 gram
 → current_value = quantity × price_per_unit
 ```
 
+Kolom assets terbaru untuk harga beli:
+
+```text
+id, name, category, current_value, description, is_active, created_at, updated_at, asset_type, quantity, unit, price_source, price_per_unit, last_price_update, purchase_price_per_unit, purchase_date
+```
+
+`price_per_unit` = harga sekarang/saat update.
+`purchase_price_per_unit` = harga beli/modal per unit.
+`purchase_date` = tanggal beli.
+
+
 Edit harga satuan:
 
 ```text
 /asset_update asset_xxx | unit_price=2420000
 /asset_update asset_xxx | harga_satuan=2.42 juta
+/asset_update asset_xxx | harga_beli=2559000 | tanggal_beli=2026-06-10
 ```
 
 Formula net worth:
@@ -608,3 +628,20 @@ Format test case ada di `tests/command_cases.json`. Field penting:
 - `expect.prompt_contains`: teks yang wajib muncul di prompt bot.
 
 Tester ini cocok dipakai setiap kali ada perubahan parser, flow split bill, intent lokal, kategori, rekening, hutang/piutang, atau batch input.
+
+## Debt Offset / Kompensasi Tanpa Rekening
+
+Bot mendukung kompensasi hutang-piutang tanpa cashflow rekening, tetapi tetap mencatat fact row di `transactions`.
+
+Contoh:
+
+```text
+potong piutang Akmal 20k buat badminton
+saya berutang ke Akmal 20k potong dari piutang
+```
+
+Efek:
+
+- Debt ledger Akmal berubah.
+- Tidak ada rekening yang berubah.
+- Row `transactions` tetap dibuat dengan `type = debt_offset` dan `account = Debt Offset`.

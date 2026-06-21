@@ -34,6 +34,28 @@ from app.bot.handler_parts.transaction_flow import (
     split_bill_needs_decision,
 )
 
+
+def is_skip_account_choice(account: str) -> bool:
+    return str(account or "").strip() == SKIP_ACCOUNT_CALLBACK_VALUE
+
+
+def mark_transaction_as_historical(parsed: dict) -> dict:
+    """Catat transaksi tanpa mengubah saldo rekening."""
+    parsed["skip_account"] = True
+    parsed["account"] = SKIP_ACCOUNT_NAME
+    parsed["catatan"] = (str(parsed.get("catatan") or "").strip() + " | sudah berlalu/tanpa update saldo").strip(" |")
+    return parsed
+
+
+def mark_debt_as_historical(debt_parsed: dict) -> dict:
+    """Catat debt tanpa membuat cashflow transaksi."""
+    debt_parsed["cashflow_mode"] = "debt_only"
+    debt_parsed["fronting_mode"] = debt_parsed.get("fronting_mode") or "sudah_berlalu"
+    debt_parsed["account"] = SKIP_ACCOUNT_NAME
+    debt_parsed["catatan"] = (str(debt_parsed.get("catatan") or "").strip() + " | sudah berlalu/tanpa update saldo").strip(" |")
+    return debt_parsed
+
+
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -103,6 +125,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("debt_batch_acc:"):
         account = data.split(":")[1]
+        skip_account = is_skip_account_choice(account)
+        account_label = SKIP_ACCOUNT_NAME if skip_account else account
         debt_batch = context.user_data.get("pending_debt_batch")
 
         if not debt_batch:
@@ -150,8 +174,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parsed["target_debt_id"] = ""
                 parsed["debt_type_for_payment"] = next(iter(debt_types)) if debt_types else ""
 
-            if debt_uses_cashflow(parsed):
-                parsed["account"] = account
+            if debt_uses_cashflow(parsed) and intent != "offset_debt":
+                if skip_account:
+                    mark_debt_as_historical(parsed)
+                else:
+                    parsed["account"] = account
             prepared_batch.append({
                 "parsed": parsed,
                 "raw": raw,
@@ -176,7 +203,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         preview = build_debt_batch_confirm_preview(
             prepared_batch,
-            account,
+            account_label,
         )
 
         if failed_items:
@@ -193,6 +220,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("debt_acc:"):
         account = data.split(":")[1]
+        skip_account = is_skip_account_choice(account)
+        account_label = SKIP_ACCOUNT_NAME if skip_account else account
         debt_parsed = context.user_data.get("pending_debt")
 
         if not debt_parsed:
@@ -228,14 +257,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             debt_parsed["target_debt_id"] = debts[0].get("id") if len(debts) == 1 else ""
             debt_parsed["debt_type_for_payment"] = debt_type_for_payment
 
-        debt_parsed["account"] = account
+        if skip_account:
+            mark_debt_as_historical(debt_parsed)
+        else:
+            debt_parsed["account"] = account
         context.user_data["pending_debt"] = debt_parsed
 
-        preview = build_debt_confirm_preview(
-            debt_parsed,
-            account,
-            debt_type_for_payment=debt_type_for_payment,
-        )
+        if skip_account:
+            preview = build_debt_only_confirm_preview(debt_parsed)
+        else:
+            preview = build_debt_confirm_preview(
+                debt_parsed,
+                account_label,
+                debt_type_for_payment=debt_type_for_payment,
+            )
 
         await safe_edit_message(query, 
             preview,
@@ -246,6 +281,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("mixed_acc:"):
         account = data.split(":")[1]
+        skip_account = is_skip_account_choice(account)
+        account_label = SKIP_ACCOUNT_NAME if skip_account else account
         mixed_items = context.user_data.get("pending_mixed")
 
         if not mixed_items:
@@ -261,7 +298,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if item["kind"] == "transaction":
                 if needs_account(parsed):
-                    parsed["account"] = account
+                    if skip_account:
+                        mark_transaction_as_historical(parsed)
+                    else:
+                        parsed["account"] = account
 
                 prepared_items.append({
                     "kind": "transaction",
@@ -301,8 +341,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parsed["target_debt_id"] = debts[0].get("id") if len(debts) == 1 else ""
                     parsed["debt_type_for_payment"] = next(iter(debt_types)) if debt_types else ""
 
-                if debt_uses_cashflow(parsed):
-                    parsed["account"] = account
+                if debt_uses_cashflow(parsed) and intent != "offset_debt":
+                    if skip_account:
+                        mark_debt_as_historical(parsed)
+                    else:
+                        parsed["account"] = account
 
                 prepared_items.append({
                     "kind": "debt",
@@ -345,7 +388,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 short_summary += f"\n• ...dan {len(failed_items) - 5} item lain."
 
         await safe_edit_message(query, 
-            f"✅ Rekening *{md_safe(account)}* dipilih.\n\n{short_summary}\n\nSimpan semua item ini?",
+            f"✅ Pilihan rekening: *{md_safe(account_label)}*.\n\n{short_summary}\n\nSimpan semua item ini?",
             parse_mode="Markdown",
             reply_markup=confirm_keyboard("mixed"),
         )
@@ -353,6 +396,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data.startswith("batch_acc:"):
         account = data.split(":")[1]
+        skip_account = is_skip_account_choice(account)
         batch = context.user_data.get("pending_batch")
 
         if not batch:
@@ -362,7 +406,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for item in batch:
             parsed = item["parsed"]
             if needs_account(parsed):
-                parsed["account"] = account
+                if skip_account:
+                    mark_transaction_as_historical(parsed)
+                else:
+                    parsed["account"] = account
 
         context.user_data["pending_batch"] = batch
         preview = build_batch_preview(batch)
@@ -387,13 +434,18 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("acc:"):
         account = data.split(":")[1]
+        skip_account = is_skip_account_choice(account)
+        account_label = SKIP_ACCOUNT_NAME if skip_account else account
         parsed = context.user_data.get("pending_parsed")
 
         if not parsed:
             await safe_edit_message(query, "❌ Sesi expired. Coba input ulang.")
             return
 
-        parsed["account"] = account
+        if skip_account:
+            mark_transaction_as_historical(parsed)
+        else:
+            parsed["account"] = account
         context.user_data["pending_parsed"] = parsed
 
         if split_bill_needs_decision(parsed):
@@ -407,7 +459,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         short_summary = build_single_short_summary(parsed)
 
         await safe_edit_message(query, 
-            f"✅ Rekening *{md_safe(account)}* dipilih.\n\n{short_summary}\n\nSimpan transaksi ini?",
+            f"✅ Pilihan rekening: *{md_safe(account_label)}*.\n\n{short_summary}\n\nSimpan transaksi ini?",
             parse_mode="Markdown",
             reply_markup=confirm_keyboard("pending"),
         )
@@ -535,6 +587,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     unit=pending_asset.get("unit", ""),
                     price_source=pending_asset.get("price_source", "manual"),
                     price_per_unit=pending_asset.get("price_per_unit"),
+                    purchase_price_per_unit=pending_asset.get("purchase_price_per_unit"),
+                    purchase_date=pending_asset.get("purchase_date", ""),
                 )
             except Exception as e:
                 await safe_edit_message(query, f"❌ Gagal menyimpan aset: {str(e)}")
@@ -819,6 +873,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     debt_result = add_payment_by_person(person, amount)
 
+            elif intent == "offset_debt":
+                debt_result = offset_debt_by_person(
+                    person,
+                    amount,
+                    description,
+                    target_debt_type=debt_parsed.get("target_debt_type") or "receivable",
+                    resulting_debt_type=debt_parsed.get("resulting_debt_type") or "payable",
+                )
+
             else:
                 await safe_edit_message(query, "❌ Intent debt tidak valid. Coba input ulang.")
                 context.user_data.pop("pending_debt", None)
@@ -833,19 +896,19 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if debt_result.get("debt_id"):
                 debt_parsed["hutang_id"] = debt_result.get("debt_id")
             if debt_result.get("type"):
-                debt_parsed["tipe_hutang"] = "utang" if debt_result.get("type") == "payable" else "piutang"
+                if debt_result.get("type") == "offset":
+                    debt_parsed["tipe_hutang"] = "offset"
+                else:
+                    debt_parsed["tipe_hutang"] = "utang" if debt_result.get("type") == "payable" else "piutang"
 
-            debt_txn = {"type": "pending"}
+            debt_txn = build_debt_cashflow_transaction(
+                debt_parsed,
+                account,
+                debt_type_for_payment=debt_type_for_payment,
+            )
             transaction_result = None
-            if debt_uses_cashflow(debt_parsed):
-                debt_txn = build_debt_cashflow_transaction(
-                    debt_parsed,
-                    account,
-                    debt_type_for_payment=debt_type_for_payment,
-                )
-
-                if debt_txn.get("type") != "pending":
-                    transaction_result = save_transaction(debt_txn, raw_input=raw)
+            if debt_txn.get("type") != "pending":
+                transaction_result = save_transaction(debt_txn, raw_input=raw)
 
             lines = ["✅ *Debt berhasil diproses!*\n"]
 
@@ -864,6 +927,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     direction = "🔴 Utang Anda" if debt_type_for_payment == "payable" else "🟢 Piutang Anda"
                     lines.append(f"📌 Posisi: {direction}")
                     lines.append(f"📊 Sisa: *{format_rupiah(debt_result.get('remaining', 0))}*")
+
+            elif intent == "offset_debt":
+                target_label = "piutang" if debt_result.get("target_debt_type") == "receivable" else "utang"
+                lines.append(f"🔁 Kompensasi dengan *{person}*")
+                lines.append(f"➖ Potong {target_label}: *{format_rupiah(debt_result.get('offset_applied', amount))}*")
+                if debt_result.get("overage", 0):
+                    new_label = "utang" if debt_result.get("resulting_debt_type") == "payable" else "piutang"
+                    lines.append(f"⚠️ Sisa menjadi {new_label} baru: *{format_rupiah(debt_result.get('overage', 0))}*")
+                lines.append(f"📊 Sisa piutang: *{format_rupiah(debt_result.get('remaining_receivable', 0))}*")
+                lines.append(f"📊 Sisa utang: *{format_rupiah(debt_result.get('remaining_payable', 0))}*")
 
             if transaction_result:
                 if transaction_result.get("success"):
@@ -933,6 +1006,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         debt_result = add_payment(target_debt_id, amount)
                     else:
                         debt_result = add_payment_by_person(person, amount)
+                elif intent == "offset_debt":
+                    debt_result = offset_debt_by_person(
+                        person,
+                        amount,
+                        description,
+                        target_debt_type=parsed.get("target_debt_type") or "receivable",
+                        resulting_debt_type=parsed.get("resulting_debt_type") or "payable",
+                    )
                 else:
                     failed_items.append({"raw": raw, "message": "Intent debt tidak valid."})
                     continue
@@ -947,22 +1028,24 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if debt_result.get("debt_id"):
                     parsed["hutang_id"] = debt_result.get("debt_id")
                 if debt_result.get("type"):
-                    parsed["tipe_hutang"] = "utang" if debt_result.get("type") == "payable" else "piutang"
+                    if debt_result.get("type") == "offset":
+                        parsed["tipe_hutang"] = "offset"
+                    else:
+                        parsed["tipe_hutang"] = "utang" if debt_result.get("type") == "payable" else "piutang"
 
                 debt_success_count += 1
                 result_lines.append(f"{i}. ✅ Debt *{person}* diproses")
 
-                if debt_uses_cashflow(parsed):
-                    debt_txn = build_debt_cashflow_transaction(
-                        parsed,
-                        account,
-                        debt_type_for_payment=debt_type_for_payment,
-                    )
+                debt_txn = build_debt_cashflow_transaction(
+                    parsed,
+                    account,
+                    debt_type_for_payment=debt_type_for_payment,
+                )
 
-                    if debt_txn.get("type") != "pending":
-                        debt_transaction_items.append({"parsed": debt_txn, "raw": raw})
-                else:
-                    result_lines.append(f"   📝 Tanpa cashflow: {md_safe(parsed.get('fronting_mode') or 'debt_only')}")
+                if debt_txn.get("type") != "pending":
+                    debt_transaction_items.append({"parsed": debt_txn, "raw": raw})
+                    if debt_txn.get("type") in ["debt_only", "debt_offset"]:
+                        result_lines.append("   📝 Masuk transactions tanpa update saldo rekening")
 
             transaction_result = None
             if debt_transaction_items:
@@ -1071,6 +1154,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     else:
                         debt_result = add_payment_by_person(person, amount)
 
+                elif intent == "offset_debt":
+                    debt_result = offset_debt_by_person(
+                        person,
+                        amount,
+                        description,
+                        target_debt_type=parsed.get("target_debt_type") or "receivable",
+                        resulting_debt_type=parsed.get("resulting_debt_type") or "payable",
+                    )
+
                 else:
                     failed_items.append({
                         "raw": raw,
@@ -1088,7 +1180,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if debt_result.get("debt_id"):
                     parsed["hutang_id"] = debt_result.get("debt_id")
                 if debt_result.get("type"):
-                    parsed["tipe_hutang"] = "utang" if debt_result.get("type") == "payable" else "piutang"
+                    if debt_result.get("type") == "offset":
+                        parsed["tipe_hutang"] = "offset"
+                    else:
+                        parsed["tipe_hutang"] = "utang" if debt_result.get("type") == "payable" else "piutang"
 
                 debt_success_count += 1
 
@@ -1106,14 +1201,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             f"   💰 Saldo: *{format_rupiah(debt_result['remaining'])}*"
                         )
 
-                    if debt_uses_cashflow(parsed):
-                        debt_txn = build_debt_cashflow_transaction(
-                            parsed,
-                            account,
-                        )
-                    else:
-                        debt_txn = {"type": "pending"}
-                        result_lines.append(f"   📝 Tanpa cashflow: {md_safe(parsed.get('fronting_mode') or 'debt_only')}")
+                    debt_txn = build_debt_cashflow_transaction(
+                        parsed,
+                        account,
+                    )
+                    if debt_txn.get("type") in ["debt_only", "debt_offset"]:
+                        result_lines.append("   📝 Masuk transactions tanpa update saldo rekening")
 
                 elif intent == "add_payment":
                     if debt_result.get("is_settled"):
@@ -1135,6 +1228,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         account,
                         debt_type_for_payment=debt_type_for_payment,
                     )
+
+                elif intent == "offset_debt":
+                    target_label = "piutang" if debt_result.get("target_debt_type") == "receivable" else "utang"
+                    result_lines.append(
+                        f"{i}. 🔁 Kompensasi *{person}*\n"
+                        f"   ➖ Potong {target_label}: *{format_rupiah(debt_result.get('offset_applied', amount))}*\n"
+                        f"   📊 Sisa piutang: *{format_rupiah(debt_result.get('remaining_receivable', 0))}*\n"
+                        f"   📊 Sisa utang: *{format_rupiah(debt_result.get('remaining_payable', 0))}*"
+                    )
+                    debt_txn = build_debt_cashflow_transaction(parsed, account)
 
                 else:
                     debt_txn = {"type": "pending"}
@@ -1168,6 +1271,22 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     debt_result = create_split_bill_debt(item.get("parsed", {}), item.get("raw", ""), source_transaction_id=source_txn_id)
                     if debt_result and debt_result.get("success"):
                         split_debt_lines.extend(format_split_debt_result_lines(debt_result))
+                        debt_ids = [
+                            x.get("debt_id")
+                            for x in debt_result.get("created", [])
+                            if x.get("debt_id")
+                        ]
+                        if source_txn_id and debt_ids:
+                            relation_result = update_transaction_debt_relation(
+                                source_txn_id,
+                                debt_ids,
+                                tipe_hutang="piutang",
+                            )
+                            if not relation_result.get("success"):
+                                failed_items.append({
+                                    "raw": item.get("raw", "split bill"),
+                                    "message": f"Piutang dibuat, tapi relasi transaksi gagal: {relation_result.get('message')}",
+                                })
                     elif debt_result:
                         failed_items.append({
                             "raw": item.get("raw", "split bill"),
@@ -1242,6 +1361,22 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 debt_result = create_split_bill_debt(item.get("parsed", {}), item.get("raw", ""), source_transaction_id=source_txn_id)
                 if debt_result and debt_result.get("success"):
                     split_debt_lines.extend(format_split_debt_result_lines(debt_result))
+                    debt_ids = [
+                        x.get("debt_id")
+                        for x in debt_result.get("created", [])
+                        if x.get("debt_id")
+                    ]
+                    if source_txn_id and debt_ids:
+                        relation_result = update_transaction_debt_relation(
+                            source_txn_id,
+                            debt_ids,
+                            tipe_hutang="piutang",
+                        )
+                        if not relation_result.get("success"):
+                            result.setdefault("failed_items", []).append({
+                                "raw": item.get("raw", "split bill"),
+                                "message": f"Piutang dibuat, tapi relasi transaksi gagal: {relation_result.get('message')}",
+                            })
                 elif debt_result:
                     result.setdefault("failed_items", []).append({
                         "raw": item.get("raw", "split bill"),
@@ -1332,6 +1467,23 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if split_debt and split_debt.get("success"):
                 split_lines = format_split_debt_result_lines(split_debt)
                 split_info = "\n\n🤝 *Piutang split bill dibuat*\n" + "\n".join(split_lines)
+
+                debt_ids = [
+                    x.get("debt_id")
+                    for x in split_debt.get("created", [])
+                    if x.get("debt_id")
+                ]
+                if result.get("transaction_id") and debt_ids:
+                    relation_result = update_transaction_debt_relation(
+                        result.get("transaction_id"),
+                        debt_ids,
+                        tipe_hutang="piutang",
+                    )
+                    if not relation_result.get("success"):
+                        split_info += (
+                            "\n⚠️ Piutang dibuat, tapi relasi transaksi gagal: "
+                            f"{relation_result.get('message')}"
+                        )
             elif split_debt:
                 split_info = f"\n\n⚠️ Gagal membuat piutang split bill: {split_debt.get('message')}"
 
@@ -1384,6 +1536,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_debt_void", None)
         context.user_data.pop("pending_asset_price", None)
         context.user_data.pop("pending_asset_confirm", None)
+        context.user_data.pop("pending_asset_add_flow", None)
         context.user_data.pop("pending_preview_edit", None)
         context.user_data.pop("pending_missing_amount", None)
         context.user_data.pop("mixed_review_preview_sent", None)
