@@ -68,6 +68,9 @@ def split_user_inputs(text: str) -> list[str]:
         "minjem", "pinjem", "pinjam",
         "hutang ke", "utang ke",
         "bayar hutang", "bayar utang",
+        "saya talangin", "aku talangin", "gw talangin", "gue talangin",
+        "saya ditalangin", "aku ditalangin", "gw ditalangin", "gue ditalangin",
+        "talangin", "ditalangin", "nitip",
     ]
 
     all_starters = transaction_starters + debt_starters
@@ -103,31 +106,11 @@ def split_user_inputs(text: str) -> list[str]:
         flags=re.IGNORECASE,
     )
 
-    # Split transaksi biasa berulang tanpa nominal protection tambahan.
-    # Contoh: "beli nasi 10k beli ayam 20k"
-    #
-    # Jangan pakai starter income yang terlalu lemah seperti "masuk",
-    # "dari", atau frasa tengah kalimat. Contoh bug:
-    # "Uang ptpt bulanan masuk dari opik 200k kemarin"
-    # dulu kepecah jadi "Uang ptpt bulanan" + "masuk dari opik ...".
-    normal_starter_pattern = (
-        r"beli|jajan|makan|minum|"
-        r"transfer|top\s*up|topup|isi|ngisi|gaji|"
-        r"bayar(?!\s+(?:hutang|utang|cicilan)\b)|"
-        r"byr(?!\s+(?:hutang|utang|cicilan)\b)"
-        # Jangan masukkan kata benda/aksi yang sering muncul di tengah kalimat.
-        # "sapto hutang ke saya 50k buat makan" dan
-        # "saya hutang ke opik 25k" harus tetap satu item.
-        # Kalau memang ada item baru setelah nominal, amount_before_pattern
-        # di atas tetap akan memecahnya secara aman.
-    )
-
-    raw = re.sub(
-        rf"(?<!^)\s+(?=({normal_starter_pattern})\b)",
-        " ||| ",
-        raw,
-        flags=re.IGNORECASE,
-    )
+    # Tidak lagi memecah sebelum starter tanpa nominal di depannya.
+    # Versi lama memecah "saya talangin Sapto beli nasi 12k" menjadi
+    # "saya talangin Sapto" + "beli nasi 12k" karena kata "beli" dianggap
+    # starter baru. Sekarang pemecahan otomatis cukup mengandalkan separator
+    # eksplisit atau pola nominal-sebelum-starter di atas.
 
     parts = []
     for part in raw.split("|||"):
@@ -1432,7 +1415,7 @@ def apply_split_bill_decision_to_mixed(mixed_items: list[dict], status: str) -> 
     return mixed_items
 
 
-def create_split_bill_debt(parsed: dict, raw: str = "") -> dict | None:
+def create_split_bill_debt(parsed: dict, raw: str = "", source_transaction_id: str = "") -> dict | None:
     split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
     if not split_bill or split_bill.get("status") != "unpaid":
         return None
@@ -1448,7 +1431,15 @@ def create_split_bill_debt(parsed: dict, raw: str = "") -> dict | None:
     failed = []
 
     for person in person_names:
-        result = add_debt("receivable", person, share_amount, desc)
+        result = add_debt(
+            "receivable",
+            person,
+            share_amount,
+            desc,
+            source_transaction_id=source_transaction_id,
+            cashflow_mode="debt_only",
+            fronting_mode="split_bill",
+        )
         if result and result.get("success"):
             created.append({
                 "person_name": person,
@@ -1532,6 +1523,14 @@ def build_debt_cashflow_transaction(
     amount = debt_parsed.get("amount") or 0
     raw = debt_parsed.get("raw_input") or ""
     transaction_date = debt_parsed.get("date") or datetime.now().strftime("%Y-%m-%d")
+    hutang_id = debt_parsed.get("hutang_id") or debt_parsed.get("debt_id") or debt_parsed.get("target_debt_id") or ""
+    tipe_hutang = debt_parsed.get("tipe_hutang") or ""
+    if not tipe_hutang:
+        if intent == "add_payable" or debt_type_for_payment == "payable":
+            tipe_hutang = "utang"
+        elif intent == "add_receivable" or debt_type_for_payment == "receivable":
+            tipe_hutang = "piutang"
+
 
     if intent == "add_receivable":
         return {
@@ -1545,6 +1544,8 @@ def build_debt_cashflow_transaction(
             "catatan": raw,
             "tipe_pengeluaran": "",
             "date": transaction_date,
+            "hutang_id": hutang_id,
+            "tipe_hutang": tipe_hutang,
             "parsed_by": "debt",
         }
 
@@ -1560,6 +1561,8 @@ def build_debt_cashflow_transaction(
             "catatan": raw,
             "tipe_pengeluaran": "",
             "date": transaction_date,
+            "hutang_id": hutang_id,
+            "tipe_hutang": tipe_hutang,
             "parsed_by": "debt",
         }
 
@@ -1576,6 +1579,8 @@ def build_debt_cashflow_transaction(
                 "catatan": raw,
                 "tipe_pengeluaran": "",
                 "date": transaction_date,
+                "hutang_id": hutang_id,
+                "tipe_hutang": tipe_hutang,
                 "parsed_by": "debt",
             }
 
@@ -1591,6 +1596,8 @@ def build_debt_cashflow_transaction(
                 "catatan": raw,
                 "tipe_pengeluaran": "",
                 "date": transaction_date,
+                "hutang_id": hutang_id,
+                "tipe_hutang": tipe_hutang,
                 "parsed_by": "debt",
             }
 
@@ -1605,6 +1612,8 @@ def build_debt_cashflow_transaction(
         "catatan": raw,
         "tipe_pengeluaran": "",
         "date": transaction_date,
+        "hutang_id": hutang_id,
+        "tipe_hutang": tipe_hutang,
         "parsed_by": "debt",
     }
 

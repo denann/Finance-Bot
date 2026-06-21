@@ -104,9 +104,17 @@ def add_debt(
     amount: float,
     description: str = "",
     due_date: str = "",
+    source_transaction_id: str = "",
+    cashflow_mode: str = "",
+    fronting_mode: str = "",
 ) -> dict:
     """
-    Tambah utang/piutang dengan sistem netting per orang.
+    Tambah utang/piutang sebagai baris granular per input.
+
+    Catatan desain baru:
+    - Tidak lagi melakukan netting/merge per orang.
+    - Setiap input debt menghasilkan 1 row debt agar asal nominal mudah ditrace.
+    - Ringkasan /hutang dihitung dari agregasi remaining_amount aktif.
 
     debt_type:
     - payable    = Anda punya utang ke orang tersebut
@@ -145,6 +153,57 @@ def add_debt(
             "message": "Nominal debt tidak valid.",
             "action": "error",
         }
+
+
+    # DESAIN BARU: debt granular per input, bukan netting per orang.
+    # Header sheet debts yang disarankan:
+    # id, type, person_name, original_amount, remaining_amount, description, due_date,
+    # is_settled, created_at, settled_at, source_transaction_id, cashflow_mode, fronting_mode
+    debt_id = generate_debt_id()
+    row = [
+        debt_id,
+        debt_type,
+        person_name,
+        amount,
+        amount,
+        description,
+        due_date,
+        "FALSE",
+        datetime.now().strftime("%Y-%m-%d"),
+        "",
+        source_transaction_id or "",
+        cashflow_mode or "",
+        fronting_mode or "",
+    ]
+
+    try:
+        append_row(SHEET_DEBTS, row)
+        append_debt_mutation(
+            debt_id,
+            amount,
+            description or f"Tambah {debt_type} {person_name}",
+            mutation_type=f"add_{debt_type}",
+        )
+        return {
+            "success": True,
+            "debt_id": debt_id,
+            "message": "ok",
+            "action": "created_granular",
+            "person_name": person_name,
+            "type": debt_type,
+            "remaining": amount,
+            "is_settled": False,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "debt_id": None,
+            "message": str(e),
+            "action": "error",
+        }
+
+    # Legacy netting code di bawah dibiarkan sebagai referensi fallback,
+    # tetapi tidak dieksekusi karena desain debt sekarang granular.
 
     existing_row, existing = get_active_debt_exact_person(person_name)
 
@@ -313,19 +372,15 @@ def get_active_debts(debt_type: str = None) -> list[dict]:
 def get_debt_by_person(person_name: str) -> list[dict]:
     """
     Cari utang/piutang aktif berdasarkan nama orang.
-    Tetap return list supaya kompatibel dengan handler lama.
+    Return sudah membawa _row_index supaya pembayaran FIFO bisa stabil.
     """
     target = normalize_person_name(person_name)
-    records = get_all_records(SHEET_DEBTS)
     result = []
 
-    for record in records:
+    for record in get_debts_with_row_index(active_only=True):
         current_name = normalize_person_name(record.get("person_name", ""))
 
         if target not in current_name and current_name not in target:
-            continue
-
-        if is_settled_value(record.get("is_settled", "FALSE")):
             continue
 
         result.append(record)
@@ -398,6 +453,107 @@ def add_payment(debt_id: str, amount: float, note: str = "") -> dict:
             "is_settled": False,
             "message": str(e),
         }
+
+
+
+def add_payment_by_person(person_name: str, amount: float, note: str = "") -> dict:
+    """
+    Alokasikan pembayaran ke semua debt aktif milik seseorang secara FIFO.
+
+    Dipakai untuk input natural seperti:
+    - "Akmal bayar hutang 20k"
+    - "bayar hutang Akmal 20k"
+
+    Jika orang punya beberapa debt granular, nominal pembayaran akan mengurangi
+    debt paling lama dulu sampai nominal habis.
+    """
+    person_name = normalize_person_name(person_name)
+    amount = float(amount or 0)
+
+    if not person_name:
+        return {
+            "success": False,
+            "message": "Nama orang kosong.",
+            "remaining": 0,
+            "is_settled": False,
+            "allocations": [],
+        }
+
+    if amount <= 0:
+        return {
+            "success": False,
+            "message": "Nominal pembayaran tidak valid.",
+            "remaining": 0,
+            "is_settled": False,
+            "allocations": [],
+        }
+
+    debts = get_debt_by_person(person_name)
+    if not debts:
+        return {
+            "success": False,
+            "message": f"Tidak ada utang/piutang aktif dengan {person_name}.",
+            "remaining": 0,
+            "is_settled": False,
+            "allocations": [],
+        }
+
+    debt_types = {str(d.get("type", "")).strip() for d in debts if str(d.get("type", "")).strip()}
+    if len(debt_types) > 1:
+        return {
+            "success": False,
+            "message": (
+                f"Ada utang dan piutang aktif sekaligus dengan {person_name}. "
+                "Gunakan /hutang lalu bayar/void debt yang spesifik dulu agar tidak salah arah."
+            ),
+            "remaining": sum(float(d.get("remaining_amount", 0) or 0) for d in debts),
+            "is_settled": False,
+            "allocations": [],
+        }
+
+    remaining_payment = amount
+    allocations = []
+
+    # FIFO berdasarkan row sheet/created_at.
+    for debt in sorted(debts, key=lambda d: int(d.get("_row_index", 10**9) or 10**9)):
+        if remaining_payment <= 0:
+            break
+
+        debt_id = str(debt.get("id", "")).strip()
+        debt_remaining = float(debt.get("remaining_amount", 0) or 0)
+        if not debt_id or debt_remaining <= 0:
+            continue
+
+        pay_amount = min(remaining_payment, debt_remaining)
+        result = add_payment(debt_id, pay_amount, note or f"Pembayaran dari {person_name}")
+        if not result.get("success"):
+            return {
+                "success": False,
+                "message": result.get("message", "Gagal alokasi pembayaran."),
+                "remaining": sum(float(d.get("remaining_amount", 0) or 0) for d in get_debt_by_person(person_name)),
+                "is_settled": False,
+                "allocations": allocations,
+            }
+
+        allocations.append({
+            "debt_id": debt_id,
+            "amount": pay_amount,
+            "description": debt.get("description", ""),
+        })
+        remaining_payment -= pay_amount
+
+    active_after = get_debt_by_person(person_name)
+    total_remaining = sum(float(d.get("remaining_amount", 0) or 0) for d in active_after)
+
+    return {
+        "success": True,
+        "message": "ok" if remaining_payment <= 0 else f"Pembayaran melebihi saldo aktif sebesar {format_rupiah(remaining_payment)}.",
+        "remaining": total_remaining,
+        "is_settled": total_remaining <= 0,
+        "allocations": allocations,
+        "overpayment": max(0, remaining_payment),
+        "type": next(iter(debt_types)) if debt_types else "",
+    }
 
 
 def get_debt_summary() -> dict:
@@ -611,6 +767,106 @@ def is_debt_without_initial_cashflow(debt: dict) -> bool:
         "nitip",
     ]
     return any(marker in description for marker in debt_only_markers)
+
+
+
+
+def get_debts_by_source_transaction_id(transaction_id: str, active_only: bool = True) -> list[dict]:
+    """Cari debt granular yang dibuat dari source_transaction_id tertentu."""
+    target = str(transaction_id or "").strip()
+    if not target:
+        return []
+
+    result = []
+    for debt in get_debts_with_row_index(active_only=active_only):
+        if str(debt.get("source_transaction_id", "")).strip() == target:
+            result.append(debt)
+    return result
+
+
+def void_debts_for_transaction(transaction_id: str, debt_ids: list[str] | None = None) -> dict:
+    """
+    Void semua debt yang terhubung ke transaksi.
+
+    Sumber relasi:
+    1. transactions.hutang_id / tipe_hutang
+    2. debts.source_transaction_id
+    """
+    targets = []
+    seen = set()
+
+    for debt_id in debt_ids or []:
+        clean = str(debt_id or "").strip()
+        if clean and clean not in seen:
+            targets.append(clean)
+            seen.add(clean)
+
+    for debt in get_debts_by_source_transaction_id(transaction_id, active_only=True):
+        clean = str(debt.get("id", "")).strip()
+        if clean and clean not in seen:
+            targets.append(clean)
+            seen.add(clean)
+
+    results = []
+    for debt_id in targets:
+        results.append(void_linked_debt_only(debt_id, reason=f"Transaksi sumber {transaction_id} dihapus"))
+
+    failed = [r for r in results if not r.get("success")]
+    return {
+        "success": not failed,
+        "message": "ok" if not failed else "; ".join(r.get("message", "Gagal void debt") for r in failed),
+        "voided_ids": [r.get("debt_id") for r in results if r.get("success") and not r.get("skipped")],
+        "skipped_ids": [r.get("debt_id") for r in results if r.get("success") and r.get("skipped")],
+        "failed": failed,
+    }
+
+
+def void_linked_debt_only(debt_id: str, reason: str = "Transaksi sumber dihapus") -> dict:
+    """
+    Void debt yang terhubung ke transaksi yang sedang dihapus.
+
+    Tidak melakukan reverse saldo dan tidak menghapus transaksi cashflow, karena
+    reverse/delete transaksi sudah ditangani oleh delete_transactions_by_refs().
+    Untuk keamanan, hanya debt yang belum pernah dibayar/berubah yang otomatis di-void.
+    """
+    row_index, debt = get_debt_by_id_any_status(debt_id)
+
+    if not debt or not row_index:
+        return {"success": False, "message": f"Debt {debt_id} tidak ditemukan.", "debt_id": debt_id}
+
+    if is_settled_value(debt.get("is_settled", "FALSE")):
+        return {"success": True, "message": "Debt sudah settled.", "debt_id": debt_id, "skipped": True}
+
+    original = float(debt.get("original_amount", 0) or 0)
+    remaining = float(debt.get("remaining_amount", 0) or 0)
+    if abs(original - remaining) > 0.0001:
+        return {
+            "success": False,
+            "message": (
+                f"Debt {debt_id} sudah punya pembayaran/mutasi. "
+                "Delete transaksi sumber diblok agar debt tidak salah."
+            ),
+            "debt_id": debt_id,
+        }
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    old_description = str(debt.get("description", "") or "").strip()
+    void_note = f"[VOID {today}] {reason}"
+    new_description = f"{old_description} | {void_note}" if old_description else void_note
+
+    update_cell(SHEET_DEBTS, row_index, DEBT_REMAINING_AMOUNT_COL, 0)
+    update_cell(SHEET_DEBTS, row_index, DEBT_IS_SETTLED_COL, "TRUE")
+    update_cell(SHEET_DEBTS, row_index, DEBT_SETTLED_AT_COL, today)
+    update_cell(SHEET_DEBTS, row_index, DEBT_DESCRIPTION_COL, new_description)
+
+    append_debt_mutation(
+        debt_id=debt.get("id"),
+        amount=remaining,
+        note=void_note,
+        mutation_type="void_by_transaction_delete",
+    )
+
+    return {"success": True, "message": "ok", "debt_id": debt_id, "skipped": False}
 
 
 def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:

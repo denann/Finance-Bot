@@ -44,6 +44,28 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data or ""
     await show_callback_loading(query)
 
+    if data.startswith("recurring_paid:"):
+        rule_id = data.split(":", 1)[1].strip()
+        result = mark_recurring_rule_paid(rule_id)
+
+        if result.get("success"):
+            rule = result.get("rule") or {}
+            await safe_edit_message(
+                query,
+                "✅ *Recurring ditandai sudah bayar.*\n\n"
+                f"📌 {md_safe(rule.get('name') or '-')}\n"
+                f"📝 Transaksi tersimpan: `{result.get('transaction_id')}`\n"
+                f"🔕 Notifikasi berikutnya: `{result.get('next_run_date')}`",
+                parse_mode="Markdown",
+            )
+        else:
+            await safe_edit_message(
+                query,
+                f"❌ Gagal menandai recurring sudah bayar.\n\n{md_safe(result.get('message') or '-')}",
+                parse_mode="Markdown",
+            )
+        return
+
     if data.startswith("editflow:"):
         parts = data.split(":")
         action = parts[1] if len(parts) > 1 else ""
@@ -114,15 +136,19 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     })
                     continue
 
-                if len(debts) > 1:
+                debt_types = {str(d.get("type", "")).strip() for d in debts if str(d.get("type", "")).strip()}
+                if len(debt_types) > 1:
                     failed_items.append({
                         "raw": raw,
-                        "message": f"Ada lebih dari 1 saldo aktif dengan {person}. Rapikan data legacy dulu.",
+                        "message": f"Ada utang dan piutang aktif sekaligus dengan {person}. Bayar debt spesifik dulu dari /hutang.",
                     })
                     continue
 
-                parsed["target_debt_id"] = debts[0].get("id")
-                parsed["debt_type_for_payment"] = debts[0].get("type")
+                if len(debts) == 1:
+                    parsed["target_debt_id"] = debts[0].get("id")
+                else:
+                    parsed["target_debt_id"] = ""
+                parsed["debt_type_for_payment"] = next(iter(debt_types)) if debt_types else ""
 
             if debt_uses_cashflow(parsed):
                 parsed["account"] = account
@@ -188,18 +214,18 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data.pop("pending_debt", None)
                 return
 
-            if len(debts) > 1:
+            debt_types = {str(d.get("type", "")).strip() for d in debts if str(d.get("type", "")).strip()}
+            if len(debt_types) > 1:
                 await safe_edit_message(query, 
-                    f"⚠️ Ada lebih dari 1 saldo aktif dengan *{person}*.\n\n"
-                    f"Data lama masih duplicate. Rapikan dulu via /hutang "
-                    f"atau nanti kita buat fitur merge debt legacy.",
+                    f"⚠️ Ada utang dan piutang aktif sekaligus dengan *{person}*.\n\n"
+                    f"Gunakan /hutang lalu bayar/void debt yang spesifik dulu agar tidak salah arah.",
                     parse_mode="Markdown",
                 )
                 context.user_data.pop("pending_debt", None)
                 return
 
-            debt_type_for_payment = debts[0].get("type")
-            debt_parsed["target_debt_id"] = debts[0].get("id")
+            debt_type_for_payment = next(iter(debt_types)) if debt_types else ""
+            debt_parsed["target_debt_id"] = debts[0].get("id") if len(debts) == 1 else ""
             debt_parsed["debt_type_for_payment"] = debt_type_for_payment
 
         debt_parsed["account"] = account
@@ -264,15 +290,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         })
                         continue
 
-                    if len(debts) > 1:
+                    debt_types = {str(d.get("type", "")).strip() for d in debts if str(d.get("type", "")).strip()}
+                    if len(debt_types) > 1:
                         failed_items.append({
                             "raw": raw,
-                            "message": f"Ada lebih dari 1 saldo aktif dengan {person}. Rapikan data legacy dulu.",
+                            "message": f"Ada utang dan piutang aktif sekaligus dengan {person}. Bayar debt spesifik dulu dari /hutang.",
                         })
                         continue
 
-                    parsed["target_debt_id"] = debts[0].get("id")
-                    parsed["debt_type_for_payment"] = debts[0].get("type")
+                    parsed["target_debt_id"] = debts[0].get("id") if len(debts) == 1 else ""
+                    parsed["debt_type_for_payment"] = next(iter(debt_types)) if debt_types else ""
 
                 if debt_uses_cashflow(parsed):
                     parsed["account"] = account
@@ -787,12 +814,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif intent == "add_payment":
                 target_debt_id = debt_parsed.get("target_debt_id")
 
-                if not target_debt_id:
-                    await safe_edit_message(query, "❌ Target debt tidak ditemukan. Coba input ulang.")
-                    context.user_data.pop("pending_debt", None)
-                    return
-
-                debt_result = add_payment(target_debt_id, amount)
+                if target_debt_id:
+                    debt_result = add_payment(target_debt_id, amount)
+                else:
+                    debt_result = add_payment_by_person(person, amount)
 
             else:
                 await safe_edit_message(query, "❌ Intent debt tidak valid. Coba input ulang.")
@@ -804,6 +829,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await safe_edit_message(query, f"❌ Gagal menyimpan debt: {message}")
                 context.user_data.pop("pending_debt", None)
                 return
+
+            if debt_result.get("debt_id"):
+                debt_parsed["hutang_id"] = debt_result.get("debt_id")
+            if debt_result.get("type"):
+                debt_parsed["tipe_hutang"] = "utang" if debt_result.get("type") == "payable" else "piutang"
 
             debt_txn = {"type": "pending"}
             transaction_result = None
@@ -899,10 +929,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     debt_result = add_debt("receivable", person, amount, description)
                 elif intent == "add_payment":
                     target_debt_id = parsed.get("target_debt_id")
-                    if not target_debt_id:
-                        failed_items.append({"raw": raw, "message": "Target debt tidak ditemukan."})
-                        continue
-                    debt_result = add_payment(target_debt_id, amount)
+                    if target_debt_id:
+                        debt_result = add_payment(target_debt_id, amount)
+                    else:
+                        debt_result = add_payment_by_person(person, amount)
                 else:
                     failed_items.append({"raw": raw, "message": "Intent debt tidak valid."})
                     continue
@@ -913,6 +943,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "message": debt_result.get("message") if debt_result else "Unknown error",
                     })
                     continue
+
+                if debt_result.get("debt_id"):
+                    parsed["hutang_id"] = debt_result.get("debt_id")
+                if debt_result.get("type"):
+                    parsed["tipe_hutang"] = "utang" if debt_result.get("type") == "payable" else "piutang"
 
                 debt_success_count += 1
                 result_lines.append(f"{i}. ✅ Debt *{person}* diproses")
@@ -1031,14 +1066,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 elif intent == "add_payment":
                     target_debt_id = parsed.get("target_debt_id")
 
-                    if not target_debt_id:
-                        failed_items.append({
-                            "raw": raw,
-                            "message": "Target debt tidak ditemukan.",
-                        })
-                        continue
-
-                    debt_result = add_payment(target_debt_id, amount)
+                    if target_debt_id:
+                        debt_result = add_payment(target_debt_id, amount)
+                    else:
+                        debt_result = add_payment_by_person(person, amount)
 
                 else:
                     failed_items.append({
@@ -1053,6 +1084,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "message": debt_result.get("message") if debt_result else "Unknown error",
                     })
                     continue
+
+                if debt_result.get("debt_id"):
+                    parsed["hutang_id"] = debt_result.get("debt_id")
+                if debt_result.get("type"):
+                    parsed["tipe_hutang"] = "utang" if debt_result.get("type") == "payable" else "piutang"
 
                 debt_success_count += 1
 
@@ -1124,8 +1160,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 append_saved_summary_lines(result_lines, all_transaction_items)
 
                 split_debt_lines = []
+                saved_ids = transaction_result.get("saved_ids", []) if transaction_result else []
+                normal_idx = 0
                 for item in normal_transaction_items:
-                    debt_result = create_split_bill_debt(item.get("parsed", {}), item.get("raw", ""))
+                    source_txn_id = saved_ids[normal_idx] if normal_idx < len(saved_ids) else ""
+                    normal_idx += 1
+                    debt_result = create_split_bill_debt(item.get("parsed", {}), item.get("raw", ""), source_transaction_id=source_txn_id)
                     if debt_result and debt_result.get("success"):
                         split_debt_lines.extend(format_split_debt_result_lines(debt_result))
                     elif debt_result:
@@ -1197,8 +1237,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             append_saved_summary_lines(lines, batch)
 
             split_debt_lines = []
-            for item in batch:
-                debt_result = create_split_bill_debt(item.get("parsed", {}), item.get("raw", ""))
+            for idx, item in enumerate(batch):
+                source_txn_id = saved_ids[idx] if idx < len(saved_ids) else ""
+                debt_result = create_split_bill_debt(item.get("parsed", {}), item.get("raw", ""), source_transaction_id=source_txn_id)
                 if debt_result and debt_result.get("success"):
                     split_debt_lines.extend(format_split_debt_result_lines(debt_result))
                 elif debt_result:
@@ -1287,7 +1328,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
             split_info = ""
-            split_debt = create_split_bill_debt(parsed, raw)
+            split_debt = create_split_bill_debt(parsed, raw, source_transaction_id=result.get("transaction_id", ""))
             if split_debt and split_debt.get("success"):
                 split_lines = format_split_debt_result_lines(split_debt)
                 split_info = "\n\n🤝 *Piutang split bill dibuat*\n" + "\n".join(split_lines)

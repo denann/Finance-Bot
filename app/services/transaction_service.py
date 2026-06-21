@@ -28,6 +28,8 @@ EXPORT_TRANSACTION_COLUMNS = [
     "tipe_pengeluaran",
     "raw_input",
     "parsed_by",
+    "hutang_id",
+    "tipe_hutang",
 ]
 
 
@@ -225,7 +227,7 @@ def build_transaction_row(parsed: dict, raw_input: str) -> tuple[str, list]:
     Build row transaksi sesuai header Google Sheets:
 
     id, date, type, amount, category, account, to_account,
-    subject, description, catatan, tipe_pengeluaran, raw_input, parsed_by
+    subject, description, catatan, tipe_pengeluaran, raw_input, parsed_by, hutang_id, tipe_hutang
     """
     txn_id = generate_transaction_id()
 
@@ -240,6 +242,8 @@ def build_transaction_row(parsed: dict, raw_input: str) -> tuple[str, list]:
     tipe_pengeluaran = parsed.get("tipe_pengeluaran") or ""
     date = parsed.get("date") or datetime.now().strftime("%Y-%m-%d")
     parsed_by = parsed.get("parsed_by") or "regex"
+    hutang_id = parsed.get("hutang_id") or parsed.get("debt_id") or ""
+    tipe_hutang = parsed.get("tipe_hutang") or parsed.get("debt_type_label") or ""
 
     row = [
         txn_id,
@@ -255,6 +259,8 @@ def build_transaction_row(parsed: dict, raw_input: str) -> tuple[str, list]:
         tipe_pengeluaran,
         raw_input,
         parsed_by,
+        hutang_id,
+        tipe_hutang,
     ]
 
     return txn_id, row
@@ -943,6 +949,19 @@ def calculate_reverse_deltas_for_delete(transactions: list[dict]) -> dict:
 
     return deltas
 
+
+def parse_transaction_debt_ids(txn: dict) -> list[str]:
+    """Ambil debt/hutang id dari kolom transactions.hutang_id, support comma-separated."""
+    raw = str(txn.get("hutang_id", "") or "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in re.split(r"[,;\s]+", raw) if part.strip()]
+
+
+def transaction_has_debt_relation(txn: dict) -> bool:
+    return bool(parse_transaction_debt_ids(txn)) or bool(str(txn.get("tipe_hutang", "") or "").strip())
+
+
 def preview_delete_transactions_by_refs(
     row_indices: list[int] | None = None,
     txn_ids: list[str] | None = None,
@@ -981,7 +1000,7 @@ def preview_delete_transactions_by_refs(
     deletable = []
 
     for txn in transactions:
-        if is_debt_cashflow_transaction(txn):
+        if is_debt_cashflow_transaction(txn) and not transaction_has_debt_relation(txn):
             blocked.append(txn)
         else:
             deletable.append(txn)
@@ -1014,7 +1033,7 @@ def preview_delete_transactions(txn_ids: list[str]) -> dict:
     deletable = []
 
     for txn in transactions:
-        if is_debt_cashflow_transaction(txn):
+        if is_debt_cashflow_transaction(txn) and not transaction_has_debt_relation(txn):
             blocked.append(txn)
         else:
             deletable.append(txn)
@@ -1081,6 +1100,39 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
             "new_balances": {},
         }
 
+    linked_debt_voided_ids = []
+    try:
+        from app.services.debt_service import void_debts_for_transaction
+
+        for txn in deletable:
+            txn_id = str(txn.get("id", "") or "").strip()
+            linked_ids = parse_transaction_debt_ids(txn)
+            if not txn_id and not linked_ids:
+                continue
+
+            linked_result = void_debts_for_transaction(txn_id, linked_ids)
+            if not linked_result.get("success"):
+                return {
+                    "success": False,
+                    "message": linked_result.get("message", "Gagal void debt terkait transaksi."),
+                    "deleted_count": 0,
+                    "deleted_ids": [],
+                    "blocked": blocked,
+                    "missing_ids": missing_ids,
+                    "new_balances": balance_result.get("new_balances", {}),
+                }
+            linked_debt_voided_ids.extend(linked_result.get("voided_ids", []))
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Gagal void debt terkait transaksi: {str(e)}",
+            "deleted_count": 0,
+            "deleted_ids": [],
+            "blocked": blocked,
+            "missing_ids": missing_ids,
+            "new_balances": balance_result.get("new_balances", {}),
+        }
+
     try:
         row_indices = [
             int(txn["_row_index"])
@@ -1117,6 +1169,7 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
         "blocked": blocked,
         "missing_ids": missing_ids,
         "new_balances": balance_result.get("new_balances", {}),
+        "linked_debts_voided": linked_debt_voided_ids,
     }
 
 def delete_transactions_by_refs(
@@ -1172,6 +1225,41 @@ def delete_transactions_by_refs(
             "new_balances": {},
         }
 
+    linked_debt_voided_ids = []
+    try:
+        from app.services.debt_service import void_debts_for_transaction
+
+        for txn in deletable:
+            txn_id = str(txn.get("id", "") or "").strip()
+            linked_ids = parse_transaction_debt_ids(txn)
+            if not txn_id and not linked_ids:
+                continue
+
+            linked_result = void_debts_for_transaction(txn_id, linked_ids)
+            if not linked_result.get("success"):
+                return {
+                    "success": False,
+                    "message": linked_result.get("message", "Gagal void debt terkait transaksi."),
+                    "deleted_count": 0,
+                    "deleted_ids": [],
+                    "blocked": blocked,
+                    "missing_ids": missing_ids,
+                    "missing_rows": missing_rows,
+                    "new_balances": balance_result.get("new_balances", {}),
+                }
+            linked_debt_voided_ids.extend(linked_result.get("voided_ids", []))
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Gagal void debt terkait transaksi: {str(e)}",
+            "deleted_count": 0,
+            "deleted_ids": [],
+            "blocked": blocked,
+            "missing_ids": missing_ids,
+            "missing_rows": missing_rows,
+            "new_balances": balance_result.get("new_balances", {}),
+        }
+
     try:
         delete_row_indices = [
             int(txn["_row_index"])
@@ -1210,6 +1298,7 @@ def delete_transactions_by_refs(
         "missing_ids": missing_ids,
         "missing_rows": missing_rows,
         "new_balances": balance_result.get("new_balances", {}),
+        "linked_debts_voided": linked_debt_voided_ids,
     }
 
 TRANSACTION_COLUMNS = [
@@ -1226,6 +1315,8 @@ TRANSACTION_COLUMNS = [
     "tipe_pengeluaran",
     "raw_input",
     "parsed_by",
+    "hutang_id",
+    "tipe_hutang",
 ]
 
 
@@ -1386,6 +1477,8 @@ def build_transaction_row_from_record(txn: dict) -> list:
         txn.get("tipe_pengeluaran", ""),
         txn.get("raw_input", ""),
         txn.get("parsed_by", ""),
+        txn.get("hutang_id", ""),
+        txn.get("tipe_hutang", ""),
     ]
 
 

@@ -528,6 +528,91 @@ def build_transaction_from_recurring_rule(rule: dict, run_date: str | None = Non
     }
 
 
+
+def mark_recurring_rule_paid(rule_id: str, run_date: date | None = None) -> dict:
+    """
+    Tandai recurring sudah dibayar untuk periode jatuh tempo saat ini.
+
+    Efek:
+    1. Buat transaksi dari rule recurring.
+    2. Update next_run_date ke periode berikutnya.
+    3. Catat recurring_logs.
+    """
+    rule = get_recurring_rule_by_id(rule_id)
+    if not rule:
+        return {
+            "success": False,
+            "message": "Recurring rule tidak ditemukan.",
+            "transaction_id": None,
+            "next_run_date": None,
+            "rule": None,
+        }
+
+    if str(rule.get("is_active", "")).strip().upper() != "TRUE":
+        return {
+            "success": False,
+            "message": "Recurring rule sudah nonaktif.",
+            "transaction_id": None,
+            "next_run_date": rule.get("next_run_date"),
+            "rule": rule,
+        }
+
+    target = run_date or datetime.now().date()
+    run_date_str = target.strftime("%Y-%m-%d")
+
+    try:
+        parsed_txn = build_transaction_from_recurring_rule(rule, run_date=run_date_str)
+        transaction_result = save_transaction(
+            parsed_txn,
+            raw_input=parsed_txn.get("raw_input") or f"recurring:{rule_id}",
+        )
+
+        if not transaction_result.get("success"):
+            raise RuntimeError(transaction_result.get("message", "Gagal membuat transaksi recurring."))
+
+        transaction_id = transaction_result.get("transaction_id")
+        next_run_date = calculate_next_run_after_execution(rule, target)
+
+        update_recurring_rule_cells(
+            rule_id,
+            {
+                "next_run_date": next_run_date,
+                "updated_at": now_str(),
+            },
+        )
+
+        log_recurring_run(
+            rule_id=rule_id,
+            transaction_id=transaction_id,
+            run_date=run_date_str,
+            status="paid",
+            message=f"Recurring marked paid. Next run: {next_run_date}",
+        )
+
+        return {
+            "success": True,
+            "message": "ok",
+            "transaction_id": transaction_id,
+            "next_run_date": next_run_date,
+            "rule": rule,
+        }
+    except Exception as e:
+        log_recurring_run(
+            rule_id=rule_id,
+            transaction_id="",
+            run_date=run_date_str,
+            status="failed",
+            message=str(e),
+        )
+        return {
+            "success": False,
+            "message": str(e),
+            "transaction_id": None,
+            "next_run_date": rule.get("next_run_date"),
+            "rule": rule,
+        }
+
+
 def process_due_recurring_rules(target_date: date | None = None) -> dict:
     target = target_date or datetime.now().date()
     run_date = target.strftime("%Y-%m-%d")
@@ -546,7 +631,15 @@ def process_due_recurring_rules(target_date: date | None = None) -> dict:
 
         try:
             parsed_txn = build_transaction_from_recurring_rule(rule, run_date=run_date)
-            transaction_id = save_transaction(parsed_txn)
+            transaction_result = save_transaction(
+                parsed_txn,
+                raw_input=parsed_txn.get("raw_input") or f"recurring:{rule_id}",
+            )
+
+            if not transaction_result.get("success"):
+                raise RuntimeError(transaction_result.get("message", "Gagal membuat transaksi recurring."))
+
+            transaction_id = transaction_result.get("transaction_id")
 
             next_run_date = calculate_next_run_after_execution(rule, target)
 

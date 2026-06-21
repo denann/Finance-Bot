@@ -9,19 +9,35 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = (
-        "👋 Halo! Saya bot pencatat keuangan pribadi Anda.\n\n"
-        "Bisa catat transaksi lewat teks atau foto struk:\n"
+        "👋 Halo! Saya Finance Bot pribadi Anda.\n\n"
+        "Saya bisa bantu mencatat, mengoreksi, dan menganalisis keuangan dari Google Sheets.\n\n"
+
+        "🧾 *Catat transaksi*\n"
         "• `beli kopi 25rb`\n"
         "• `gaji masuk 8 juta`\n"
-        "• `Budi minjem 300k`\n"
+        "• `transfer GoPay 200rb dari BRI`\n"
         "• kirim foto struk / QRIS\n\n"
-        "Command utama:\n"
-        "`/saldo`, `/last`, `/budget`, `/hutang`, `/assets`, `/networth`\n\n"
-        "Analisis Gemini:\n"
-        "`/insight` — insight bulanan\n"
-        "`/ask bulan ini boros di mana?` — tanya data finance\n"
-        "`/audit` — cek data/anomali\n"
-        "`/coach` — saran finansial ringan\n\n"
+
+        "🤝 *Utang, piutang, split bill*\n"
+        "• `Budi minjem 300k`\n"
+        "• `saya talangin Sapto beli nasi kuning 12k`\n"
+        "• `saya ditalangin Alpat beli nasi uduk 10k`\n"
+        "• `nasi goreng 30k bagi 3 sama Akmal Sapto`\n\n"
+
+        "📊 *Laporan & koreksi data*\n"
+        "`/saldo`, `/harian`, `/mingguan`, `/bulanan`, `/last`, `/cari`\n"
+        "`/edit_txn`, `/delete_txn`, `/download_data`\n\n"
+
+        "🔁 *Budget & transaksi rutin*\n"
+        "`/budget`, `/budget_history`, `/recurring`\n"
+        "Recurring akan muncul sebagai reminder dengan tombol `Sudah bayar`.\n\n"
+
+        "💼 *Net worth*\n"
+        "`/assets`, `/liabilities`, `/networth`, `/networth_snapshot`\n\n"
+
+        "🤖 *Analisis Gemini / RAG Finance*\n"
+        "`/insight`, `/ask`, `/audit`, `/coach`\n\n"
+
         "Ketik `/help` untuk panduan lengkap."
     )
 
@@ -61,6 +77,9 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`Budi minjem 300rb`\n"
         "`Budi bayar 100rb`\n"
         "`bayar hutang Budi 100rb`\n"
+        "`saya talangin Sapto beli nasi kuning 12k` — uang Anda keluar, jadi piutang Sapto\n"
+        "`saya ditalangin Alpat beli nasi uduk 10k` — dicatat utang tanpa cashflow\n"
+        "`saya nitip Sapto beli nasi kuning 12k` — sama seperti ditalangin, tidak tanya rekening\n"
         "`/debt_void 1` — batalkan debt salah input dari hasil `/hutang`\n"
         "`/debt_edit 1 nominal 100k` — edit nominal utang/piutang\n"
         "`/debt_edit 1 nama Budi` — edit nama orang\n"
@@ -100,6 +119,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*9. Lihat & Koreksi Transaksi*\n"
         "`/last` — lihat 10 transaksi terakhir, urut tanggal terbaru\n"
         "`/last 20` — lihat 20 transaksi terakhir\n"
+        "`/transaksi` — alias untuk melihat transaksi terakhir\n"
         "`/last today`, `/last week`, `/last month`, `/last 2026-06`\n"
         "`/delete_txn 1`, `/delete_txn 1 3 5`, `/delete_txn 1-4`\n"
         "`/edit_txn 2 amount=15000`\n"
@@ -111,6 +131,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/recurring` — lihat transaksi rutin\n"
         "`/recurring_add Netflix | expense | 65000 | Entertainment | DANA | monthly | 5 | Langganan Netflix`\n"
         "`/recurring_run`, `/recurring_edit ...`, `/recurring_off ...`\n"
+        "Reminder otomatis akan menampilkan tombol `Sudah bayar`; klik tombol itu untuk mencatat transaksi dan menghentikan notifikasi sampai periode berikutnya.\n"
         "`/health` — cek status bot, env, Google Sheets, dan sheet utama\n\n"
 
         "*11. Net Worth, Aset, Liabilitas*\n"
@@ -125,6 +146,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/asset_off asset_id`\n"
         "`/liability_add Paylater | 1200000 | Paylater | Cicilan aktif`\n"
         "`/liability_update liab_id | balance=500000`\n"
+        "`/liability_off liab_id` — nonaktifkan liabilitas yang sudah lunas/tidak dipakai\n"
         "`/networth_snapshot`, `/networth_history`\n\n"
 
         "*12. Input Gambar / Struk*\n"
@@ -153,7 +175,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*Catatan penting:*\n"
         "• Fitur inti mengubah data, fitur Gemini/RAG hanya membaca dan memberi insight.\n"
         "• Untuk `/delete_txn` dan `/edit_txn`, jalankan `/last` dulu.\n"
-        "• Transaksi debt cashflow tidak dihapus dari `/delete_txn`; gunakan `/debt_void` agar konsisten.\n"
+        "• Jika transaksi punya `hutang_id`, `/delete_txn` akan mencoba void debt terkait secara otomatis.\n"
         "• Data yang dikirim ke Gemini adalah ringkasan relevan, bukan seluruh spreadsheet mentah."
     )
 
@@ -1122,10 +1144,15 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "debt_id": d.get("id"),
                 "row_index": d.get("_row_index"),
             }
+            desc = str(d.get("description") or "").strip()
+            desc_line = f"\n     📝 {md_safe(desc[:70])}" if desc else ""
+            debt_id_short = str(d.get("id") or "")[-8:]
             lines.append(
                 f"  {display_no}. {md_safe(d.get('person_name'))} — "
                 f"*{format_rupiah(float(d.get('remaining_amount', 0) or 0))}*"
                 f"{due}"
+                f" | ID: `{md_safe(debt_id_short)}`"
+                f"{desc_line}"
             )
             display_no += 1
 
@@ -1141,9 +1168,14 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "debt_id": d.get("id"),
                 "row_index": d.get("_row_index"),
             }
+            desc = str(d.get("description") or "").strip()
+            desc_line = f"\n     📝 {md_safe(desc[:70])}" if desc else ""
+            debt_id_short = str(d.get("id") or "")[-8:]
             lines.append(
                 f"  {display_no}. {md_safe(d.get('person_name'))} — "
                 f"*{format_rupiah(float(d.get('remaining_amount', 0) or 0))}*"
+                f" | ID: `{md_safe(debt_id_short)}`"
+                f"{desc_line}"
             )
             display_no += 1
 

@@ -1,7 +1,7 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from app.config import TELEGRAM_BOT_TOKEN, ALLOWED_USER_ID
 from app.services.report_service import (
     get_daily_report,
@@ -12,64 +12,71 @@ from app.services.report_service import (
 from app.bot.handlers import build_progress_bar
 from app.services.budget_service import get_budget_summary
 from app.services.debt_service import get_active_debts
-from app.services.recurring_service import process_due_recurring_rules
+from app.services.recurring_service import get_due_recurring_rules
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 async def job_recurring_run():
     """
-    Jalankan recurring transaction otomatis setiap pagi.
+    Kirim reminder recurring yang jatuh tempo.
+
+    Bot tidak langsung membuat transaksi. User klik tombol "Sudah bayar"
+    untuk mencatat transaksi dan menggeser next_run_date ke bulan berikutnya.
+    Jika belum bayar, abaikan; karena next_run_date masih jatuh tempo, bot akan
+    mengingatkan lagi pada run berikutnya.
     """
     try:
-        result = process_due_recurring_rules()
+        due_rules = get_due_recurring_rules()
 
-        count_due = result.get("count_due", 0)
-        success = result.get("success", [])
-        failed = result.get("failed", [])
-
-        # Kalau tidak ada yang jatuh tempo, tidak perlu spam notif.
-        if count_due == 0:
+        if not due_rules:
             return
 
+        today = datetime.now().strftime("%Y-%m-%d")
         lines = [
-            "🔁 *Recurring Transaction Otomatis*\n",
-            f"📅 Tanggal run: `{result.get('run_date')}`",
-            f"📌 Rule jatuh tempo: *{count_due}*",
+            "🔁 Recurring Transaction Reminder\n",
+            f"📅 Tanggal cek: {today}",
+            f"📌 Rule jatuh tempo: {len(due_rules)}",
+            "",
+            "Sudah bayar belum? Kalau sudah, klik tombol di bawah. Kalau belum, abaikan dulu dan saya ingatkan lagi besok.",
+            "",
         ]
 
-        if success:
-            lines.append("\n✅ *Berhasil dibuat:*")
+        keyboard = []
+        for rule in due_rules:
+            name = str(rule.get("name") or "-").strip()
+            amount = format_rupiah(float(rule.get("amount", 0) or 0))
+            account = str(rule.get("account") or "-").strip()
+            lines.append(f"• {name} — {amount} dari {account}")
 
-            for item in success:
-                rule = item.get("rule", {})
-                lines.append(
-                    f"• {rule.get('name', '-')}: "
-                    f"{format_rupiah(float(rule.get('amount', 0) or 0))} "
-                    f"→ next `{item.get('next_run_date', '-')}`"
-                )
+            rule_id = str(rule.get("id") or "").strip()
+            if rule_id:
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"✅ Sudah bayar: {name[:24]}",
+                        callback_data=f"recurring_paid:{rule_id}",
+                    )
+                ])
 
-        if failed:
-            lines.append("\n❌ *Gagal:*")
-
-            for item in failed:
-                rule = item.get("rule", {})
-                lines.append(
-                    f"• {rule.get('name', '-')} — {item.get('message', '-')}"
-                )
-
-        await send_message("\n".join(lines))
+        await send_message(
+            "\n".join(lines),
+            parse_mode=None,
+            reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None,
+        )
 
     except Exception as e:
         await send_message(
-            f"❌ Gagal menjalankan recurring otomatis:\n`{str(e)}`"
+            f"❌ Gagal menjalankan recurring reminder:\n{str(e)}",
+            parse_mode=None,
         )
     
-async def send_message(text: str):
+
+async def send_message(text: str, parse_mode: str | None = "Markdown", reply_markup=None):
     """Kirim pesan ke user via bot."""
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     await bot.send_message(
         chat_id=ALLOWED_USER_ID,
         text=text,
-        parse_mode="Markdown"
+        parse_mode=parse_mode,
+        reply_markup=reply_markup,
     )
 
 

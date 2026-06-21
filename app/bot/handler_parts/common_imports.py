@@ -97,6 +97,7 @@ from app.nlp.gemini_finance_insight import generate_finance_insight
 from app.services.debt_service import (
     add_debt,
     add_payment,
+    add_payment_by_person,
     get_debt_summary,
     get_debt_by_person,
     preview_void_debt,
@@ -110,6 +111,7 @@ from app.services.recurring_service import (
     get_recurring_rules,
     disable_recurring_rule,
     process_due_recurring_rules,
+    mark_recurring_rule_paid,
     edit_recurring_rule,
 )
 
