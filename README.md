@@ -645,3 +645,9 @@ Efek:
 - Debt ledger Akmal berubah.
 - Tidak ada rekening yang berubah.
 - Row `transactions` tetap dibuat dengan `type = debt_offset` dan `account = Debt Offset`.
+
+## Update V15 — Session History untuk `/ask`
+
+Fitur `/ask`, pertanyaan finance natural, dan `/coach` sekarang memakai session history terbatas dari `context.user_data["finance_chat_history"]`. History ini membantu bot memahami pertanyaan lanjutan seperti "yang tadi" atau "yang food itu transaksi apa aja?" tanpa membuat sheet baru.
+
+Catatan: session history tidak persistent dan akan hilang jika bot restart/redeploy. Data angka utama tetap diambil dari Google Sheets, bukan dari chat history.

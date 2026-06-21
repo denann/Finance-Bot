@@ -217,10 +217,55 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Fitur inti mengubah data, fitur Gemini/RAG hanya membaca dan memberi insight.\n"
         "• Sheet `transactions` dipakai sebagai fact table utama, termasuk debt-only dan debt offset.\n"
         "• Untuk `/delete_txn` dan `/edit_txn`, jalankan `/last` dulu.\n"
-        "• Data yang dikirim ke Gemini adalah ringkasan relevan, bukan seluruh spreadsheet mentah."
+        "• Data yang dikirim ke Gemini adalah ringkasan relevan, bukan seluruh spreadsheet mentah.\n"
+        "• `/ask` memakai session history terbatas agar paham pertanyaan lanjutan; history hilang jika bot restart."
     )
 
     await reply_long_markdown(update, text)
+
+
+def add_session_chat_history(context: ContextTypes.DEFAULT_TYPE, role: str, text: str, limit: int = 10):
+    """Simpan riwayat tanya-jawab finance di session Telegram user.
+
+    Catatan:
+    - Tidak persistent; hilang jika bot restart/redeploy.
+    - Dipakai hanya sebagai konteks percakapan untuk /ask/natural finance question.
+    - Angka faktual tetap harus berasal dari context Google Sheets, bukan dari history.
+    """
+    if context is None:
+        return
+
+    clean_text = str(text or "").strip()
+    if not clean_text:
+        return
+
+    history = context.user_data.get("finance_chat_history", [])
+    history.append({
+        "role": str(role or "user"),
+        "text": clean_text[:1200],
+    })
+    context.user_data["finance_chat_history"] = history[-limit:]
+
+
+def get_session_chat_history(context: ContextTypes.DEFAULT_TYPE, limit: int = 8) -> list[dict]:
+    """Ambil beberapa pesan terakhir untuk membantu /ask memahami konteks lanjutan."""
+    if context is None:
+        return []
+    history = context.user_data.get("finance_chat_history", [])
+    return history[-limit:]
+
+
+def attach_session_history(context: ContextTypes.DEFAULT_TYPE, context_data: dict) -> dict:
+    """Tambahkan chat history session ke context JSON yang dikirim ke Gemini."""
+    data = dict(context_data or {})
+    history = get_session_chat_history(context)
+    if history:
+        data["chat_history"] = history
+        data["chat_history_note"] = (
+            "Riwayat ini hanya untuk memahami konteks pertanyaan lanjutan. "
+            "Jangan jadikan chat_history sebagai sumber angka utama; angka faktual harus dari monthly_context/relevant_transactions."
+        )
+    return data
 
 
 async def send_finance_insight_reply(
@@ -229,9 +274,16 @@ async def send_finance_insight_reply(
     context_data: dict,
     question: str = "",
     prefix: str = "🤖 Insight Gemini",
+    context: ContextTypes.DEFAULT_TYPE | None = None,
+    remember_history: bool = False,
 ):
     await update.message.reply_text("⏳ Mengambil data dan membuat insight...")
     answer = generate_finance_insight(mode, context_data, question=question)
+
+    if remember_history and context is not None:
+        add_session_chat_history(context, "user", question)
+        add_session_chat_history(context, "assistant", answer)
+
     await update.message.reply_text(f"{prefix}\n\n{answer}")
 
 
@@ -297,7 +349,16 @@ async def ask_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         data = build_ask_finance_context(question)
 
-    await send_finance_insight_reply(update, mode, data, question=question, prefix="💬 Jawaban Finance")
+    data = attach_session_history(context, data)
+    await send_finance_insight_reply(
+        update,
+        mode,
+        data,
+        question=question,
+        prefix="💬 Jawaban Finance",
+        context=context,
+        remember_history=True,
+    )
 
 
 async def coach_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -308,7 +369,16 @@ async def coach_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     question = " ".join(context.args).strip() if context.args else "Kasih saran finansial ringan untuk bulan ini."
     data = build_coach_context(None, question=question)
-    await send_finance_insight_reply(update, "coach", data, question=question, prefix="🧭 Finance Coach")
+    data = attach_session_history(context, data)
+    await send_finance_insight_reply(
+        update,
+        "coach",
+        data,
+        question=question,
+        prefix="🧭 Finance Coach",
+        context=context,
+        remember_history=True,
+    )
 
 
 async def handle_natural_finance_question(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
@@ -324,7 +394,16 @@ async def handle_natural_finance_question(update: Update, context: ContextTypes.
     else:
         data = build_ask_finance_context(user_text)
 
-    await send_finance_insight_reply(update, mode, data, question=user_text, prefix="🤖 Analisis Finance")
+    data = attach_session_history(context, data)
+    await send_finance_insight_reply(
+        update,
+        mode,
+        data,
+        question=user_text,
+        prefix="🤖 Analisis Finance",
+        context=context,
+        remember_history=True,
+    )
     return True
 
 
@@ -1190,7 +1269,7 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             debt_id_short = str(d.get("id") or "")[-8:]
             lines.append(
                 f"  {display_no}. {md_safe(d.get('person_name'))} — "
-                f"*{format_rupiah(float(d.get('remaining_amount', 0) or 0))}*"
+                f"*{format_rupiah(d.get('remaining_amount', 0))}*"
                 f"{due}"
                 f" | ID: `{md_safe(debt_id_short)}`"
                 f"{desc_line}"
@@ -1214,7 +1293,7 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             debt_id_short = str(d.get("id") or "")[-8:]
             lines.append(
                 f"  {display_no}. {md_safe(d.get('person_name'))} — "
-                f"*{format_rupiah(float(d.get('remaining_amount', 0) or 0))}*"
+                f"*{format_rupiah(d.get('remaining_amount', 0))}*"
                 f" | ID: `{md_safe(debt_id_short)}`"
                 f"{desc_line}"
             )

@@ -51,6 +51,7 @@ Aturan wajib:
 6. Jangan gunakan markdown table karena Telegram kurang nyaman.
 7. Hindari karakter markdown kompleks seperti underscore berlebihan.
 8. {length_rule}
+9. Jika `chat_history` tersedia, gunakan hanya untuk memahami konteks pertanyaan lanjutan seperti "itu", "yang tadi", atau "yang food". Jangan mengambil nominal/fakta utama dari chat_history jika tidak didukung konteks transaksi/ringkasan.
 
 Konteks JSON:
 {_json_dumps(context)}

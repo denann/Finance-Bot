@@ -10,8 +10,57 @@ from app.config import SHEET_DEBTS, SHEET_DEBT_PAYMENTS
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def parse_sheet_number(value, default: float = 0.0) -> float:
+    """Parse angka dari Google Sheets dengan aman.
+
+    Mendukung:
+    - 71387.5  (UNFORMATTED_VALUE)
+    - "71387,5" (format locale Indonesia)
+    - "71.387,5"
+    - "713,875" dari numericise lama akan tetap dibaca apa adanya jika sudah numeric,
+      jadi fix utama tetap ada di app/sheets/client.py.
+    """
+    if value is None or value == "":
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    raw = str(value).strip()
+    if not raw:
+        return default
+
+    raw = raw.replace("Rp", "").replace("rp", "").replace("IDR", "").replace("idr", "")
+    raw = raw.replace(" ", "")
+
+    if "," in raw and "." in raw:
+        # Format Indonesia: 71.387,5
+        raw = raw.replace(".", "").replace(",", ".")
+    elif "," in raw:
+        # Format Indonesia tanpa ribuan: 71387,5
+        raw = raw.replace(",", ".")
+    else:
+        # Format ribuan biasa: 71.387
+        parts = raw.split(".")
+        if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):
+            raw = raw.replace(".", "")
+
+    try:
+        return float(raw)
+    except Exception:
+        return default
+
+
 def format_rupiah(amount: float) -> str:
-    return f"Rp{int(amount):,}".replace(",", ".")
+    """Format rupiah tanpa menghilangkan pecahan split bill."""
+    value = float(amount or 0)
+    if abs(value - round(value)) < 1e-9:
+        return f"Rp{int(round(value)):,}".replace(",", ".")
+
+    sign = "-" if value < 0 else ""
+    value = abs(value)
+    integer_part = int(value)
+    decimal_part = (f"{value:.2f}".split(".", 1)[1]).rstrip("0")
+    return f"Rp{sign}{integer_part:,}".replace(",", ".") + f",{decimal_part}"
 
 
 def generate_debt_id() -> str:
@@ -263,8 +312,8 @@ def add_debt(
     # ── Ada debt aktif, lakukan netting ───────────────────────────────────────
     debt_id = existing.get("id")
     existing_type = existing.get("type")
-    existing_remaining = float(existing.get("remaining_amount", 0) or 0)
-    existing_original = float(existing.get("original_amount", 0) or 0)
+    existing_remaining = parse_sheet_number(existing.get("remaining_amount", 0))
+    existing_original = parse_sheet_number(existing.get("original_amount", 0))
     existing_description = existing.get("description", "") or ""
 
     try:
@@ -407,12 +456,12 @@ def add_payment(debt_id: str, amount: float, note: str = "") -> dict:
     if amount <= 0:
         return {
             "success": False,
-            "remaining": float(debt_record.get("remaining_amount", 0) or 0),
+            "remaining": parse_sheet_number(debt_record.get("remaining_amount", 0)),
             "is_settled": False,
             "message": "Nominal pembayaran tidak valid.",
         }
 
-    current_remaining = float(debt_record.get("remaining_amount", 0) or 0)
+    current_remaining = parse_sheet_number(debt_record.get("remaining_amount", 0))
     new_remaining = max(0, current_remaining - amount)
     is_settled = new_remaining == 0
 
@@ -506,7 +555,7 @@ def add_payment_by_person(person_name: str, amount: float, note: str = "") -> di
                 f"Ada utang dan piutang aktif sekaligus dengan {person_name}. "
                 "Gunakan /hutang lalu bayar/void debt yang spesifik dulu agar tidak salah arah."
             ),
-            "remaining": sum(float(d.get("remaining_amount", 0) or 0) for d in debts),
+            "remaining": sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in debts),
             "is_settled": False,
             "allocations": [],
         }
@@ -520,7 +569,7 @@ def add_payment_by_person(person_name: str, amount: float, note: str = "") -> di
             break
 
         debt_id = str(debt.get("id", "")).strip()
-        debt_remaining = float(debt.get("remaining_amount", 0) or 0)
+        debt_remaining = parse_sheet_number(debt.get("remaining_amount", 0))
         if not debt_id or debt_remaining <= 0:
             continue
 
@@ -530,7 +579,7 @@ def add_payment_by_person(person_name: str, amount: float, note: str = "") -> di
             return {
                 "success": False,
                 "message": result.get("message", "Gagal alokasi pembayaran."),
-                "remaining": sum(float(d.get("remaining_amount", 0) or 0) for d in get_debt_by_person(person_name)),
+                "remaining": sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in get_debt_by_person(person_name)),
                 "is_settled": False,
                 "allocations": allocations,
             }
@@ -543,7 +592,7 @@ def add_payment_by_person(person_name: str, amount: float, note: str = "") -> di
         remaining_payment -= pay_amount
 
     active_after = get_debt_by_person(person_name)
-    total_remaining = sum(float(d.get("remaining_amount", 0) or 0) for d in active_after)
+    total_remaining = sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in active_after)
 
     return {
         "success": True,
@@ -612,7 +661,7 @@ def offset_debt_by_person(
     debts = [
         d for d in get_debt_by_person(person_name)
         if str(d.get("type", "")).strip() == target_debt_type
-        and float(d.get("remaining_amount", 0) or 0) > 0
+        and parse_sheet_number(d.get("remaining_amount", 0)) > 0
     ]
 
     if not debts:
@@ -637,7 +686,7 @@ def offset_debt_by_person(
 
             debt_id = str(debt.get("id", "")).strip()
             row_index = int(debt.get("_row_index"))
-            current_remaining = float(debt.get("remaining_amount", 0) or 0)
+            current_remaining = parse_sheet_number(debt.get("remaining_amount", 0))
             if not debt_id or current_remaining <= 0:
                 continue
 
@@ -691,8 +740,8 @@ def offset_debt_by_person(
                 affected_debt_ids.append(created_debt_id)
 
         active_after = get_debt_by_person(person_name)
-        total_payable = sum(float(d.get("remaining_amount", 0) or 0) for d in active_after if d.get("type") == "payable")
-        total_receivable = sum(float(d.get("remaining_amount", 0) or 0) for d in active_after if d.get("type") == "receivable")
+        total_payable = sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in active_after if d.get("type") == "payable")
+        total_receivable = sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in active_after if d.get("type") == "receivable")
 
         return {
             "success": True,
@@ -732,8 +781,8 @@ def get_debt_summary() -> dict:
     payables = [r for r in all_active if r.get("type") == "payable"]
     receivables = [r for r in all_active if r.get("type") == "receivable"]
 
-    total_payable = sum(float(r.get("remaining_amount", 0) or 0) for r in payables)
-    total_receivable = sum(float(r.get("remaining_amount", 0) or 0) for r in receivables)
+    total_payable = sum(parse_sheet_number(r.get("remaining_amount", 0)) for r in payables)
+    total_receivable = sum(parse_sheet_number(r.get("remaining_amount", 0)) for r in receivables)
 
     return {
         "total_payable": total_payable,
@@ -878,7 +927,7 @@ def find_debt_initial_cashflow_candidates(debt: dict) -> list[dict]:
     )
 
     person = normalize_person_name(debt.get("person_name", ""))
-    amount = float(debt.get("original_amount", 0) or 0)
+    amount = parse_sheet_number(debt.get("original_amount", 0))
     category = expected_initial_cashflow_category(debt)
     debt_id = str(debt.get("id", "")).strip()
 
@@ -890,7 +939,7 @@ def find_debt_initial_cashflow_candidates(debt: dict) -> list[dict]:
 
         txn_category = str(txn.get("category", "")).strip()
         txn_subject = normalize_person_name(txn.get("subject", ""))
-        txn_amount = float(txn.get("amount", 0) or 0)
+        txn_amount = parse_sheet_number(txn.get("amount", 0))
         txn_notes = str(txn.get("catatan", "") or "")
         txn_raw = str(txn.get("raw_input", "") or "")
 
@@ -1004,8 +1053,8 @@ def void_linked_debt_only(debt_id: str, reason: str = "Transaksi sumber dihapus"
     if is_settled_value(debt.get("is_settled", "FALSE")):
         return {"success": True, "message": "Debt sudah settled.", "debt_id": debt_id, "skipped": True}
 
-    original = float(debt.get("original_amount", 0) or 0)
-    remaining = float(debt.get("remaining_amount", 0) or 0)
+    original = parse_sheet_number(debt.get("original_amount", 0))
+    remaining = parse_sheet_number(debt.get("remaining_amount", 0))
     if abs(original - remaining) > 0.0001:
         return {
             "success": False,
@@ -1073,8 +1122,8 @@ def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
             "reverse_deltas": {},
         }
 
-    original = float(debt.get("original_amount", 0) or 0)
-    remaining = float(debt.get("remaining_amount", 0) or 0)
+    original = parse_sheet_number(debt.get("original_amount", 0))
+    remaining = parse_sheet_number(debt.get("remaining_amount", 0))
 
     if abs(original - remaining) > 0.0001:
         return {
@@ -1214,8 +1263,8 @@ def update_debt(debt_ref: str, updates: dict, last_debt_map: dict | None = None)
             if new_amount <= 0:
                 return {"success": False, "message": "Nominal debt tidak valid.", "debt": debt}
 
-            original = float(debt.get("original_amount", 0) or 0)
-            remaining = float(debt.get("remaining_amount", 0) or 0)
+            original = parse_sheet_number(debt.get("original_amount", 0))
+            remaining = parse_sheet_number(debt.get("remaining_amount", 0))
             if abs(original - remaining) > 0.0001:
                 return {
                     "success": False,
@@ -1317,7 +1366,7 @@ def void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
 
         append_debt_mutation(
             debt_id=debt.get("id"),
-            amount=float(debt.get("original_amount", 0) or 0),
+            amount=parse_sheet_number(debt.get("original_amount", 0)),
             note=void_note,
             mutation_type="void",
         )

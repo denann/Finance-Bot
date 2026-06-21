@@ -55,9 +55,14 @@ def append_rows(sheet_name: str, rows: list[list]):
 
 
 def get_all_records(sheet_name: str) -> list[dict]:
-    """Ambil semua data sebagai list of dict (header = key)."""
+    """Ambil semua data sebagai list of dict (header = key).
+
+    Gunakan UNFORMATTED_VALUE supaya angka decimal dari locale Indonesia
+    tidak salah dibaca oleh gspread. Contoh nilai sheet 71387,5
+    harus terbaca 71387.5, bukan 713875.
+    """
     sheet = get_sheet(sheet_name)
-    return sheet.get_all_records()
+    return sheet.get_all_records(value_render_option="UNFORMATTED_VALUE")
 
 
 def update_cell(sheet_name: str, row: int, col: int, value):
