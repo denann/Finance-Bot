@@ -81,6 +81,33 @@ def normalize_person_name(name: str) -> str:
     return " ".join(str(name).strip().split()).title()
 
 
+def normalize_debt_person_group_name(name: str) -> str:
+    """
+    Normalisasi nama untuk tampilan agregat debt.
+
+    Data lama kadang menyimpan account sebagai bagian dari nama, misalnya
+    "Cash Annisa". Untuk /hutang utama, itu harus digabung ke "Annisa"
+    agar ringkasan tetap per orang, bukan per account+orang.
+    """
+    person = normalize_person_name(name)
+    if not person:
+        return ""
+
+    prefixes = [
+        "Cash", "BRI", "BSI", "BCA", "DANA", "GoPay",
+        "Seabank", "Sea Bank",
+    ]
+    lower_person = person.lower()
+
+    for prefix in prefixes:
+        prefix_lower = prefix.lower() + " "
+        if lower_person.startswith(prefix_lower):
+            stripped = person[len(prefix):].strip()
+            return normalize_person_name(stripped) or person
+
+    return person
+
+
 def is_settled_value(value) -> bool:
     return str(value).strip().upper() == "TRUE"
 
@@ -505,16 +532,19 @@ def add_payment(debt_id: str, amount: float, note: str = "") -> dict:
 
 
 
-def add_payment_by_person(person_name: str, amount: float, note: str = "") -> dict:
+def add_payment_by_person(
+    person_name: str,
+    amount: float,
+    note: str = "",
+    target_debt_type: str | None = None,
+) -> dict:
     """
     Alokasikan pembayaran ke semua debt aktif milik seseorang secara FIFO.
 
-    Dipakai untuk input natural seperti:
-    - "Akmal bayar hutang 20k"
-    - "bayar hutang Akmal 20k"
-
-    Jika orang punya beberapa debt granular, nominal pembayaran akan mengurangi
-    debt paling lama dulu sampai nominal habis.
+    target_debt_type:
+    - receivable: orang tersebut membayar piutang ke user. Contoh: "Sapto bayar 5k".
+    - payable: user membayar utang ke orang tersebut. Contoh: "saya bayar hutang Sapto 5k".
+    - auto/None: pilih arah net terbesar agar tidak gagal saat orang punya dua arah debt.
     """
     person_name = normalize_person_name(person_name)
     amount = float(amount or 0)
@@ -548,13 +578,51 @@ def add_payment_by_person(person_name: str, amount: float, note: str = "") -> di
         }
 
     debt_types = {str(d.get("type", "")).strip() for d in debts if str(d.get("type", "")).strip()}
-    if len(debt_types) > 1:
+    target_debt_type = str(target_debt_type or "").strip().lower()
+    if target_debt_type == "auto":
+        target_debt_type = ""
+
+    if target_debt_type not in {"payable", "receivable"}:
+        # Kalau orang punya dua arah sekaligus, jangan stop. Pakai arah net terbesar.
+        total_payable = sum(
+            parse_sheet_number(d.get("remaining_amount", 0))
+            for d in debts
+            if str(d.get("type", "")).strip() == "payable"
+        )
+        total_receivable = sum(
+            parse_sheet_number(d.get("remaining_amount", 0))
+            for d in debts
+            if str(d.get("type", "")).strip() == "receivable"
+        )
+
+        if total_receivable > total_payable:
+            target_debt_type = "receivable"
+        elif total_payable > total_receivable:
+            target_debt_type = "payable"
+        elif len(debt_types) == 1:
+            target_debt_type = next(iter(debt_types))
+        else:
+            return {
+                "success": False,
+                "message": (
+                    f"Saldo utang dan piutang dengan {person_name} sama besar. "
+                    "Pakai input yang lebih spesifik: 'Sapto bayar 10k' untuk piutang, "
+                    "atau 'saya bayar hutang Sapto 10k' untuk utang Anda."
+                ),
+                "remaining": sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in debts),
+                "is_settled": False,
+                "allocations": [],
+            }
+
+    target_debts = [
+        d for d in debts
+        if str(d.get("type", "")).strip() == target_debt_type
+    ]
+    if not target_debts:
+        label = "utang" if target_debt_type == "payable" else "piutang"
         return {
             "success": False,
-            "message": (
-                f"Ada utang dan piutang aktif sekaligus dengan {person_name}. "
-                "Gunakan /hutang lalu bayar/void debt yang spesifik dulu agar tidak salah arah."
-            ),
+            "message": f"Tidak ada {label} aktif dengan {person_name}.",
             "remaining": sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in debts),
             "is_settled": False,
             "allocations": [],
@@ -563,8 +631,8 @@ def add_payment_by_person(person_name: str, amount: float, note: str = "") -> di
     remaining_payment = amount
     allocations = []
 
-    # FIFO berdasarkan row sheet/created_at.
-    for debt in sorted(debts, key=lambda d: int(d.get("_row_index", 10**9) or 10**9)):
+    # FIFO berdasarkan row sheet/created_at pada arah debt yang dipilih.
+    for debt in sorted(target_debts, key=lambda d: int(d.get("_row_index", 10**9) or 10**9)):
         if remaining_payment <= 0:
             break
 
@@ -588,22 +656,40 @@ def add_payment_by_person(person_name: str, amount: float, note: str = "") -> di
             "debt_id": debt_id,
             "amount": pay_amount,
             "description": debt.get("description", ""),
+            "type": target_debt_type,
         })
         remaining_payment -= pay_amount
 
     active_after = get_debt_by_person(person_name)
-    total_remaining = sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in active_after)
+    remaining_same_type = sum(
+        parse_sheet_number(d.get("remaining_amount", 0))
+        for d in active_after
+        if str(d.get("type", "")).strip() == target_debt_type
+    )
+    total_payable = sum(
+        parse_sheet_number(d.get("remaining_amount", 0))
+        for d in active_after
+        if str(d.get("type", "")).strip() == "payable"
+    )
+    total_receivable = sum(
+        parse_sheet_number(d.get("remaining_amount", 0))
+        for d in active_after
+        if str(d.get("type", "")).strip() == "receivable"
+    )
+    net_remaining = total_receivable - total_payable
 
     return {
         "success": True,
         "message": "ok" if remaining_payment <= 0 else f"Pembayaran melebihi saldo aktif sebesar {format_rupiah(remaining_payment)}.",
-        "remaining": total_remaining,
-        "is_settled": total_remaining <= 0,
+        "remaining": remaining_same_type,
+        "remaining_payable": total_payable,
+        "remaining_receivable": total_receivable,
+        "net_remaining": net_remaining,
+        "is_settled": remaining_same_type <= 0,
         "allocations": allocations,
         "overpayment": max(0, remaining_payment),
-        "type": next(iter(debt_types)) if debt_types else "",
+        "type": target_debt_type,
     }
-
 
 
 def offset_debt_by_person(
@@ -772,6 +858,164 @@ def offset_debt_by_person(
             "affected_debt_ids": affected_debt_ids,
         }
 
+def is_voided_debt(record: dict) -> bool:
+    """True kalau debt ditandai void, bukan pembayaran/lunas normal."""
+    description = str(record.get("description", "") or "")
+    return "[VOID" in description.upper()
+
+
+def get_debt_person_summary() -> dict:
+    """
+    Ringkasan /hutang berbasis orang, bukan baris granular.
+
+    Debt tetap disimpan granular di sheet agar rinciannya bisa ditelusuri,
+    tetapi tampilan utama /hutang menggabungkan semua baris per person_name dan
+    menampilkan net per orang.
+    """
+    groups: dict[str, dict] = {}
+
+    for debt in get_debts_with_row_index(active_only=True):
+        if is_voided_debt(debt):
+            continue
+
+        person = normalize_debt_person_group_name(debt.get("person_name", ""))
+        if not person:
+            continue
+
+        group = groups.setdefault(person, {
+            "person_name": person,
+            "payable_total": 0.0,
+            "receivable_total": 0.0,
+            "debt_count": 0,
+            "details": [],
+        })
+
+        debt_type = str(debt.get("type", "")).strip()
+        remaining = parse_sheet_number(debt.get("remaining_amount", 0))
+        if remaining <= 0:
+            continue
+
+        if debt_type == "payable":
+            group["payable_total"] += remaining
+        elif debt_type == "receivable":
+            group["receivable_total"] += remaining
+        else:
+            continue
+
+        group["debt_count"] += 1
+        group["details"].append(debt)
+
+    payables = []
+    receivables = []
+    balanced = []
+
+    for group in groups.values():
+        net = group["receivable_total"] - group["payable_total"]
+        group["net_amount"] = net
+        group["raw_total"] = group["receivable_total"] + group["payable_total"]
+
+        if net > 0:
+            item = dict(group)
+            item["type"] = "receivable"
+            item["remaining_amount"] = net
+            receivables.append(item)
+        elif net < 0:
+            item = dict(group)
+            item["type"] = "payable"
+            item["remaining_amount"] = abs(net)
+            payables.append(item)
+        elif group["debt_count"] > 0:
+            item = dict(group)
+            item["type"] = "balanced"
+            item["remaining_amount"] = 0.0
+            balanced.append(item)
+
+    payables.sort(key=lambda x: x.get("person_name", ""))
+    receivables.sort(key=lambda x: x.get("person_name", ""))
+    balanced.sort(key=lambda x: x.get("person_name", ""))
+
+    return {
+        "total_payable": sum(parse_sheet_number(x.get("remaining_amount", 0)) for x in payables),
+        "total_receivable": sum(parse_sheet_number(x.get("remaining_amount", 0)) for x in receivables),
+        "payables": payables,
+        "receivables": receivables,
+        "balanced": balanced,
+    }
+
+
+def get_debt_person_detail(person_name: str, include_settled: bool = True) -> dict:
+    """
+    Detail debt per orang untuk /hutang <nama>.
+
+    Menampilkan komponen asal hutang/piutang, remaining per komponen, dan progress
+    pembayaran berdasarkan original_amount vs remaining_amount.
+    """
+    target = normalize_debt_person_group_name(person_name)
+    raw_target = normalize_person_name(person_name)
+    rows = get_debts_with_row_index(active_only=not include_settled)
+    details = []
+
+    for debt in rows:
+        person_raw = normalize_person_name(debt.get("person_name", ""))
+        person_key = normalize_debt_person_group_name(person_raw)
+        if not person_key:
+            continue
+        # Exact by grouped person first; fuzzy fallback keeps old behavior for data lama.
+        if target != person_key and raw_target not in person_raw and person_raw not in raw_target:
+            continue
+        if is_voided_debt(debt):
+            continue
+        details.append(debt)
+
+    active_details = [
+        d for d in details
+        if not is_settled_value(d.get("is_settled", "FALSE"))
+        and parse_sheet_number(d.get("remaining_amount", 0)) > 0
+    ]
+
+    def totals_for(rows_subset: list[dict], debt_type: str) -> dict:
+        original = sum(
+            parse_sheet_number(d.get("original_amount", 0))
+            for d in rows_subset
+            if str(d.get("type", "")).strip() == debt_type
+        )
+        remaining = sum(
+            parse_sheet_number(d.get("remaining_amount", 0))
+            for d in rows_subset
+            if str(d.get("type", "")).strip() == debt_type
+        )
+        paid = max(0.0, original - remaining)
+        pct = (paid / original * 100) if original > 0 else 0.0
+        return {
+            "original": original,
+            "remaining": remaining,
+            "paid": paid,
+            "paid_pct": pct,
+        }
+
+    # Progress menggunakan semua row non-void agar debt yang sudah lunas karena
+    # pembayaran tetap terhitung dalam denominator. Ini yang membuat tampilan
+    # seperti "Sudah bayar: 500k/800k" tetap bisa muncul.
+    payable_totals = totals_for(details, "payable")
+    receivable_totals = totals_for(details, "receivable")
+    active_payable = totals_for(active_details, "payable")
+    active_receivable = totals_for(active_details, "receivable")
+
+    net_remaining = active_receivable["remaining"] - active_payable["remaining"]
+
+    return {
+        "person_name": target,
+        "details": details,
+        "active_details": sorted(active_details, key=lambda d: int(d.get("_row_index", 10**9) or 10**9)),
+        "payable": payable_totals,
+        "receivable": receivable_totals,
+        "active_payable": active_payable,
+        "active_receivable": active_receivable,
+        "net_remaining": net_remaining,
+        "net_type": "receivable" if net_remaining > 0 else "payable" if net_remaining < 0 else "balanced",
+    }
+
+
 def get_debt_summary() -> dict:
     """
     Hitung total utang dan piutang aktif.
@@ -887,14 +1131,11 @@ def resolve_debt_ref(ref: str, last_debt_map: dict | None = None) -> tuple[int |
             return row, debt, None if debt else "Debt tidak ditemukan."
 
     if clean.isdigit():
-        # Fallback kalau mapping session /hutang hilang karena restart/redeploy.
-        fallback_map = build_active_debt_display_map()
-        mapped = fallback_map.get(clean)
-        if mapped and mapped.get("debt_id"):
-            row, debt = get_debt_by_id_any_status(mapped.get("debt_id"))
-            return row, debt, None if debt else "Debt tidak ditemukan."
-
-        return None, None, "Nomor debt tidak valid. Jalankan /hutang dulu, lalu pakai nomor yang muncul."
+        # Desain baru: nomor debt hanya valid dari /hutang <nama>.
+        # Jangan fallback ke daftar granular tersembunyi, karena /hutang utama sekarang
+        # memakai nomor agregat per orang. Ini mencegah /debt_edit 1 atau /debt_void 1
+        # salah target setelah user hanya melihat /hutang utama.
+        return None, None, "Nomor debt tidak valid. Jalankan /hutang Nama dulu, lalu pakai nomor rincian yang muncul."
 
     row, debt = get_debt_by_id_any_status(clean)
     if not debt:
@@ -1209,6 +1450,247 @@ def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
         "reverse_deltas": reverse_deltas,
     }
 
+
+
+def resolve_person_debt_targets(person_name: str, detail_ref: str | None = None) -> dict:
+    """
+    Resolve target debt dari nama orang.
+
+    Support:
+    - /debt_void Annisa      -> semua rincian aktif Annisa
+    - /debt_void Annisa 1    -> rincian nomor 1 dari /hutang Annisa
+
+    Nomor rincian mengikuti urutan active_details di get_debt_person_detail(),
+    sama seperti output /hutang <nama>.
+    """
+    clean_person = normalize_person_name(person_name)
+    clean_ref = str(detail_ref or "").strip()
+
+    if not clean_person:
+        return {"success": False, "message": "Nama orang tidak boleh kosong.", "person_name": clean_person, "targets": []}
+
+    detail = get_debt_person_detail(clean_person, include_settled=True)
+    active_details = detail.get("active_details") or []
+
+    if not active_details:
+        return {
+            "success": False,
+            "message": f"Tidak ada rincian debt aktif untuk {clean_person}.",
+            "person_name": clean_person,
+            "detail": detail,
+            "targets": [],
+        }
+
+    if clean_ref:
+        if clean_ref.isdigit():
+            idx = int(clean_ref)
+            if idx < 1 or idx > len(active_details):
+                return {
+                    "success": False,
+                    "message": f"Nomor rincian tidak valid untuk {clean_person}. Pilih 1 sampai {len(active_details)} dari output /hutang {clean_person}.",
+                    "person_name": clean_person,
+                    "detail": detail,
+                    "targets": [],
+                }
+            return {
+                "success": True,
+                "message": "ok",
+                "person_name": clean_person,
+                "detail": detail,
+                "targets": [active_details[idx - 1]],
+                "detail_ref": clean_ref,
+                "scope": "person_detail",
+            }
+
+        # Fallback: izinkan debt_id setelah nama, misalnya /debt_void Annisa debt_xxx
+        for debt in active_details:
+            if str(debt.get("id", "")).strip() == clean_ref:
+                return {
+                    "success": True,
+                    "message": "ok",
+                    "person_name": clean_person,
+                    "detail": detail,
+                    "targets": [debt],
+                    "detail_ref": clean_ref,
+                    "scope": "person_detail",
+                }
+
+        return {
+            "success": False,
+            "message": f"Rincian {clean_ref} tidak ditemukan untuk {clean_person}.",
+            "person_name": clean_person,
+            "detail": detail,
+            "targets": [],
+        }
+
+    return {
+        "success": True,
+        "message": "ok",
+        "person_name": clean_person,
+        "detail": detail,
+        "targets": active_details,
+        "detail_ref": "",
+        "scope": "person_all",
+    }
+
+
+def preview_void_debts_by_person(person_name: str, detail_ref: str | None = None) -> dict:
+    """
+    Preview void berdasarkan nama orang.
+
+    - detail_ref kosong: semua rincian aktif orang tsb.
+    - detail_ref angka: satu rincian sesuai nomor /hutang <nama>.
+    """
+    resolved = resolve_person_debt_targets(person_name, detail_ref)
+    if not resolved.get("success"):
+        return {
+            "success": False,
+            "message": resolved.get("message"),
+            "person_name": resolved.get("person_name") or normalize_person_name(person_name),
+            "scope": resolved.get("scope") or ("person_detail" if detail_ref else "person_all"),
+            "detail_ref": str(detail_ref or "").strip(),
+            "targets": [],
+            "previews": [],
+            "reverse_deltas": {},
+            "cashflow_txns": [],
+        }
+
+    previews = []
+    failed = []
+    total_remaining = 0.0
+    total_original = 0.0
+    reverse_deltas: dict[str, float] = {}
+    cashflow_txns = []
+
+    for debt in resolved.get("targets") or []:
+        debt_id = str(debt.get("id", "")).strip()
+        item_preview = preview_void_debt(debt_id, {})
+        previews.append(item_preview)
+
+        if not item_preview.get("success"):
+            failed.append(item_preview)
+            continue
+
+        preview_debt = item_preview.get("debt") or debt
+        total_remaining += parse_sheet_number(preview_debt.get("remaining_amount", 0))
+        total_original += parse_sheet_number(preview_debt.get("original_amount", 0))
+
+        if item_preview.get("cashflow_txn"):
+            cashflow_txns.append(item_preview.get("cashflow_txn"))
+
+        for account, delta in (item_preview.get("reverse_deltas") or {}).items():
+            reverse_deltas[account] = reverse_deltas.get(account, 0.0) + float(delta or 0)
+
+    if failed:
+        messages = []
+        for failed_preview in failed[:5]:
+            debt = failed_preview.get("debt") or {}
+            desc = str(debt.get("description") or debt.get("id") or "-").strip()
+            messages.append(f"- {desc}: {failed_preview.get('message')}")
+        return {
+            "success": False,
+            "message": "Beberapa rincian tidak bisa divoid otomatis:\n" + "\n".join(messages),
+            "person_name": resolved.get("person_name"),
+            "scope": resolved.get("scope"),
+            "detail_ref": resolved.get("detail_ref"),
+            "targets": resolved.get("targets") or [],
+            "previews": previews,
+            "failed_previews": failed,
+            "reverse_deltas": reverse_deltas,
+            "cashflow_txns": cashflow_txns,
+        }
+
+    return {
+        "success": True,
+        "message": "ok",
+        "person_name": resolved.get("person_name"),
+        "scope": resolved.get("scope"),
+        "detail_ref": resolved.get("detail_ref"),
+        "targets": resolved.get("targets") or [],
+        "previews": previews,
+        "reverse_deltas": reverse_deltas,
+        "cashflow_txns": cashflow_txns,
+        "target_debt_ids": [str((p.get("debt") or {}).get("id", "")).strip() for p in previews if (p.get("debt") or {}).get("id")],
+        "total_remaining": total_remaining,
+        "total_original": total_original,
+        "bulk": True,
+    }
+
+
+def void_debt_ids(debt_ids: list[str]) -> dict:
+    """
+    Void beberapa debt_id secara berurutan.
+    Dipakai oleh konfirmasi /debt_void <nama> dan /debt_void <nama> <nomor>.
+    """
+    clean_ids = []
+    seen = set()
+    for debt_id in debt_ids or []:
+        clean = str(debt_id or "").strip()
+        if clean and clean not in seen:
+            clean_ids.append(clean)
+            seen.add(clean)
+
+    if not clean_ids:
+        return {"success": False, "message": "Tidak ada debt_id yang akan divoid.", "results": []}
+
+    results = []
+    for debt_id in clean_ids:
+        results.append(void_debt(debt_id, {}))
+
+    failed = [r for r in results if not r.get("success")]
+    success_results = [r for r in results if r.get("success")]
+
+    reverse_deltas: dict[str, float] = {}
+    new_balances = {}
+    total_original = 0.0
+    total_remaining = 0.0
+    debts = []
+    cashflow_txns = []
+
+    for result in success_results:
+        debt = result.get("debt") or {}
+        debts.append(debt)
+        total_original += parse_sheet_number(debt.get("original_amount", 0))
+        total_remaining += parse_sheet_number(debt.get("remaining_amount", 0))
+        if result.get("cashflow_txn"):
+            cashflow_txns.append(result.get("cashflow_txn"))
+        for account, delta in (result.get("reverse_deltas") or {}).items():
+            reverse_deltas[account] = reverse_deltas.get(account, 0.0) + float(delta or 0)
+        for account, balance in (result.get("new_balances") or {}).items():
+            new_balances[account] = balance
+
+    return {
+        "success": not failed,
+        "message": "ok" if not failed else "; ".join(str(r.get("message") or "Gagal void debt") for r in failed),
+        "results": results,
+        "failed": failed,
+        "success_results": success_results,
+        "debts": debts,
+        "cashflow_txns": cashflow_txns,
+        "reverse_deltas": reverse_deltas,
+        "new_balances": new_balances,
+        "total_original": total_original,
+        "total_remaining": total_remaining,
+        "voided_ids": [str((r.get("debt") or {}).get("id", "")).strip() for r in success_results],
+    }
+
+
+def void_debts_by_person(person_name: str, detail_ref: str | None = None) -> dict:
+    """
+    Eksekusi void berdasarkan nama orang setelah lolos preview.
+    """
+    preview = preview_void_debts_by_person(person_name, detail_ref)
+    if not preview.get("success"):
+        return preview
+
+    result = void_debt_ids(preview.get("target_debt_ids") or [])
+    result.update({
+        "person_name": preview.get("person_name"),
+        "scope": preview.get("scope"),
+        "detail_ref": preview.get("detail_ref"),
+        "bulk": True,
+    })
+    return result
 
 def update_debt(debt_ref: str, updates: dict, last_debt_map: dict | None = None) -> dict:
     """

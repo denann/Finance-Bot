@@ -32,6 +32,22 @@ FINANCE_QUESTION_KEYWORDS = [
     "saldo", "utang", "hutang", "piutang", "net worth", "aset", "liabilitas",
 ]
 
+AVAILABLE_COMMANDS_FOR_AI = [
+    "/saldo",
+    "/harian",
+    "/mingguan",
+    "/bulanan",
+    "/cari",
+    "/last",
+    "/transaksi",
+    "/budget",
+    "/hutang",
+    "/insight",
+    "/ask",
+    "/audit",
+    "/coach",
+]
+
 STOPWORDS = {
     "aku", "saya", "gue", "gua", "gw", "bulan", "ini", "itu", "di", "ke", "dari", "yang",
     "dan", "atau", "untuk", "berapa", "total", "transaksi", "pengeluaran", "pemasukan",
@@ -512,7 +528,9 @@ def detect_data_quality_issues(records: list[dict]) -> list[dict]:
             add_issue("expense tanpa category")
         if txn_type == "expense" and category == "Other Expense":
             add_issue("expense masih Other Expense")
-
+        if txn_type == "expense" and category == "Utang Tanpa Cashflow":
+            add_issue("expense kategori Utang Tanpa Cashflow")
+            
     for key, count in counters.most_common():
         issues.append({"issue": key, "count": count, "examples": examples[key]})
 
@@ -566,6 +584,7 @@ def build_monthly_finance_context(month: str | None = None) -> dict:
         "accounts": get_accounts_summary(),
         "debts": get_debt_summary_compact(),
         "net_worth": get_net_worth_compact(),
+        "available_commands": AVAILABLE_COMMANDS_FOR_AI,
     }
 
 

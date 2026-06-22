@@ -248,6 +248,7 @@ def parse_debt_input(text: str) -> dict | None:
     # - kompensasi piutang Akmal 20k karena badminton
     # - saya berutang ke Akmal 20k potong dari piutang buat badminton
     # Efeknya bukan cashflow rekening, tetapi tetap dibuat row di transactions sebagai fact table.
+    offset_self_context = False
     offset_match = re.search(
         r"\b(?:potong|kurangi|kompensasi|offset|netting)\s+"
         r"(?P<target>piutang|utang|hutang)\s+"
@@ -266,12 +267,21 @@ def parse_debt_input(text: str) -> dict | None:
             text_lower,
             flags=re.IGNORECASE,
         )
+        offset_self_context = bool(offset_match)
     if offset_match:
         person = re.sub(r"\s+", " ", offset_match.group("person")).strip().title()
         target_word = str(offset_match.group("target") or "piutang").strip().lower()
         # target_debt_type adalah debt aktif yang akan dikurangi.
-        # target=piutang berarti kurangi receivable; jika over, selisih jadi payable.
-        target_debt_type = "receivable" if target_word == "piutang" else "payable"
+        # target=piutang berarti kurangi receivable.
+        # Untuk input natural "potong hutang Sapto", hutang dipahami sebagai
+        # hutang Sapto ke user, jadi tetap mengurangi receivable.
+        # Kalau konteksnya eksplisit "saya berutang ke X ... potong utang", baru payable.
+        if target_word == "piutang":
+            target_debt_type = "receivable"
+        elif offset_self_context:
+            target_debt_type = "payable"
+        else:
+            target_debt_type = "receivable"
         resulting_debt_type = "payable" if target_debt_type == "receivable" else "receivable"
 
         if person and person.lower() not in {"saya", "aku", "gw", "gue", "gua"}:
@@ -296,7 +306,7 @@ def parse_debt_input(text: str) -> dict | None:
         r"\b(?:saya|aku|gw|gue)?\s*"
         r"(?:nitip|ditalangin|ditalangi|dibayarin|duluin)\s+"
         r"(?P<item>.+?)\s+"
-        r"(?:sama|oleh)\s+(?:si\s+)?"
+        r"(?:sama|oleh|ke|dari)\s+(?:si\s+)?"
         r"(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)"
         r"(?=\s+(?:tanggal|tgl|kemarin|hari\s+ini|besok|\d|rp|idr)|\s*$)",
         text_lower,
@@ -500,12 +510,56 @@ def parse_debt_input(text: str) -> dict | None:
 
     # Catatan: frasa seperti "transfer/transaksi dari Annisa 55k"
     # sekarang diperlakukan sebagai income biasa di detect_type(),
-    # bukan pembayaran utang/piutang. Debt payment harus pakai keyword eksplisit
-    # seperti "bayar hutang", "bayar utang", "lunasi", dst.
+    # dan bukan transfer antar rekening. Namun pola "Nama bayar 5k" adalah
+    # pembayaran piutang natural, karena subjeknya orang yang membayar ke user.
 
-    # Hindari generic "Budi bayar 300k" sebagai debt.
-    # Sesuai rule: debt hanya untuk keyword eksplisit utang/piutang/minjem
-    # atau split bill. Jadi pembayaran debt diproses oleh block eksplisit di bawah.
+    # ── Payment natural: "Sapto bayar 5k" / "Sapto bayar hutang 500k" ───────
+    person_pays_match = re.search(
+        r"^\s*(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)\s+"
+        r"(?:bayar|byr|melunasi|lunasin|lunasi|nyicil|cicil|transfer\s+balik|kembaliin|balikin|dibalikin)\b"
+        r"(?=.*(?:\d|rp|idr))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if person_pays_match:
+        person = re.sub(r"\s+", " ", person_pays_match.group("person")).strip().title()
+        if (
+            person
+            and person.lower() not in {"saya", "aku", "gw", "gue", "gua"}
+            and person.lower() not in ACCOUNT_NAMES
+        ):
+            return {
+                "intent": "add_payment",
+                "person_name": person,
+                "amount": amount,
+                "description": f"Pembayaran piutang dari {person}",
+                "date": detect_date(text),
+                "raw_input": text,
+                "target_debt_type": "receivable",
+            }
+
+    # ── Payment self: "saya bayar hutang Sapto 10k" ─────────────────────────
+    self_pays_match = re.search(
+        r"^\s*(?:saya|aku|gw|gue|gua)\s+"
+        r"(?:bayar|byr|melunasi|lunasin|lunasi|nyicil|cicil)\s+"
+        r"(?:hutang|utang|debt|cicilan)\s+"
+        r"(?:ke|sama)?\s*"
+        r"(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if self_pays_match:
+        person = re.sub(r"\s+", " ", self_pays_match.group("person")).strip().title()
+        if person:
+            return {
+                "intent": "add_payment",
+                "person_name": person,
+                "amount": amount,
+                "description": f"Bayar hutang ke {person}",
+                "date": detect_date(text),
+                "raw_input": text,
+                "target_debt_type": "payable",
+            }
 
     # ── Payment explicit: "bayar hutang Budi 300k" ───────────────────────────
     for kw in DEBT_PAYMENT_KEYWORDS:
@@ -521,6 +575,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "description": f"Bayar hutang {person or ''}".strip(),
                 "date": detect_date(text),
                 "raw_input": text,
+                "target_debt_type": "auto",
             }
 
     # ── Payable natural: "minjem uang Annisa 220k" ───────────────────────────

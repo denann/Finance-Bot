@@ -56,6 +56,45 @@ def mark_debt_as_historical(debt_parsed: dict) -> dict:
     return debt_parsed
 
 
+def resolve_payment_target_type(parsed: dict, debts: list[dict]) -> tuple[str | None, str | None]:
+    """Tentukan arah debt untuk pembayaran by person tanpa memblokir mixed arah.
+
+    Return: (target_type, error_message).
+    """
+    target = str(parsed.get("target_debt_type") or "").strip().lower()
+    if target == "auto":
+        target = ""
+
+    debt_types = {str(d.get("type", "")).strip() for d in debts if str(d.get("type", "")).strip()}
+
+    if target not in {"payable", "receivable"}:
+        total_payable = sum(
+            parse_sheet_number(d.get("remaining_amount", 0))
+            for d in debts
+            if str(d.get("type", "")).strip() == "payable"
+        )
+        total_receivable = sum(
+            parse_sheet_number(d.get("remaining_amount", 0))
+            for d in debts
+            if str(d.get("type", "")).strip() == "receivable"
+        )
+
+        if total_receivable > total_payable:
+            target = "receivable"
+        elif total_payable > total_receivable:
+            target = "payable"
+        elif len(debt_types) == 1:
+            target = next(iter(debt_types))
+        else:
+            return None, "Saldo utang dan piutang sama besar. Pakai input lebih spesifik."
+
+    if not any(str(d.get("type", "")).strip() == target for d in debts):
+        label = "utang" if target == "payable" else "piutang"
+        return None, f"Tidak ada {label} aktif untuk arah pembayaran ini."
+
+    return target, None
+
+
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -160,19 +199,21 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     })
                     continue
 
-                debt_types = {str(d.get("type", "")).strip() for d in debts if str(d.get("type", "")).strip()}
-                if len(debt_types) > 1:
+                debt_type_for_payment, err = resolve_payment_target_type(parsed, debts)
+                if err:
                     failed_items.append({
                         "raw": raw,
-                        "message": f"Ada utang dan piutang aktif sekaligus dengan {person}. Bayar debt spesifik dulu dari /hutang.",
+                        "message": err,
                     })
                     continue
 
-                if len(debts) == 1:
-                    parsed["target_debt_id"] = debts[0].get("id")
-                else:
-                    parsed["target_debt_id"] = ""
-                parsed["debt_type_for_payment"] = next(iter(debt_types)) if debt_types else ""
+                target_debts = [
+                    d for d in debts
+                    if str(d.get("type", "")).strip() == debt_type_for_payment
+                ]
+                parsed["target_debt_id"] = target_debts[0].get("id") if len(target_debts) == 1 else ""
+                parsed["debt_type_for_payment"] = debt_type_for_payment
+                parsed["target_debt_type"] = debt_type_for_payment
 
             if debt_uses_cashflow(parsed) and intent != "offset_debt":
                 if skip_account:
@@ -243,19 +284,23 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data.pop("pending_debt", None)
                 return
 
-            debt_types = {str(d.get("type", "")).strip() for d in debts if str(d.get("type", "")).strip()}
-            if len(debt_types) > 1:
+            debt_type_for_payment, err = resolve_payment_target_type(debt_parsed, debts)
+            if err:
                 await safe_edit_message(query, 
-                    f"⚠️ Ada utang dan piutang aktif sekaligus dengan *{person}*.\n\n"
-                    f"Gunakan /hutang lalu bayar/void debt yang spesifik dulu agar tidak salah arah.",
+                    f"⚠️ {md_safe(err)}\n\n"
+                    f"Contoh: `Sapto bayar 5k` untuk mengurangi piutang, atau `saya bayar hutang Sapto 5k` untuk mengurangi utang Anda.",
                     parse_mode="Markdown",
                 )
                 context.user_data.pop("pending_debt", None)
                 return
 
-            debt_type_for_payment = next(iter(debt_types)) if debt_types else ""
-            debt_parsed["target_debt_id"] = debts[0].get("id") if len(debts) == 1 else ""
+            target_debts = [
+                d for d in debts
+                if str(d.get("type", "")).strip() == debt_type_for_payment
+            ]
+            debt_parsed["target_debt_id"] = target_debts[0].get("id") if len(target_debts) == 1 else ""
             debt_parsed["debt_type_for_payment"] = debt_type_for_payment
+            debt_parsed["target_debt_type"] = debt_type_for_payment
 
         if skip_account:
             mark_debt_as_historical(debt_parsed)
@@ -330,16 +375,21 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         })
                         continue
 
-                    debt_types = {str(d.get("type", "")).strip() for d in debts if str(d.get("type", "")).strip()}
-                    if len(debt_types) > 1:
+                    debt_type_for_payment, err = resolve_payment_target_type(parsed, debts)
+                    if err:
                         failed_items.append({
                             "raw": raw,
-                            "message": f"Ada utang dan piutang aktif sekaligus dengan {person}. Bayar debt spesifik dulu dari /hutang.",
+                            "message": err,
                         })
                         continue
 
-                    parsed["target_debt_id"] = debts[0].get("id") if len(debts) == 1 else ""
-                    parsed["debt_type_for_payment"] = next(iter(debt_types)) if debt_types else ""
+                    target_debts = [
+                        d for d in debts
+                        if str(d.get("type", "")).strip() == debt_type_for_payment
+                    ]
+                    parsed["target_debt_id"] = target_debts[0].get("id") if len(target_debts) == 1 else ""
+                    parsed["debt_type_for_payment"] = debt_type_for_payment
+                    parsed["target_debt_type"] = debt_type_for_payment
 
                 if debt_uses_cashflow(parsed) and intent != "offset_debt":
                     if skip_account:
@@ -775,43 +825,83 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending_void = context.user_data.get("pending_debt_void")
 
             if not pending_void:
-                await safe_edit_message(query, "❌ Sesi debt void expired. Coba ulangi `/hutang` lalu `/debt_void 1`.")
+                await safe_edit_message(query, "❌ Sesi debt void expired. Coba ulangi `/hutang Nama` lalu `/debt_void 1` atau `/debt_void Nama`.")
                 return
-
-            debt_ref = pending_void.get("debt_ref")
-            last_debt_map = context.user_data.get("last_debt_map", {})
 
             await safe_edit_message(query, 
                 "⏳ *Sedang membatalkan debt dan memperbaiki saldo...*",
                 parse_mode="Markdown",
             )
 
-            result = void_debt(debt_ref, last_debt_map)
+            if pending_void.get("mode") == "bulk":
+                result = void_debt_ids(pending_void.get("target_debt_ids") or [])
+            else:
+                debt_ref = pending_void.get("debt_ref")
+                last_debt_map = context.user_data.get("last_debt_map", {})
+                result = void_debt(debt_ref, last_debt_map)
 
             if not result.get("success"):
+                lines = [f"❌ *Gagal void debt.*\n{md_safe(result.get('message'))}"]
+                success_results = result.get("success_results") or []
+                if success_results:
+                    lines.append("\n⚠️ Sebagian debt sudah terlanjur berhasil di-void:")
+                    for r in success_results:
+                        debt = r.get("debt") or {}
+                        lines.append(f"• `{md_safe(short_debt_id(debt.get('id', '-')))}` — {md_safe(debt.get('description') or '-')}")
                 await safe_edit_message(query, 
-                    f"❌ *Gagal void debt.*\n{result.get('message')}",
+                    "\n".join(lines),
                     parse_mode="Markdown",
                 )
                 context.user_data.pop("pending_debt_void", None)
                 return
 
-            debt = result.get("debt", {}) or {}
-            txn = result.get("cashflow_txn", {}) or {}
+            is_bulk = pending_void.get("mode") == "bulk"
             new_balances = result.get("new_balances", {}) or {}
             reverse_deltas = result.get("reverse_deltas", {}) or {}
 
-            direction = "🔴 Utang Anda" if debt.get("type") == "payable" else "🟢 Piutang Anda"
-            lines = ["✅ *Debt berhasil di-void!*\n"]
-            lines.append(f"{direction} dengan *{md_safe(debt.get('person_name', '-'))}*")
-            lines.append(f"💰 Nominal: *{format_rupiah(float(debt.get('original_amount', 0) or 0))}*")
+            if is_bulk:
+                debts = result.get("debts") or []
+                cashflow_txns = result.get("cashflow_txns") or []
+                person_name = pending_void.get("person_name") or (debts[0].get("person_name") if debts else "-")
+                lines = ["✅ *Debt berhasil di-void!*\n"]
+                lines.append(f"👤 Nama: *{md_safe(person_name)}*")
+                lines.append(f"📌 Rincian divoid: *{len(debts)}*")
+                lines.append(f"💰 Total nominal awal: *{format_rupiah(float(result.get('total_original', 0) or 0))}*")
 
-            if txn:
-                lines.append("\n🗑️ *Cashflow terkait dihapus:*")
-                lines.append(
-                    f"• Row {txn.get('_row_index', '-')} — {md_safe(txn.get('description') or '-')} — "
-                    f"{format_rupiah(float(txn.get('amount', 0) or 0))}"
-                )
+                lines.append("\n*Rincian:*")
+                for i, debt in enumerate(debts, 1):
+                    debt_type = str(debt.get("type") or "").strip()
+                    icon = "🔴" if debt_type == "payable" else "🟢"
+                    lines.append(
+                        f"{i}. {icon} {md_safe(debt.get('description') or '-')}\n"
+                        f"   Debt ID: `{md_safe(short_debt_id(debt.get('id', '-')))}`\n"
+                        f"   Nominal: *{format_rupiah(float(debt.get('original_amount', 0) or 0))}*"
+                    )
+
+                if cashflow_txns:
+                    lines.append("\n🗑️ *Cashflow terkait dihapus:*")
+                    for txn in cashflow_txns[:10]:
+                        lines.append(
+                            f"• Row {txn.get('_row_index', '-')} — {md_safe(txn.get('description') or '-')} — "
+                            f"{format_rupiah(float(txn.get('amount', 0) or 0))}"
+                        )
+                    if len(cashflow_txns) > 10:
+                        lines.append(f"• ...dan {len(cashflow_txns) - 10} cashflow lain")
+            else:
+                debt = result.get("debt", {}) or {}
+                txn = result.get("cashflow_txn", {}) or {}
+                direction = "🔴 Utang Anda" if debt.get("type") == "payable" else "🟢 Piutang Anda"
+                lines = ["✅ *Debt berhasil di-void!*\n"]
+                lines.append(f"{direction} dengan *{md_safe(debt.get('person_name', '-'))}*")
+                lines.append(f"💰 Nominal: *{format_rupiah(float(debt.get('original_amount', 0) or 0))}*")
+                lines.append(f"🔖 Debt ID: `{md_safe(short_debt_id(debt.get('id', '-')))}`")
+
+                if txn:
+                    lines.append("\n🗑️ *Cashflow terkait dihapus:*")
+                    lines.append(
+                        f"• Row {txn.get('_row_index', '-')} — {md_safe(txn.get('description') or '-')} — "
+                        f"{format_rupiah(float(txn.get('amount', 0) or 0))}"
+                    )
 
             if reverse_deltas:
                 lines.append("\n🔁 *Penyesuaian saldo:*")
@@ -871,7 +961,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if target_debt_id:
                     debt_result = add_payment(target_debt_id, amount)
                 else:
-                    debt_result = add_payment_by_person(person, amount)
+                    debt_result = add_payment_by_person(
+                        person,
+                        amount,
+                        target_debt_type=debt_type_for_payment or debt_parsed.get("target_debt_type"),
+                    )
 
             elif intent == "offset_debt":
                 debt_result = offset_debt_by_person(
@@ -1005,7 +1099,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if target_debt_id:
                         debt_result = add_payment(target_debt_id, amount)
                     else:
-                        debt_result = add_payment_by_person(person, amount)
+                        debt_result = add_payment_by_person(
+                            person,
+                            amount,
+                            target_debt_type=debt_type_for_payment or parsed.get("target_debt_type"),
+                        )
                 elif intent == "offset_debt":
                     debt_result = offset_debt_by_person(
                         person,
@@ -1152,7 +1250,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if target_debt_id:
                         debt_result = add_payment(target_debt_id, amount)
                     else:
-                        debt_result = add_payment_by_person(person, amount)
+                        debt_result = add_payment_by_person(
+                            person,
+                            amount,
+                            target_debt_type=debt_type_for_payment or parsed.get("target_debt_type"),
+                        )
 
                 elif intent == "offset_debt":
                     debt_result = offset_debt_by_person(

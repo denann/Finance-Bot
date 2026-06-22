@@ -106,11 +106,17 @@ from app.services.debt_service import (
     add_debt,
     add_payment,
     add_payment_by_person,
+    parse_sheet_number,
     offset_debt_by_person,
     get_debt_summary,
+    get_debt_person_summary,
+    get_debt_person_detail,
     get_debt_by_person,
     preview_void_debt,
+    preview_void_debts_by_person,
     void_debt,
+    void_debt_ids,
+    void_debts_by_person,
     update_debt,
 )
 import csv
@@ -159,6 +165,13 @@ def format_rupiah(amount: float) -> str:
     integer_part = int(value)
     decimal_part = (f"{value:.2f}".split(".", 1)[1]).rstrip("0")
     return f"Rp{sign}{integer_part:,}".replace(",", ".") + f",{decimal_part}"
+
+
+def short_debt_id(debt_id: str) -> str:
+    debt_id = str(debt_id or "")
+    if len(debt_id) <= 18:
+        return debt_id
+    return debt_id[:18] + "..."
 
 
 def md_safe(value) -> str:

@@ -120,9 +120,12 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Tetap masuk sheet `transactions` sebagai fact table, tapi saldo rekening tidak berubah.\n\n"
 
         "*10. Kelola Debt*\n"
-        "`/hutang` — utang/piutang aktif\n"
-        "`/debt_void 1` — batalkan debt salah input dari hasil `/hutang`\n"
-        "`/debt_edit 1 nominal 100k` — edit nominal utang/piutang\n"
+        "`/hutang` — ringkasan utang/piutang aktif per orang\n"
+        "`/hutang Annisa` — detail rincian aktif Annisa + debt ID\n"
+        "`/debt_void 1` — batalkan rincian dari detail terakhir\n"
+        "`/debt_void Annisa` — batalkan semua debt aktif Annisa setelah konfirmasi\n"
+        "`/debt_void Annisa 1` — batalkan rincian nomor 1 milik Annisa\n"
+        "`/debt_edit 1 nominal 100k` — edit nominal rincian\n"
         "`/debt_edit 1 nama Budi` — edit nama orang\n"
         "`/debt_edit 1 tipe piutang` — ubah arah debt\n\n"
 
@@ -990,7 +993,99 @@ def short_debt_id(debt_id: str) -> str:
     return debt_id[:18] + "..."
 
 
+
+def parse_debt_void_args(args: list[str]) -> dict:
+    """
+    Parsing argumen /debt_void yang lebih ramah user.
+
+    Support:
+    - /debt_void 1
+    - /debt_void debt_xxx
+    - /debt_void Annisa
+    - /debt_void Annisa 1
+    - /debt_void Cash Annisa 1
+    """
+    args = [str(a or "").strip() for a in (args or []) if str(a or "").strip()]
+    if not args:
+        return {"mode": "empty"}
+
+    if len(args) == 1:
+        token = args[0]
+        if token.isdigit() or token.lower().startswith("debt_"):
+            return {"mode": "single", "debt_ref": token}
+        return {"mode": "person", "person_name": token, "detail_ref": None}
+
+    if args[-1].isdigit() or args[-1].lower().startswith("debt_"):
+        return {
+            "mode": "person",
+            "person_name": " ".join(args[:-1]).strip(),
+            "detail_ref": args[-1],
+        }
+
+    return {"mode": "person", "person_name": " ".join(args).strip(), "detail_ref": None}
+
+
 def build_debt_void_preview_text(preview: dict) -> str:
+    if preview.get("bulk"):
+        person = md_safe(preview.get("person_name") or "-")
+        scope = preview.get("scope") or "person_all"
+        detail_ref = str(preview.get("detail_ref") or "").strip()
+        targets = preview.get("targets") or []
+        reverse_deltas = preview.get("reverse_deltas", {}) or {}
+        cashflow_txns = preview.get("cashflow_txns") or []
+        total_remaining = float(preview.get("total_remaining") or 0)
+
+        if scope == "person_detail" and detail_ref:
+            title = f"⚠️ *Preview Void Rincian Debt {person} #{md_safe(detail_ref)}*\n"
+        else:
+            title = f"⚠️ *Preview Void SEMUA Debt Aktif {person}*\n"
+
+        lines = [title]
+        lines.append(f"👤 Nama: *{person}*")
+        lines.append(f"📌 Jumlah rincian: *{len(targets)}*")
+        lines.append(f"💰 Total yang akan di-void: *{format_rupiah(total_remaining)}*")
+
+        lines.append("\n*Rincian yang akan di-void:*")
+        for i, debt in enumerate(targets, 1):
+            debt_type = str(debt.get("type") or "").strip()
+            icon = "🔴" if debt_type == "payable" else "🟢"
+            direction = "Anda hutang" if debt_type == "payable" else f"{preview.get('person_name') or 'Orang ini'} hutang"
+            desc = md_safe(str(debt.get("description") or "-").strip()[:90])
+            debt_id = md_safe(short_debt_id(debt.get("id", "-")))
+            remaining = format_rupiah(debt.get("remaining_amount", 0))
+            original = format_rupiah(debt.get("original_amount", 0))
+            lines.append(
+                f"{i}. {icon} *{desc}*\n"
+                f"   {direction}: *{remaining}* / awal {original}\n"
+                f"   Debt ID: `{debt_id}`"
+            )
+
+        if cashflow_txns:
+            lines.append("\n*Cashflow terkait yang akan dihapus:*")
+            for txn in cashflow_txns[:10]:
+                txn_desc = md_safe(txn.get("description") or "-")
+                txn_date = md_safe(txn.get("date") or "-")
+                txn_amount = format_rupiah(float(txn.get("amount", 0) or 0))
+                txn_account = md_safe(txn.get("account") or "-")
+                lines.append(f"• {txn_date} — {txn_desc} — {txn_amount} | {txn_account}")
+            if len(cashflow_txns) > 10:
+                lines.append(f"• ...dan {len(cashflow_txns) - 10} cashflow lain")
+        else:
+            lines.append("\n*Cashflow terkait:* tidak ada / tidak perlu dihapus.")
+            lines.append("Debt akan di-void tanpa mengubah saldo rekening.")
+
+        if reverse_deltas:
+            lines.append("\n*Efek balik ke saldo rekening:*")
+            for account, delta in reverse_deltas.items():
+                sign = "+" if delta >= 0 else "-"
+                lines.append(f"• {md_safe(account)}: {sign}{format_rupiah(abs(delta))}")
+
+        lines.append(
+            "\nLanjut void target ini?\n"
+            "Kalau klik Simpan, debt akan ditandai settled/void. Jika ada cashflow terkait, cashflow akan dihapus dan saldo direverse."
+        )
+        return "\n".join(lines)
+
     debt = preview.get("debt") or {}
     cashflow_txn = preview.get("cashflow_txn") or {}
     reverse_deltas = preview.get("reverse_deltas", {}) or {}
@@ -1043,12 +1138,12 @@ def build_debt_void_preview_text(preview: dict) -> str:
 
 async def debt_void_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /debt_void <nomor_dari_hutang_atau_debt_id>
+    /debt_void <nomor|debt_id|nama|nama nomor>
 
     Membatalkan debt yang salah input secara aman:
     - debt ditandai settled/void
-    - cashflow debt terkait dihapus
-    - saldo rekening direverse
+    - cashflow debt terkait dihapus jika memang ada
+    - saldo rekening direverse jika cashflow terkait ditemukan
     """
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -1056,22 +1151,30 @@ async def debt_void_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
         await update.message.reply_text(
-            "❌ Masukkan nomor debt atau debt ID.\n\n"
+            "❌ Masukkan nomor debt, debt ID, atau nama orang.\n\n"
             "Contoh:\n"
-            "`/hutang`\n"
-            "`/debt_void 1`\n"
+            "`/hutang Annisa`\n"
+            "`/debt_void 1` — void nomor dari detail terakhir\n"
+            "`/debt_void Annisa` — void semua debt aktif Annisa\n"
+            "`/debt_void Annisa 1` — void rincian nomor 1 milik Annisa\n"
             "`/debt_void debt_20260610_123456_xxx`",
             parse_mode="Markdown",
         )
         return
 
-    debt_ref = context.args[0].strip()
+    parsed = parse_debt_void_args(context.args or [])
     last_debt_map = context.user_data.get("last_debt_map", {})
 
-    preview = preview_void_debt(debt_ref, last_debt_map)
+    if parsed.get("mode") == "person":
+        person_name = parsed.get("person_name") or ""
+        detail_ref = parsed.get("detail_ref")
+        preview = preview_void_debts_by_person(person_name, detail_ref)
+    else:
+        debt_ref = parsed.get("debt_ref")
+        preview = preview_void_debt(debt_ref, last_debt_map)
 
     if not preview.get("success"):
-        lines = [f"❌ *Debt void tidak bisa diproses.*\n{preview.get('message')}"]
+        lines = [f"❌ *Debt void tidak bisa diproses.*\n{md_safe(preview.get('message'))}"]
 
         candidates = preview.get("candidate_txns") or []
         if candidates:
@@ -1079,7 +1182,7 @@ async def debt_void_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for txn in candidates[:10]:
                 lines.append(
                     f"• Row {txn.get('_row_index', '-')} — {txn.get('date', '-')} — "
-                    f"{txn.get('description') or '-'} — {format_rupiah(float(txn.get('amount', 0) or 0))}"
+                    f"{md_safe(txn.get('description') or '-')} — {format_rupiah(float(txn.get('amount', 0) or 0))}"
                 )
 
         await update.message.reply_text(
@@ -1088,15 +1191,26 @@ async def debt_void_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    context.user_data["pending_debt_void"] = {
-        "debt_ref": debt_ref,
-    }
+    if preview.get("bulk"):
+        context.user_data["pending_debt_void"] = {
+            "mode": "bulk",
+            "person_name": preview.get("person_name"),
+            "detail_ref": preview.get("detail_ref"),
+            "target_debt_ids": preview.get("target_debt_ids") or [],
+        }
+    else:
+        debt = preview.get("debt") or {}
+        context.user_data["pending_debt_void"] = {
+            "mode": "single",
+            "debt_ref": str(debt.get("id") or parsed.get("debt_ref") or "").strip(),
+        }
 
     await update.message.reply_text(
         build_debt_void_preview_text(preview),
         parse_mode="Markdown",
         reply_markup=confirm_keyboard("debt_void"),
     )
+
 
 def normalize_debt_edit_type(value: str) -> str | None:
     text = str(value or "").strip().lower()
@@ -1246,72 +1360,145 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reject_unauthorized(update)
         return
 
-    summary = get_debt_summary()
+    args = getattr(context, "args", []) or []
+    person_query = " ".join(args).strip()
 
-    if not summary["payables"] and not summary["receivables"]:
+    # /hutang <nama> = detail rincian per orang
+    if person_query:
+        detail = get_debt_person_detail(person_query, include_settled=True)
+        active_details = detail.get("active_details") or []
+        all_details = detail.get("details") or []
+
+        if not all_details:
+            await update.message.reply_text(
+                f"✅ Tidak ada riwayat utang/piutang untuk *{md_safe(person_query.title())}*.",
+                parse_mode="Markdown",
+            )
+            return
+
+        person = detail.get("person_name") or person_query.title()
+        net_remaining = float(detail.get("net_remaining") or 0)
+        net_type = detail.get("net_type")
+
+        if net_type == "receivable":
+            header = f"🟢 *{md_safe(person)} hutang ke Anda: {format_rupiah(abs(net_remaining))}*"
+        elif net_type == "payable":
+            header = f"🔴 *Anda hutang ke {md_safe(person)}: {format_rupiah(abs(net_remaining))}*"
+        else:
+            header = f"⚪ *Debt dengan {md_safe(person)} sudah netral/lunas.*"
+
+        lines = [header, ""]
+        lines.append("*Rincian aktif:*")
+
+        last_debt_map = {}
+        if active_details:
+            for i, d in enumerate(active_details, 1):
+                last_debt_map[str(i)] = {
+                    "debt_id": d.get("id"),
+                    "row_index": d.get("_row_index"),
+                }
+                debt_type = str(d.get("type") or "").strip()
+                icon = "🔴" if debt_type == "payable" else "🟢"
+                direction = "Anda hutang" if debt_type == "payable" else f"{person} hutang"
+                desc = str(d.get("description") or "-").strip()
+                remaining = format_rupiah(d.get("remaining_amount", 0))
+                original = format_rupiah(d.get("original_amount", 0))
+                debt_id = short_debt_id(d.get("id", "-"))
+                lines.append(
+                    f"{i}. {icon} {md_safe(desc[:80])}\n"
+                    f"   {direction}: *{remaining}* / awal {original}\n"
+                    f"   ID: `{md_safe(debt_id)}`"
+                )
+        else:
+            lines.append("Tidak ada rincian aktif.")
+
+        recv = detail.get("receivable") or {}
+        pay = detail.get("payable") or {}
+
+        if float(recv.get("original") or 0) > 0:
+            pct = float(recv.get("paid_pct") or 0)
+            lines.append(
+                "\n*Progress piutang:*\n"
+                f"Sudah bayar: *{format_rupiah(recv.get('paid', 0))}* / {format_rupiah(recv.get('original', 0))} "
+                f"({pct:.1f}%)"
+            )
+
+        if float(pay.get("original") or 0) > 0:
+            pct = float(pay.get("paid_pct") or 0)
+            lines.append(
+                "\n*Progress utang Anda:*\n"
+                f"Sudah dibayar: *{format_rupiah(pay.get('paid', 0))}* / {format_rupiah(pay.get('original', 0))} "
+                f"({pct:.1f}%)"
+            )
+
+        context.user_data["last_debt_map"] = last_debt_map
+        if last_debt_map:
+            lines.append(
+                "\nKelola rincian dari daftar ini:\n"
+                "`/debt_void 1` — batalkan rincian dari detail terakhir\n"
+                f"`/debt_void {md_safe(person)}` — batalkan semua rincian aktif {md_safe(person)}\n"
+                f"`/debt_void {md_safe(person)} 1` — batalkan rincian nomor 1 milik {md_safe(person)}\n"
+                "`/debt_edit 1 nominal 100k` — edit nominal rincian\n"
+                "Angka mengikuti nomor dari hasil detail `/hutang nama`."
+            )
+
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        return
+
+    # /hutang = ringkasan agregat per orang
+    summary = get_debt_person_summary()
+
+    if not summary["payables"] and not summary["receivables"] and not summary.get("balanced"):
         await update.message.reply_text("✅ Tidak ada utang atau piutang aktif.")
         return
 
-    lines = ["💸 *Utang & Piutang Aktif*\n"]
-    last_debt_map = {}
-    display_no = 1
+    lines = ["💸 *Utang & Piutang Aktif per Orang*\n"]
 
     if summary["payables"]:
-        lines.append(f"🔴 *Utang Anda* (total: {format_rupiah(summary['total_payable'])})")
-        for d in summary["payables"]:
-            due = f" | jatuh tempo: {d.get('due_date')}" if d.get("due_date") else ""
-            last_debt_map[str(display_no)] = {
-                "debt_id": d.get("id"),
-                "row_index": d.get("_row_index"),
-            }
-            desc = str(d.get("description") or "").strip()
-            desc_line = f"\n     📝 {md_safe(desc[:70])}" if desc else ""
-            debt_id_short = str(d.get("id") or "")[-8:]
+        lines.append(f"🔴 *Utang Anda* (net total: {format_rupiah(summary['total_payable'])})")
+        for i, d in enumerate(summary["payables"], 1):
+            person = d.get("person_name") or "-"
+            count = int(d.get("debt_count") or 0)
             lines.append(
-                f"  {display_no}. {md_safe(d.get('person_name'))} — "
-                f"*{format_rupiah(d.get('remaining_amount', 0))}*"
-                f"{due}"
-                f" | ID: `{md_safe(debt_id_short)}`"
-                f"{desc_line}"
+                f"  {i}. {md_safe(person)} — *{format_rupiah(d.get('remaining_amount', 0))}* "
+                f"({count} rincian)\n"
+                f"     Detail: `/hutang {md_safe(person)}`"
             )
-            display_no += 1
 
     if summary["payables"] and summary["receivables"]:
         lines.append("")
 
     if summary["receivables"]:
-        lines.append(
-            f"🟢 *Piutang Anda* (total: {format_rupiah(summary['total_receivable'])})"
-        )
-        for d in summary["receivables"]:
-            last_debt_map[str(display_no)] = {
-                "debt_id": d.get("id"),
-                "row_index": d.get("_row_index"),
-            }
-            desc = str(d.get("description") or "").strip()
-            desc_line = f"\n     📝 {md_safe(desc[:70])}" if desc else ""
-            debt_id_short = str(d.get("id") or "")[-8:]
+        lines.append(f"🟢 *Piutang Anda* (net total: {format_rupiah(summary['total_receivable'])})")
+        for i, d in enumerate(summary["receivables"], 1):
+            person = d.get("person_name") or "-"
+            count = int(d.get("debt_count") or 0)
             lines.append(
-                f"  {display_no}. {md_safe(d.get('person_name'))} — "
-                f"*{format_rupiah(d.get('remaining_amount', 0))}*"
-                f" | ID: `{md_safe(debt_id_short)}`"
-                f"{desc_line}"
+                f"  {i}. {md_safe(person)} — *{format_rupiah(d.get('remaining_amount', 0))}* "
+                f"({count} rincian)\n"
+                f"     Detail: `/hutang {md_safe(person)}`"
             )
-            display_no += 1
 
-    context.user_data["last_debt_map"] = last_debt_map
+    if summary.get("balanced"):
+        lines.append("\n⚪ *Netral tapi masih ada rincian aktif*")
+        for d in summary["balanced"]:
+            person = d.get("person_name") or "-"
+            lines.append(f"  • {md_safe(person)} — cek `/hutang {md_safe(person)}`")
 
     net = summary["total_receivable"] - summary["total_payable"]
     net_label = "🟢 Anda lebih banyak dihutangi" if net >= 0 else "🔴 Anda lebih banyak berhutang"
     lines.append(f"\n{net_label}: *{format_rupiah(abs(net))}*")
     lines.append(
-        "\nKelola debt dari daftar ini:\n"
-        "`/debt_void 1` — batalkan debt salah input\n"
-        "`/debt_edit 1 nominal 100k` — edit nominal\n"
-        "`/debt_edit 1 nama Budi` — edit nama orang\n"
-        "Angka mengikuti nomor dari hasil `/hutang` ini."
+        "\nContoh pembayaran/pengurangan:\n"
+        "`Sapto bayar 5k` — mengurangi piutang Sapto\n"
+        "`bayar hutang Sapto 10k` — mengurangi debt aktif sesuai net Sapto\n"
+        "`potong hutang Sapto 500k` — mengurangi hutang Sapto ke Anda\n"
+        "`potong piutang Akmal 20k buat badminton` — kompensasi tanpa rekening"
     )
 
+    # /debt_void dan /debt_edit sekarang lebih aman dipakai dari /hutang <nama>,
+    # karena /hutang utama sudah agregat per orang.
+    context.user_data["last_debt_map"] = {}
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
