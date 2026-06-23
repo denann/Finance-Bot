@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 import re
 
 from app.sheets.client import get_all_records
-from app.config import SHEET_TRANSACTIONS
+from app.config import SHEET_TRANSACTIONS, SHEET_DEBTS
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -68,6 +68,319 @@ def safe_float(value, default: float = 0.0) -> float:
     except Exception:
         return default
 
+
+
+def normalize_category_key(value: str | None) -> str:
+    """Normalisasi nama kategori untuk matching yang toleran spasi/simbol."""
+    raw = str(value or "").strip().lower()
+    raw = raw.replace("&", " and ")
+    raw = re.sub(r"[^a-z0-9]+", " ", raw)
+    return re.sub(r"\s+", " ", raw).strip()
+
+
+DEFAULT_REPORT_CATEGORIES = [
+    "Food & Beverage",
+    "Transport",
+    "Bills & Utilities",
+    "Shopping",
+    "Health",
+    "Entertainment",
+    "Education",
+    "Other Expense",
+    "Salary",
+    "Freelance",
+    "Other Income",
+    "Piutang Diberikan",
+    "Penerimaan Utang",
+    "Bayar Utang",
+    "Pembayaran Piutang",
+    "Utang Tanpa Cashflow",
+    "Piutang Tanpa Cashflow",
+    "Pembayaran Debt Tanpa Cashflow",
+    "Debt Tanpa Cashflow",
+    "Kompensasi Hutang/Piutang",
+]
+
+CATEGORY_ALIASES = {
+    "food": "Food & Beverage",
+    "fnb": "Food & Beverage",
+    "f b": "Food & Beverage",
+    "fb": "Food & Beverage",
+    "makan": "Food & Beverage",
+    "makanan": "Food & Beverage",
+    "minum": "Food & Beverage",
+    "minuman": "Food & Beverage",
+    "transportasi": "Transport",
+    "tagihan": "Bills & Utilities",
+    "bills": "Bills & Utilities",
+    "utilities": "Bills & Utilities",
+    "utilitas": "Bills & Utilities",
+    "belanja": "Shopping",
+    "kesehatan": "Health",
+    "hiburan": "Entertainment",
+    "pendidikan": "Education",
+    "other": "Other Expense",
+    "lainnya": "Other Expense",
+    "piutang": "Piutang Diberikan",
+    "utang": "Bayar Utang",
+}
+
+
+def get_known_report_categories(records: list[dict] | None = None) -> list[str]:
+    """Gabungkan kategori default dan kategori yang benar-benar ada di sheet transaksi."""
+    categories = []
+    seen = set()
+
+    def add(value):
+        value = str(value or "").strip()
+        key = normalize_category_key(value)
+        if value and key and key not in seen:
+            categories.append(value)
+            seen.add(key)
+
+    for cat in DEFAULT_REPORT_CATEGORIES:
+        add(cat)
+
+    for record in records or []:
+        add((record or {}).get("category"))
+
+    return categories
+
+
+def resolve_category_filter(category_query: str | None, records: list[dict] | None = None) -> str | None:
+    """Resolve input kategori user ke nama kategori canonical jika memungkinkan."""
+    query = str(category_query or "").strip()
+    if not query:
+        return None
+
+    query_key = normalize_category_key(query)
+    if not query_key:
+        return None
+
+    alias_category = CATEGORY_ALIASES.get(query_key)
+    if alias_category:
+        return alias_category
+
+    categories = get_known_report_categories(records)
+    category_by_key = {normalize_category_key(cat): cat for cat in categories}
+
+    if query_key in category_by_key:
+        return category_by_key[query_key]
+
+    # Support input pendek seperti `/bulanan food` atau `/bulanan bills`.
+    partial_matches = [
+        cat for cat in categories
+        if query_key in normalize_category_key(cat) or normalize_category_key(cat) in query_key
+    ]
+    if len(partial_matches) == 1:
+        return partial_matches[0]
+
+    # Fallback: tetap pakai input user supaya custom category tetap bisa difilter.
+    return query
+
+
+def split_report_period_and_category_arg(value: str | None, mode: str) -> tuple[str | None, str | None]:
+    """
+    Pisahkan argumen report menjadi periode dan kategori.
+
+    Contoh:
+    - `/bulanan Food & Beverage` -> (None, "Food & Beverage")
+    - `/bulanan 2026-06 Food & Beverage` -> ("2026-06", "Food & Beverage")
+    - `/mingguan 2026-06-01 Bills & Utilities` -> ("2026-06-01", "Bills & Utilities")
+    - `/harian kemarin makan` -> ("kemarin", "makan")
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return None, None
+
+    parser = parse_report_month_arg if mode == "month" else parse_report_date_arg
+    tokens = raw.split()
+    max_prefix = min(len(tokens), 3)
+
+    # Coba periode di depan argumen. Longest first supaya "hari ini" / "bulan ini" kebaca.
+    for n in range(max_prefix, 0, -1):
+        candidate = " ".join(tokens[:n]).strip()
+        rest = " ".join(tokens[n:]).strip() or None
+        try:
+            parser(candidate)
+            return candidate, rest
+        except Exception:
+            pass
+
+    # Coba periode di belakang argumen. Ini membuat `/bulanan Food & Beverage 2026-06` tetap bisa.
+    for n in range(max_prefix, 0, -1):
+        candidate = " ".join(tokens[-n:]).strip()
+        rest = " ".join(tokens[:-n]).strip() or None
+        try:
+            parser(candidate)
+            return candidate, rest
+        except Exception:
+            pass
+
+    return None, raw
+
+
+def is_truthy_sheet_value(value) -> bool:
+    raw = str(value or "").strip().lower()
+    return raw in {"true", "yes", "y", "1", "settled", "lunas", "void", "voided"}
+
+
+def parse_transaction_debt_ids_from_record(txn: dict) -> list[str]:
+    """Ambil daftar debt id dari kolom transactions.hutang_id."""
+    raw = str((txn or {}).get("hutang_id", "") or "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in re.split(r"[,;\s]+", raw) if part.strip()]
+
+
+def build_debt_lookup(active_only: bool = True) -> dict:
+    """Index debts berdasarkan id dan source_transaction_id untuk laporan."""
+    try:
+        records = get_all_records(SHEET_DEBTS)
+    except Exception:
+        records = []
+
+    by_id = {}
+    by_source_txn = {}
+
+    for debt in records:
+        item = dict(debt or {})
+        debt_id = str(item.get("id", "") or "").strip()
+        if not debt_id:
+            continue
+
+        settled = is_truthy_sheet_value(item.get("is_settled", "FALSE"))
+        remaining = safe_float(item.get("remaining_amount", 0))
+        if active_only and (settled or remaining <= 0):
+            continue
+
+        by_id[debt_id] = item
+
+        source_txn_id = str(item.get("source_transaction_id", "") or "").strip()
+        if source_txn_id:
+            by_source_txn.setdefault(source_txn_id, []).append(item)
+
+    return {"by_id": by_id, "by_source_txn": by_source_txn}
+
+
+def get_linked_debts_for_transaction(txn: dict, lookup: dict) -> list[dict]:
+    """Cari debt aktif yang terhubung ke transaksi dari hutang_id atau source_transaction_id."""
+    by_id = (lookup or {}).get("by_id", {}) or {}
+    by_source_txn = (lookup or {}).get("by_source_txn", {}) or {}
+
+    linked = []
+    seen = set()
+
+    for debt_id in parse_transaction_debt_ids_from_record(txn):
+        debt = by_id.get(debt_id)
+        if debt and debt_id not in seen:
+            linked.append(debt)
+            seen.add(debt_id)
+
+    txn_id = str((txn or {}).get("id", "") or "").strip()
+    for debt in by_source_txn.get(txn_id, []) or []:
+        debt_id = str(debt.get("id", "") or "").strip()
+        if debt_id and debt_id not in seen:
+            linked.append(debt)
+            seen.add(debt_id)
+
+    return linked
+
+
+def enrich_transactions_with_debt_info(transactions: list[dict]) -> list[dict]:
+    """Tambahkan ringkasan debt aktif ke setiap transaksi laporan."""
+    lookup = build_debt_lookup(active_only=True)
+    enriched = []
+
+    for txn in transactions or []:
+        item = dict(txn or {})
+        linked_debts = get_linked_debts_for_transaction(item, lookup)
+
+        receivable_remaining = 0.0
+        payable_remaining = 0.0
+        people = []
+
+        for debt in linked_debts:
+            amount = safe_float(debt.get("remaining_amount", 0))
+            debt_type = str(debt.get("type", "") or "").strip().lower()
+            person = str(debt.get("person_name", "") or "").strip()
+            if person and person not in people:
+                people.append(person)
+
+            if debt_type == "receivable":
+                receivable_remaining += amount
+            elif debt_type == "payable":
+                payable_remaining += amount
+
+        expense_amount = safe_float(item.get("amount", 0))
+        item["linked_debts"] = linked_debts
+        item["debt_receivable_remaining"] = receivable_remaining
+        item["debt_payable_remaining"] = payable_remaining
+        item["debt_people"] = people
+        item["net_expense_after_receivable"] = max(expense_amount - receivable_remaining, 0.0)
+        enriched.append(item)
+
+    return enriched
+
+
+def build_delta_info(current_value, previous_value, previous_available: bool = True) -> dict:
+    """Buat metadata delta yang aman saat data periode sebelumnya belum ada."""
+    cur = safe_float(current_value, 0)
+
+    if not previous_available:
+        return {
+            "current": cur,
+            "previous": None,
+            "delta": None,
+            "pct": None,
+            "available": False,
+        }
+
+    prev = safe_float(previous_value, 0)
+    delta = cur - prev
+    pct = (delta / prev * 100) if prev else None
+
+    return {
+        "current": cur,
+        "previous": prev,
+        "delta": delta,
+        "pct": pct,
+        "available": True,
+    }
+
+
+def build_summary_comparison(current: dict, previous: dict, previous_available: bool = True) -> dict:
+    """Buat delta current vs periode sebelumnya."""
+    current = current or {}
+    previous = previous or {}
+    keys = ["total_income", "total_expense", "net", "count"]
+
+    return {
+        key: build_delta_info(current.get(key, 0), previous.get(key, 0), previous_available)
+        for key in keys
+    }
+
+
+def build_category_comparison(current: dict, previous: dict, previous_available: bool = True) -> dict:
+    """Buat delta pengeluaran per kategori vs periode sebelumnya."""
+    current = current or {}
+    previous = previous or {}
+    previous_keys = {normalize_category_key(cat): cat for cat in previous.keys()}
+    result = {}
+
+    for category, current_amount in current.items():
+        category_key = normalize_category_key(category)
+        has_previous_category = previous_available and category_key in previous_keys
+        previous_category = previous_keys.get(category_key)
+        previous_amount = previous.get(previous_category, 0) if previous_category else 0
+
+        result[category] = build_delta_info(
+            current_amount,
+            previous_amount,
+            previous_available=has_previous_category,
+        )
+
+    return result
 
 def parse_report_date_arg(value: str | None = None) -> str:
     """
@@ -183,13 +496,16 @@ def filter_transactions(
     date_from: str | None = None,
     date_to: str | None = None,
     txn_type: str | None = None,
+    category: str | None = None,
 ) -> list[dict]:
-    """Filter transaksi berdasarkan rentang tanggal dan/atau tipe."""
+    """Filter transaksi berdasarkan rentang tanggal, tipe, dan/atau kategori."""
     result = []
+    category_key = normalize_category_key(category) if category else None
 
     for r in records:
         date = str(r.get("date", "")).strip()
         record_type = str(r.get("type", "")).strip().lower()
+        record_category_key = normalize_category_key(r.get("category"))
 
         if not date:
             continue
@@ -198,6 +514,8 @@ def filter_transactions(
         if date_to and date > date_to:
             continue
         if txn_type and record_type != str(txn_type).strip().lower():
+            continue
+        if category_key and record_category_key != category_key:
             continue
 
         result.append(r)
@@ -239,47 +557,120 @@ def summarize(transactions: list[dict]) -> dict:
 
 # ── Report functions ──────────────────────────────────────────────────────────
 
-def get_daily_report(date_str: str | None = None) -> dict:
+def get_daily_report(date_str: str | None = None, category: str | None = None) -> dict:
     """Laporan harian untuk tanggal tertentu. Default: hari ini."""
     date_str = parse_report_date_arg(date_str)
+    current_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    previous_date = current_date - timedelta(days=1)
+    previous_date_str = previous_date.strftime("%Y-%m-%d")
+
     records = get_transaction_records_for_report()
-    transactions = filter_transactions(records, date_from=date_str, date_to=date_str)
+    category_filter = resolve_category_filter(category, records)
+    transactions = filter_transactions(records, date_from=date_str, date_to=date_str, category=category_filter)
     transactions.sort(key=lambda x: int(x.get("_row_index", 0) or 0), reverse=True)
+
+    previous_transactions = filter_transactions(
+        records,
+        date_from=previous_date_str,
+        date_to=previous_date_str,
+        category=category_filter,
+    )
+    previous_summary = summarize(previous_transactions)
+    previous_available = len(previous_transactions) > 0
 
     summary = summarize(transactions)
     summary["date"] = date_str
-    summary["transactions"] = transactions
+    summary["previous_date"] = previous_date_str
+    summary["category_filter"] = category_filter
+    summary["comparison"] = build_summary_comparison(summary, previous_summary, previous_available)
+    summary["category_comparison"] = build_category_comparison(
+        summary.get("by_category", {}),
+        previous_summary.get("by_category", {}),
+        previous_available,
+    )
+    summary["transactions"] = enrich_transactions_with_debt_info(transactions)
     return summary
 
 
-def get_weekly_report(reference_date: str | None = None) -> dict:
+def get_weekly_report(reference_date: str | None = None, category: str | None = None) -> dict:
     """Laporan mingguan — Senin sampai Minggu dari reference_date."""
     date_from, date_to = get_week_range(reference_date)
+    current_start = datetime.strptime(date_from, "%Y-%m-%d").date()
+    previous_start = current_start - timedelta(days=7)
+    previous_end = current_start - timedelta(days=1)
+    previous_from = previous_start.strftime("%Y-%m-%d")
+    previous_to = previous_end.strftime("%Y-%m-%d")
+
     records = get_transaction_records_for_report()
-    transactions = filter_transactions(records, date_from=date_from, date_to=date_to)
+    category_filter = resolve_category_filter(category, records)
+    transactions = filter_transactions(records, date_from=date_from, date_to=date_to, category=category_filter)
     transactions.sort(key=lambda x: (str(x.get("date", "")), int(x.get("_row_index", 0) or 0)), reverse=True)
+
+    previous_transactions = filter_transactions(
+        records,
+        date_from=previous_from,
+        date_to=previous_to,
+        category=category_filter,
+    )
+    previous_summary = summarize(previous_transactions)
+    previous_available = len(previous_transactions) > 0
 
     summary = summarize(transactions)
     summary["date_from"] = date_from
     summary["date_to"] = date_to
-    summary["transactions"] = transactions
+    summary["previous_date_from"] = previous_from
+    summary["previous_date_to"] = previous_to
+    summary["category_filter"] = category_filter
+    summary["comparison"] = build_summary_comparison(summary, previous_summary, previous_available)
+    summary["category_comparison"] = build_category_comparison(
+        summary.get("by_category", {}),
+        previous_summary.get("by_category", {}),
+        previous_available,
+    )
+    summary["transactions"] = enrich_transactions_with_debt_info(transactions)
     return summary
 
 
-def get_monthly_report(year: int | None = None, month: int | None = None) -> dict:
+def get_monthly_report(year: int | None = None, month: int | None = None, category: str | None = None) -> dict:
     """Laporan bulanan."""
     date_from, date_to = get_month_range(year, month)
     month_label = date_from[:7]
+    current_start = datetime.strptime(date_from, "%Y-%m-%d")
+
+    if current_start.month == 1:
+        previous_year, previous_month = current_start.year - 1, 12
+    else:
+        previous_year, previous_month = current_start.year, current_start.month - 1
+
+    previous_from, previous_to = get_month_range(previous_year, previous_month)
 
     records = get_transaction_records_for_report()
-    transactions = filter_transactions(records, date_from=date_from, date_to=date_to)
+    category_filter = resolve_category_filter(category, records)
+    transactions = filter_transactions(records, date_from=date_from, date_to=date_to, category=category_filter)
     transactions.sort(key=lambda x: (str(x.get("date", "")), int(x.get("_row_index", 0) or 0)), reverse=True)
+
+    previous_transactions = filter_transactions(
+        records,
+        date_from=previous_from,
+        date_to=previous_to,
+        category=category_filter,
+    )
+    previous_summary = summarize(previous_transactions)
+    previous_available = len(previous_transactions) > 0
 
     summary = summarize(transactions)
     summary["date_from"] = date_from
     summary["date_to"] = date_to
     summary["month"] = month_label
-    summary["transactions"] = transactions
+    summary["previous_month"] = previous_from[:7]
+    summary["category_filter"] = category_filter
+    summary["comparison"] = build_summary_comparison(summary, previous_summary, previous_available)
+    summary["category_comparison"] = build_category_comparison(
+        summary.get("by_category", {}),
+        previous_summary.get("by_category", {}),
+        previous_available,
+    )
+    summary["transactions"] = enrich_transactions_with_debt_info(transactions)
     return summary
 
 

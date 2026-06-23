@@ -910,7 +910,7 @@ def format_split_bill_preview_line(parsed: dict) -> str:
         f"🤝 Split: {status_label} | "
         f"total dibayar {format_rupiah(total)} | "
         f"bagian kamu {format_rupiah(share)} | "
-        f"piutang {format_rupiah(receivable_display)}"
+        f"piutang aktif {format_rupiah(receivable_display)}"
     )
 
 def build_preview(parsed: dict) -> str:
@@ -1015,7 +1015,7 @@ def strip_split_bill_phrase(text: str) -> str:
     # "Nasi Kuning Dibagi Sama Sapto".
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
-    name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{0,80}"
+    name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s,;&:%./]{0,140}"
 
     clean = re.sub(
         rf"\b{split_word}\s*(?:jadi\s*)?\d*\s*(?:orang\s+)?{friend_marker}\s+{name_chunk}",
@@ -1092,6 +1092,157 @@ def split_split_bill_person_names(name_text: str) -> list[str]:
     return names
 
 
+
+def strip_split_bill_name_tail(name_text: str) -> str:
+    """Potong bagian setelah nama teman, misalnya tanggal/status pembayaran."""
+    clean = str(name_text or "").strip()
+    clean = re.split(
+        r"\b(tanggal|tgl|tg|pada|date|kemarin|hari|minggu|bulan|udah|sudah|belum|dibayar|bayar|lunas|dari|ke)\b",
+        clean,
+        flags=re.IGNORECASE,
+    )[0]
+    return re.sub(r"\s+", " ", clean).strip(" ,;&")
+
+
+def is_split_bill_allocation_token(value: str) -> bool:
+    raw = str(value or "").strip().lower().rstrip(".,;)")
+    if not raw:
+        return False
+    return bool(re.fullmatch(r"\d+(?:[.,]\d+)?\s*(?:%|rb|ribu|k|jt|juta|m)?", raw))
+
+
+def parse_split_bill_share_value(value: str, base_share: float) -> float:
+    """Parse nilai share teman: 100%, 80%, 125k, 100000, dst."""
+    raw = str(value or "").strip().lower().rstrip(".,;)")
+    if not raw:
+        return 0.0
+
+    if raw.endswith("%"):
+        try:
+            pct = float(raw[:-1].replace(",", ".").strip())
+            return max(base_share * pct / 100, 0.0)
+        except Exception:
+            return 0.0
+
+    return max(parse_amount_text(raw), 0.0)
+
+
+def parse_split_bill_people_and_shares(name_text: str, total_amount: float, participants: int) -> dict:
+    """
+    Parse nama teman split bill plus custom share opsional.
+
+    Support:
+    - sapto opik alpat                         -> equal share
+    - sapto:100% opik:80% alpat:100%          -> persen dari share normal
+    - sapto 100% opik 80% alpat 100%          -> titik dua opsional
+    - sapto:125k opik:100k alpat:125k         -> nominal langsung
+    - sapto 125k opik 100k alpat 125k         -> titik dua opsional
+    """
+    base_share = float(total_amount or 0) / int(participants or 1)
+    clean = strip_split_bill_name_tail(name_text)
+    clean = clean.replace("=", ":")
+    clean = re.sub(r"\s*:\s*", ":", clean)
+    clean = re.sub(r"\s*(?:,|;|&|\bdan\b|\band\b)\s*", " ", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"\s+", " ", clean).strip()
+
+    if not clean:
+        return {
+            "person_names": [],
+            "person_shares": {},
+            "base_share_amount": base_share,
+            "has_custom_share": False,
+        }
+
+    tokens = [t.strip(" ,;&") for t in clean.split() if t.strip(" ,;&")]
+    noise = {"sama", "ama", "dengan", "bareng", "dan", "and"}
+    entries = []
+    has_custom_share = False
+    i = 0
+
+    while i < len(tokens):
+        token = tokens[i].strip()
+        low = token.lower()
+
+        if not token or low in noise:
+            i += 1
+            continue
+
+        name = ""
+        value = None
+
+        if ":" in token:
+            name_part, value_part = token.split(":", 1)
+            name_part = re.sub(r"[^A-Za-zÀ-ÿ\s]", " ", name_part).strip()
+            value_part = value_part.strip()
+
+            if name_part:
+                name = name_part
+                if is_split_bill_allocation_token(value_part):
+                    value = value_part
+                    has_custom_share = True
+                elif not value_part and i + 1 < len(tokens) and is_split_bill_allocation_token(tokens[i + 1]):
+                    value = tokens[i + 1]
+                    has_custom_share = True
+                    i += 1
+        elif i + 1 < len(tokens) and is_split_bill_allocation_token(tokens[i + 1]):
+            name_part = re.sub(r"[^A-Za-zÀ-ÿ\s]", " ", token).strip()
+            if name_part:
+                name = name_part
+                value = tokens[i + 1]
+                has_custom_share = True
+                i += 1
+        elif is_split_bill_allocation_token(token):
+            # Token angka tanpa nama, abaikan supaya tidak jadi nama orang.
+            i += 1
+            continue
+        else:
+            name_part = re.sub(r"[^A-Za-zÀ-ÿ\s]", " ", token).strip()
+            if name_part:
+                name = name_part
+
+        if name:
+            normalized_name = re.sub(r"\s+", " ", name).strip().title()
+            if normalized_name and normalized_name.lower() not in noise:
+                entries.append((normalized_name, value))
+
+        i += 1
+
+    person_names = []
+    person_shares = {}
+    seen = set()
+
+    for name, value in entries:
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        person_names.append(name)
+        person_shares[name] = parse_split_bill_share_value(value, base_share) if value else base_share
+
+    return {
+        "person_names": person_names,
+        "person_shares": person_shares,
+        "base_share_amount": base_share,
+        "has_custom_share": has_custom_share,
+    }
+
+
+def format_split_bill_person_shares(split_bill: dict) -> str:
+    shares = (split_bill or {}).get("person_shares") or {}
+    person_names = (split_bill or {}).get("person_names") or []
+    if not shares and person_names:
+        fallback = float((split_bill or {}).get("base_share_amount", (split_bill or {}).get("share_amount", 0)) or 0)
+        shares = {str(name): fallback for name in person_names if str(name or "").strip()}
+
+    parts = []
+    for name in person_names:
+        if not str(name or "").strip():
+            continue
+        amount = float(shares.get(name, 0) or 0)
+        parts.append(f"{name}: {format_rupiah(amount)}")
+
+    return ", ".join(parts)
+
 def clean_split_person_name(name: str) -> str:
     names = split_split_bill_person_names(name)
     return " ".join(names).title() if names else ""
@@ -1121,7 +1272,7 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     text = str(raw or "")
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
-    name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{0,80}"
+    name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s,;&:%./]{0,140}"
     patterns = [
         # "dibagi 2 sama sapto"
         rf"\b{split_word}\s*(?:jadi\s*)?(\d+)\s*(?:orang)?\s+{friend_marker}\s+({name_chunk})",
@@ -1134,6 +1285,9 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
 
     participants = None
     person_names = []
+    person_shares = {}
+    base_share_amount = 0.0
+    has_custom_share = False
 
     for idx, pattern in enumerate(patterns):
         match = re.search(pattern, text, flags=re.IGNORECASE)
@@ -1142,10 +1296,16 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
 
         if idx in (0, 2):
             participants = int(match.group(1))
-            person_names = split_split_bill_person_names(match.group(2))
+            name_text = match.group(2)
         else:
-            person_names = split_split_bill_person_names(match.group(1))
+            name_text = match.group(1)
             participants = int(match.group(2))
+
+        share_parse = parse_split_bill_people_and_shares(name_text, amount, participants)
+        person_names = share_parse.get("person_names") or []
+        person_shares = share_parse.get("person_shares") or {}
+        base_share_amount = float(share_parse.get("base_share_amount", 0) or 0)
+        has_custom_share = bool(share_parse.get("has_custom_share"))
         break
 
     if not participants or participants < 2 or not person_names:
@@ -1157,8 +1317,17 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     # split bill tidak valid, agar kasus gagal tidak tiba-tiba berubah nominal.
     parsed["amount"] = amount
 
-    share_amount = amount / participants
-    total_receivable = share_amount * len(person_names)
+    if not person_shares:
+        base_share_amount = amount / participants
+        person_shares = {person: base_share_amount for person in person_names}
+
+    total_receivable = sum(float(v or 0) for v in person_shares.values())
+    if total_receivable > amount and total_receivable > 0:
+        scale = amount / total_receivable
+        person_shares = {person: float(value or 0) * scale for person, value in person_shares.items()}
+        total_receivable = amount
+    user_share_amount = max(amount - total_receivable, 0.0)
+    share_amount = user_share_amount  # backward compatible field: sekarang berarti bagian user
 
     # Bersihkan deskripsi/subject supaya tidak ikut menyimpan frasa
     # "bagi/dibagi 2 sama ...".
@@ -1187,6 +1356,10 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
         "person_names": person_names,
         "participants": participants,
         "share_amount": share_amount,
+        "user_share_amount": user_share_amount,
+        "base_share_amount": base_share_amount,
+        "person_shares": person_shares,
+        "has_custom_share": has_custom_share,
         "total_receivable": total_receivable,
         "total_amount": amount,
         "status": None,  # paid / unpaid
@@ -1244,6 +1417,8 @@ def build_split_bill_prompt_from_parsed(parsed: dict) -> str:
     share = float(split_bill.get("share_amount", 0) or 0)
     total_receivable = float(split_bill.get("total_receivable", share * len(person_names)) or 0)
     friend_text = ", ".join(str(p) for p in person_names if p)
+    detail_text = format_split_bill_person_shares(split_bill)
+    detail_line = f"📌 Rincian teman: *{md_safe(detail_text)}*\n" if detail_text else ""
     date_text = parsed.get("date") or "-"
 
     return (
@@ -1253,7 +1428,8 @@ def build_split_bill_prompt_from_parsed(parsed: dict) -> str:
         f"💰 Total dibayar: *{format_rupiah(total)}*\n"
         f"👥 Dibagi: *{participants} orang*\n"
         f"👤 Teman: *{md_safe(friend_text)}*\n"
-        f"📌 Bagian kamu/per orang: *{format_rupiah(share)}*\n"
+        f"📌 Bagian kamu: *{format_rupiah(share)}*\n"
+        f"{detail_line}"
         f"📌 Total piutang jika belum dibayar: *{format_rupiah(total_receivable)}*\n\n"
         f"{md_safe(friend_text)} sudah bayar bagian mereka?\n"
         "Kalau *sudah*, transaksi disimpan sebesar bagian kamu saja.\n"
@@ -1277,12 +1453,14 @@ def build_mixed_split_bill_prompt(mixed_items: list[dict]) -> str:
         share = float(split_bill.get("share_amount", 0) or 0)
         total_receivable = float(split_bill.get("total_receivable", share * len(person_names)) or 0)
         friend_text = ", ".join(str(p) for p in person_names if p)
+        detail_text = format_split_bill_person_shares(split_bill)
+        detail_suffix = f" | {md_safe(detail_text)}" if detail_text else ""
         date_text = parsed.get("date") or "-"
         lines.append(
             f"{i}. {md_safe(parsed.get('description') or '-')} "
             f"(*{md_safe(date_text)}*) — "
             f"total *{format_rupiah(total)}*, bagian kamu *{format_rupiah(share)}*, "
-            f"{md_safe(friend_text)}: *{format_rupiah(total_receivable)}*"
+            f"piutang *{format_rupiah(total_receivable)}*{detail_suffix}"
         )
 
     lines.append(
@@ -1338,6 +1516,8 @@ def build_mixed_split_bill_queue_prompt(mixed_items: list[dict]) -> str:
     share = float(split_bill.get("share_amount", 0) or 0)
     total_receivable = float(split_bill.get("total_receivable", share * len(person_names)) or 0)
     friend_text = ", ".join(str(p) for p in person_names if p)
+    detail_text = format_split_bill_person_shares(split_bill)
+    detail_line = f"📌 Rincian teman: *{md_safe(detail_text)}*\n" if detail_text else ""
     date_text = parsed.get("date") or "-"
 
     return (
@@ -1347,7 +1527,8 @@ def build_mixed_split_bill_queue_prompt(mixed_items: list[dict]) -> str:
         f"💰 Total dibayar: *{format_rupiah(total)}*\n"
         f"👥 Dibagi: *{participants} orang*\n"
         f"👤 Teman: *{md_safe(friend_text)}*\n"
-        f"📌 Bagian kamu/per orang: *{format_rupiah(share)}*\n"
+        f"📌 Bagian kamu: *{format_rupiah(share)}*\n"
+        f"{detail_line}"
         f"📌 Total piutang jika belum dibayar: *{format_rupiah(total_receivable)}*\n\n"
         f"{md_safe(friend_text)} sudah bayar bagian untuk item ini?\n"
         "Pilihan ini *hanya berlaku untuk item ini*. Setelah dijawab, saya lanjut ke split bill berikutnya."
@@ -1408,7 +1589,7 @@ def apply_split_bill_decision_to_parsed(parsed: dict, status: str) -> dict:
     split_bill["status"] = status
 
     total_amount = float(split_bill.get("total_amount", parsed.get("amount", 0)) or 0)
-    share_amount = float(split_bill.get("share_amount", 0) or 0)
+    share_amount = float(split_bill.get("user_share_amount", split_bill.get("share_amount", 0)) or 0)
 
     if status == "paid" and share_amount > 0:
         parsed["amount"] = share_amount
@@ -1435,8 +1616,10 @@ def create_split_bill_debt(parsed: dict, raw: str = "", source_transaction_id: s
 
     person_names = split_bill.get("person_names") or [split_bill.get("person_name")]
     person_names = [str(p).strip().title() for p in person_names if str(p or "").strip()]
-    share_amount = float(split_bill.get("share_amount", 0) or 0)
-    if not person_names or share_amount <= 0:
+    person_shares = split_bill.get("person_shares") or {}
+    fallback_share = float(split_bill.get("base_share_amount", split_bill.get("share_amount", 0)) or 0)
+
+    if not person_names:
         return None
 
     desc = f"Split bill: {parsed.get('description') or raw or '-'}"
@@ -1444,6 +1627,10 @@ def create_split_bill_debt(parsed: dict, raw: str = "", source_transaction_id: s
     failed = []
 
     for person in person_names:
+        share_amount = float(person_shares.get(person, fallback_share) or 0)
+        if share_amount <= 0:
+            continue
+
         result = add_debt(
             "receivable",
             person,

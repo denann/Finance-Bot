@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import datetime, date, timedelta
 import re
 
 from app.sheets.client import (
-    append_row,
+    append_row_raw,
     get_all_records,
     update_cell,
 )
@@ -55,6 +55,61 @@ def normalize_month(month: str | None = None) -> str:
 
     return f"{year}-{month_num:02d}"
 
+
+
+
+def normalize_sheet_month_value(value) -> str:
+    """
+    Normalisasi nilai month dari Google Sheets ke format YYYY-MM.
+
+    Kenapa perlu:
+    - Google Sheets bisa auto-convert `2026-06` menjadi date/serial number.
+    - Data lama bisa tersimpan sebagai `2026-06-01` atau format date lain.
+    """
+    if value is None:
+        return ""
+
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m")
+
+    if isinstance(value, date):
+        return value.strftime("%Y-%m")
+
+    if isinstance(value, (int, float)):
+        try:
+            # Google Sheets/Excel serial date origin.
+            # `2026-06` yang terlanjur dianggap tanggal biasanya terbaca sebagai serial number.
+            dt = datetime(1899, 12, 30) + timedelta(days=float(value))
+            if 1990 <= dt.year <= 2100:
+                return dt.strftime("%Y-%m")
+        except Exception:
+            pass
+        return str(value).strip()
+
+    raw = str(value).strip()
+    if not raw:
+        return ""
+
+    raw = raw.replace("/", "-")
+
+    # 2026-06 atau 2026-6
+    match = re.fullmatch(r"(\d{4})-(\d{1,2})", raw)
+    if match:
+        return normalize_month(f"{match.group(1)}-{match.group(2)}")
+
+    # 2026-06-01, 2026-6-1, atau format date dari Google Sheets.
+    match = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+.*)?", raw)
+    if match:
+        return normalize_month(f"{match.group(1)}-{match.group(2)}")
+
+    # Kalau gspread mengembalikan display value seperti Jun 2026 / June 2026.
+    for fmt in ("%b %Y", "%B %Y", "%Y %B", "%Y %b"):
+        try:
+            return datetime.strptime(raw, fmt).strftime("%Y-%m")
+        except Exception:
+            pass
+
+    return raw
 
 def format_month_label(month: str) -> str:
     """Ubah YYYY-MM menjadi label singkat."""
@@ -119,7 +174,7 @@ def set_budget(category: str, amount: float, month: str = None) -> dict:
     today = datetime.now().strftime("%Y-%m-%d")
 
     for i, record in enumerate(records):
-        record_month = str(record.get("month", "")).strip()
+        record_month = normalize_sheet_month_value(record.get("month", ""))
         record_category = str(record.get("category", "")).strip().lower()
 
         if record_month == month and record_category == category.strip().lower():
@@ -150,7 +205,7 @@ def set_budget(category: str, amount: float, month: str = None) -> dict:
         today,
     ]
 
-    append_row(SHEET_BUDGETS, row)
+    append_row_raw(SHEET_BUDGETS, row)
 
     return {
         "success": True,
@@ -169,7 +224,7 @@ def get_budget(category: str, month: str = None) -> float | None:
     records = get_all_records(SHEET_BUDGETS)
 
     for record in records:
-        record_month = str(record.get("month", "")).strip()
+        record_month = normalize_sheet_month_value(record.get("month", ""))
         record_category = str(record.get("category", "")).strip().lower()
 
         if record_month == month and record_category == category.strip().lower():
@@ -185,7 +240,7 @@ def get_all_budgets(month: str = None) -> list[dict]:
     records = get_all_records(SHEET_BUDGETS)
     return [
         r for r in records
-        if str(r.get("month", "")).strip() == month
+        if normalize_sheet_month_value(r.get("month", "")) == month
     ]
 
 
@@ -193,9 +248,9 @@ def get_budget_months() -> list[str]:
     """Ambil daftar bulan yang punya budget."""
     records = get_all_records(SHEET_BUDGETS)
     months = sorted({
-        str(r.get("month", "")).strip()
+        normalize_sheet_month_value(r.get("month", ""))
         for r in records
-        if str(r.get("month", "")).strip()
+        if normalize_sheet_month_value(r.get("month", ""))
     })
 
     return months

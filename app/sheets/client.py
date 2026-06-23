@@ -42,6 +42,17 @@ def append_row(sheet_name: str, row: list):
     sheet.append_row(row, value_input_option="USER_ENTERED")
 
 
+
+def append_row_raw(sheet_name: str, row: list):
+    """Tambah satu baris baru tanpa auto-format Google Sheets.
+
+    Dipakai untuk field yang harus tetap persis sebagai text, misalnya
+    budgets.month = `YYYY-MM`. Kalau pakai USER_ENTERED, Sheets bisa
+    mengubah `2026-06` menjadi date/serial number.
+    """
+    sheet = get_sheet(sheet_name)
+    sheet.append_row(row, value_input_option="RAW")
+
 def append_rows(sheet_name: str, rows: list[list]):
     """
     Tambah banyak baris sekaligus.

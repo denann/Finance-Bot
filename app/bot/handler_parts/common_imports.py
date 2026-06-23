@@ -89,6 +89,7 @@ from app.services.report_service import (
     get_monthly_report,
     search_transactions,
     parse_report_month_arg,
+    split_report_period_and_category_arg,
 )
 
 from app.services.finance_insight_service import (
