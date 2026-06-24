@@ -2,6 +2,7 @@
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
+from app.bot.handler_parts.common_imports import _safe_float_for_display
 
 from app.bot.handler_parts.networth_assets import (
     build_asset_confirm_preview,
@@ -1145,56 +1146,74 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-def build_transactions_full_text(transactions: list[dict], title: str) -> str:
+def build_transactions_full_text(transactions: list[dict], title: str, account_filter: str | None = None) -> str:
+    transactions = enrich_transactions_with_debt_info(transactions or [])
     lines = [f"🧾 *{md_safe(title)}*\n"]
+    append_net_gross_note(lines, transactions)
 
     total_income = 0.0
     total_expense = 0.0
+    total_net_expense = 0.0
     total_transfer = 0.0
+    total_transfer_in = 0.0
+    total_transfer_out = 0.0
+    account_key = str(account_filter or "").strip().lower()
 
     for i, txn in enumerate(transactions, 1):
-        txn_type = str(txn.get("type", "")).strip()
-        amount = float(txn.get("amount", 0) or 0)
+        txn_type = str(txn.get("type", "")).strip().lower()
+        amount = _safe_float_for_display(txn.get("amount", 0))
+        source_account = str(txn.get("account", "") or "").strip()
+        target_account = str(txn.get("to_account", "") or "").strip()
+        source_match = bool(account_key and source_account.lower() == account_key)
+        target_match = bool(account_key and target_account.lower() == account_key)
 
-        if txn_type == "income":
-            total_income += amount
-        elif txn_type == "expense":
-            total_expense += amount
-        elif txn_type == "transfer":
-            total_transfer += amount
+        if account_key:
+            if txn_type == "income" and source_match:
+                total_income += amount
+            elif txn_type == "expense" and source_match:
+                total_expense += amount
+                total_net_expense += get_net_expense_after_receivable(txn)
+            elif txn_type == "transfer":
+                if source_match:
+                    total_transfer_out += amount
+                if target_match:
+                    total_transfer_in += amount
+                if source_match or target_match:
+                    total_transfer += amount
+        else:
+            if txn_type == "income":
+                total_income += amount
+            elif txn_type == "expense":
+                total_expense += amount
+                total_net_expense += get_net_expense_after_receivable(txn)
+            elif txn_type == "transfer":
+                total_transfer += amount
 
-        icon = {
-            "expense": "❌",
-            "income": "✅",
-            "transfer": "🔄",
-        }.get(txn_type, "❓")
+        lines.extend(build_transaction_display_lines(txn, index=i, include_date=True, include_id=True))
 
-        date = md_safe(txn.get("date", "-"))
-        desc = md_safe(txn.get("description") or "-")
-        category = md_safe(txn.get("category") or "-")
-        account = md_safe(txn.get("account") or "-")
-        to_account = md_safe(txn.get("to_account") or "")
-
-        account_text = account
-        if txn_type == "transfer" and str(txn.get("to_account") or "").strip():
-            account_text = f"{account} → {to_account}"
-
+    if account_key:
+        net = total_income + total_transfer_in - total_expense - total_transfer_out
+        expense_text = format_expense_net_gross(total_net_expense, total_expense)
         lines.append(
-            f"{i}. {icon} *{desc}*\n"
-            f"   📅 {date}\n"
-            f"   💰 {format_rupiah(amount)} | {category}\n"
-            f"   🏦 {account_text}"
+            "\n*Ringkasan Rekening:*\n"
+            f"✅ Income          : *{format_rupiah(total_income)}*\n"
+            f"❌ Expense         : *{expense_text}*\n"
+            f"🔁 Transfer Masuk  : *{format_rupiah(total_transfer_in)}*\n"
+            f"🔁 Transfer Keluar : *{format_rupiah(total_transfer_out)}*\n"
+            f"📊 Net Rekening    : *{format_rupiah(net)}*\n"
+            f"📝 Total           : *{len(transactions)} transaksi*"
         )
-
-    net = total_income - total_expense
-    lines.append(
-        "\n*Ringkasan:*\n"
-        f"✅ Income   : *{format_rupiah(total_income)}*\n"
-        f"❌ Expense  : *{format_rupiah(total_expense)}*\n"
-        f"🔄 Transfer : *{format_rupiah(total_transfer)}*\n"
-        f"📊 Net      : *{format_rupiah(net)}*\n"
-        f"📝 Total    : *{len(transactions)} transaksi*"
-    )
+    else:
+        net = total_income - total_expense
+        expense_text = format_expense_net_gross(total_net_expense, total_expense)
+        lines.append(
+            "\n*Ringkasan:*\n"
+            f"✅ Income   : *{format_rupiah(total_income)}*\n"
+            f"❌ Expense  : *{expense_text}*\n"
+            f"🔄 Transfer : *{format_rupiah(total_transfer)}*\n"
+            f"📊 Net      : *{format_rupiah(net)}*\n"
+            f"📝 Total    : *{len(transactions)} transaksi*"
+        )
 
     lines.append(
         "\nNomor di atas bisa dipakai untuk koreksi setelah command ini:\n"
@@ -1203,48 +1222,144 @@ def build_transactions_full_text(transactions: list[dict], title: str) -> str:
 
     return "\n".join(lines)
 
+def build_transaction_filter_title(base_title: str, category_filter: str | None = None, account_filter: str | None = None) -> str:
+    suffix = []
+    if category_filter:
+        suffix.append(f"Kategori {category_filter}")
+    if account_filter:
+        suffix.append(f"Rekening {account_filter}")
+    if suffix:
+        return f"{base_title} — {' | '.join(suffix)}"
+    return base_title
 
-def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str]:
-    """Parse command /transaksi untuk full list hari/minggu/bulan tertentu."""
+
+def _build_transaksi_prefixed_period_arg(first: str, rest: str, mode: str) -> str | None:
+    """Bangun argumen periode+filter untuk /transaksi dengan prefix hari/minggu/bulan.
+
+    Tujuan utamanya agar format natural seperti:
+    - /transaksi bulan lalu Food & Beverage
+    - /transaksi minggu lalu rekening Cash
+    - /transaksi hari ini makan
+
+    tetap bisa dibaca oleh split_report_filter_args().
+    """
+    rest = str(rest or "").strip()
+    if not rest:
+        return None
+
+    first_rest = rest.split()[0].strip().lower()
+
+    if mode == "month" and first_rest in {"ini", "lalu", "depan"}:
+        return f"{first} {rest}"
+
+    if mode == "date" and first_rest in {"ini", "lalu", "depan"}:
+        return f"{first} {rest}"
+
+    return rest
+
+
+def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str | None]:
+    """Parse command /transaksi untuk full list hari/minggu/bulan/rekening tertentu."""
     raw = " ".join(args or []).strip()
     low = raw.lower()
 
     if not raw:
         year, month_num = parse_report_month_arg(None)
         report = get_monthly_report(year, month_num)
-        return f"Transaksi Bulan {report.get('month', '-')}", report.get("transactions", []), "month"
+        return f"Transaksi Bulan {report.get('month', '-')}", report.get("transactions", []), "month", None
 
     first = low.split()[0]
     rest = " ".join(raw.split()[1:]).strip()
 
+    if first in ["rekening", "akun", "account", "rek"]:
+        account_arg, period_arg = split_account_period_arg(rest)
+        if not account_arg:
+            raise ValueError("Nama rekening belum diisi. Contoh: /transaksi rekening Cash")
+
+        report = get_account_report(account_arg, period_arg)
+        account_filter = report.get("account_filter") or account_arg
+        period_label = report.get("period_label") or report.get("month") or "-"
+        return (
+            f"Transaksi Rekening {account_filter} — {period_label}",
+            report.get("transactions", []),
+            "account",
+            account_filter,
+        )
+
     if first in ["hari", "harian", "tanggal", "tgl", "tg", "day", "daily"]:
-        report = get_daily_report(rest or None)
-        return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day"
+        period_source = _build_transaksi_prefixed_period_arg(first, rest, "date")
+        date_arg, category_arg, account_arg = split_report_filter_args(period_source, "date")
+        report = get_daily_report(date_arg, category_arg, account_arg)
+        title = build_transaction_filter_title(
+            f"Transaksi Tanggal {report.get('date', '-')}",
+            report.get("category_filter"),
+            report.get("account_filter"),
+        )
+        return title, report.get("transactions", []), "day", report.get("account_filter")
 
     if first in ["minggu", "mingguan", "week", "weekly"]:
-        report = get_weekly_report(rest or None)
-        return f"Transaksi Minggu {report.get('date_from', '-')} s/d {report.get('date_to', '-')}", report.get("transactions", []), "week"
+        period_source = _build_transaksi_prefixed_period_arg(first, rest, "date")
+        date_arg, category_arg, account_arg = split_report_filter_args(period_source, "date")
+        report = get_weekly_report(date_arg, category_arg, account_arg)
+        title = build_transaction_filter_title(
+            f"Transaksi Minggu {report.get('date_from', '-')} s/d {report.get('date_to', '-')}",
+            report.get("category_filter"),
+            report.get("account_filter"),
+        )
+        return title, report.get("transactions", []), "week", report.get("account_filter")
 
     if first in ["bulan", "bulanan", "month", "monthly"]:
-        year, month_num = parse_report_month_arg(rest or None)
-        report = get_monthly_report(year, month_num)
-        return f"Transaksi Bulan {report.get('month', '-')}", report.get("transactions", []), "month"
+        period_source = _build_transaksi_prefixed_period_arg(first, rest, "month")
+        month_arg, category_arg, account_arg = split_report_filter_args(period_source, "month")
+        year, month_num = parse_report_month_arg(month_arg)
+        report = get_monthly_report(year, month_num, category_arg, account_arg)
+        title = build_transaction_filter_title(
+            f"Transaksi Bulan {report.get('month', '-')}",
+            report.get("category_filter"),
+            report.get("account_filter"),
+        )
+        return title, report.get("transactions", []), "month", report.get("account_filter")
 
     if re.fullmatch(r"20\d{2}[-/]\d{1,2}[-/]\d{1,2}", low) or re.fullmatch(r"\d{1,2}[-/]\d{1,2}[-/]20\d{2}", low):
         report = get_daily_report(raw)
-        return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day"
+        return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day", None
 
     if re.fullmatch(r"20\d{2}[-/]\d{1,2}", low):
         year, month_num = parse_report_month_arg(raw)
         report = get_monthly_report(year, month_num)
-        return f"Transaksi Bulan {report.get('month', '-')}", report.get("transactions", []), "month"
+        return f"Transaksi Bulan {report.get('month', '-')}", report.get("transactions", []), "month", None
 
     if re.fullmatch(r"\d{1,2}", low):
         report = get_daily_report(raw)
-        return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day"
+        return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day", None
+
+    # Alias natural tanpa prefix, misalnya:
+    # /transaksi kemarin
+    # /transaksi minggu lalu
+    # /transaksi bulan lalu
+    try:
+        date_arg = parse_report_date_arg(raw)
+        report = get_daily_report(date_arg)
+        return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day", None
+    except Exception:
+        pass
+
+    try:
+        month_arg, category_arg, account_arg = split_report_filter_args(raw, "month")
+        if month_arg or category_arg or account_arg:
+            year, month_num = parse_report_month_arg(month_arg)
+            report = get_monthly_report(year, month_num, category_arg, account_arg)
+            title = build_transaction_filter_title(
+                f"Transaksi Bulan {report.get('month', '-')}",
+                report.get("category_filter"),
+                report.get("account_filter"),
+            )
+            return title, report.get("transactions", []), "month", report.get("account_filter")
+    except Exception:
+        pass
 
     raise ValueError(
-        "Format /transaksi tidak dikenali. Contoh: /transaksi hari 1, /transaksi minggu 2026-06-01, /transaksi bulan 2026-06."
+        "Format /transaksi tidak dikenali. Contoh: /transaksi 2026-06, /transaksi bulan lalu, /transaksi Food & Beverage 2026-06, /transaksi rekening Cash bulan lalu."
     )
 
 
@@ -1255,17 +1370,18 @@ async def transaksi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        title, transactions, _period_type = parse_transaksi_period(context.args)
+        title, transactions, _period_type, account_filter = parse_transaksi_period(context.args)
     except ValueError as e:
         await update.message.reply_text(
             f"❌ {str(e)}\n\n"
             "Contoh:\n"
             "`/transaksi`\n"
+            "`/transaksi 2026-06`\n"
+            "`/transaksi bulan lalu`\n"
             "`/transaksi hari 2026-06-01`\n"
-            "`/transaksi hari 1`\n"
-            "`/transaksi minggu 2026-06-01`\n"
-            "`/transaksi bulan 2026-06`\n"
-            "`/transaksi bulan 6`",
+            "`/transaksi minggu lalu`\n"
+            "`/transaksi Food & Beverage 2026-06`\n"
+            "`/transaksi rekening Cash bulan lalu`",
             parse_mode="Markdown",
         )
         return
@@ -1292,7 +1408,7 @@ async def transaksi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
 
     context.user_data["last_txn_map"] = last_map
-    await reply_long_markdown(update, build_transactions_full_text(transactions, title))
+    await reply_long_markdown(update, build_transactions_full_text(transactions, title, account_filter))
 
 
 async def last_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):

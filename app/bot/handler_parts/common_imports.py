@@ -87,9 +87,14 @@ from app.services.report_service import (
     get_daily_report,
     get_weekly_report,
     get_monthly_report,
+    get_account_report,
     search_transactions,
     parse_report_month_arg,
+    parse_report_date_arg,
     split_report_period_and_category_arg,
+    split_report_filter_args,
+    split_account_period_arg,
+    enrich_transactions_with_debt_info,
 )
 
 from app.services.finance_insight_service import (
@@ -177,6 +182,252 @@ def short_debt_id(debt_id: str) -> str:
 
 def md_safe(value) -> str:
     return escape_markdown(str(value or "-"), version=1)
+
+
+def md_code_text(value) -> str:
+    """Text aman untuk ditaruh di dalam inline code Markdown Telegram.
+
+    Jangan pakai md_safe() di dalam backtick karena underscore akan menjadi \\_
+    dan Telegram menampilkannya literal di code span. Transaction ID memakai
+    underscore, jadi cukup amankan backtick saja.
+    """
+    return str(value or "-").replace("`", "'")
+
+
+def short_txn_id(txn_id: str) -> str:
+    txn_id = str(txn_id or "")
+    if len(txn_id) <= 18:
+        return txn_id
+    return txn_id[:18] + "..."
+
+
+
+def _safe_float_for_display(value, default: float = 0.0) -> float:
+    try:
+        if isinstance(value, str):
+            raw = value.strip().replace("Rp", "").replace("rp", "").replace(" ", "")
+            if "." in raw and "," in raw:
+                raw = raw.replace(".", "").replace(",", ".")
+            elif "," in raw:
+                raw = raw.replace(",", ".")
+            elif "." in raw:
+                parts = raw.split(".")
+                if len(parts) > 1 and all(len(part) == 3 for part in parts[1:]):
+                    raw = raw.replace(".", "")
+            raw = re.sub(r"[^0-9.-]", "", raw)
+            return float(raw or 0)
+        return float(value or 0)
+    except Exception:
+        return default
+
+
+def get_transaction_receivable_parts(txn: dict) -> list[dict]:
+    """Ambil rincian piutang aktif per orang dari transaksi enriched."""
+    parts = (txn or {}).get("debt_receivable_parts") or []
+    if parts:
+        return [
+            {
+                "person_name": str((part or {}).get("person_name") or "Tanpa nama").strip(),
+                "remaining_amount": _safe_float_for_display((part or {}).get("remaining_amount", 0)),
+            }
+            for part in parts
+            if _safe_float_for_display((part or {}).get("remaining_amount", 0)) > 0
+        ]
+
+    # Fallback untuk data lama yang hanya punya linked_debts / aggregate.
+    receivable_by_person = {}
+    for debt in (txn or {}).get("linked_debts") or []:
+        debt_type = str((debt or {}).get("type", "") or "").strip().lower()
+        if debt_type != "receivable":
+            continue
+        person = str((debt or {}).get("person_name") or "Tanpa nama").strip()
+        amount = _safe_float_for_display((debt or {}).get("remaining_amount", 0))
+        if amount > 0:
+            receivable_by_person[person] = receivable_by_person.get(person, 0.0) + amount
+
+    if receivable_by_person:
+        return [
+            {"person_name": person, "remaining_amount": amount}
+            for person, amount in receivable_by_person.items()
+        ]
+
+    receivable = _safe_float_for_display((txn or {}).get("debt_receivable_remaining", 0))
+    people = [str(x).strip() for x in ((txn or {}).get("debt_people") or []) if str(x).strip()]
+    if receivable > 0 and people:
+        if len(people) == 1:
+            return [{"person_name": people[0], "remaining_amount": receivable}]
+        share = receivable / len(people)
+        return [{"person_name": person, "remaining_amount": share} for person in people]
+    if receivable > 0:
+        return [{"person_name": "Tanpa nama", "remaining_amount": receivable}]
+    return []
+
+
+def get_transaction_payable_parts(txn: dict) -> list[dict]:
+    """Ambil rincian utang aktif per orang dari transaksi enriched."""
+    parts = (txn or {}).get("debt_payable_parts") or []
+    if parts:
+        return [
+            {
+                "person_name": str((part or {}).get("person_name") or "Tanpa nama").strip(),
+                "remaining_amount": _safe_float_for_display((part or {}).get("remaining_amount", 0)),
+            }
+            for part in parts
+            if _safe_float_for_display((part or {}).get("remaining_amount", 0)) > 0
+        ]
+
+    payable_by_person = {}
+    for debt in (txn or {}).get("linked_debts") or []:
+        debt_type = str((debt or {}).get("type", "") or "").strip().lower()
+        if debt_type != "payable":
+            continue
+        person = str((debt or {}).get("person_name") or "Tanpa nama").strip()
+        amount = _safe_float_for_display((debt or {}).get("remaining_amount", 0))
+        if amount > 0:
+            payable_by_person[person] = payable_by_person.get(person, 0.0) + amount
+
+    return [
+        {"person_name": person, "remaining_amount": amount}
+        for person, amount in payable_by_person.items()
+    ]
+
+
+def get_net_expense_after_receivable(txn: dict) -> float:
+    """Gross expense dikurangi piutang aktif terkait transaksi."""
+    amount = _safe_float_for_display((txn or {}).get("amount", 0))
+    receivable = sum(
+        _safe_float_for_display(part.get("remaining_amount", 0))
+        for part in get_transaction_receivable_parts(txn)
+    )
+    if receivable <= 0:
+        receivable = _safe_float_for_display((txn or {}).get("debt_receivable_remaining", 0))
+    return max(amount - receivable, 0.0)
+
+
+def build_debt_parts_text(parts: list[dict]) -> str:
+    """Format: Rp8.000 (Sapto), Rp8.000 (Alpat)."""
+    chunks = []
+    for part in parts or []:
+        person = md_safe((part or {}).get("person_name") or "Tanpa nama")
+        amount = _safe_float_for_display((part or {}).get("remaining_amount", 0))
+        if amount <= 0:
+            continue
+        chunks.append(f"{format_rupiah(amount)} ({person})")
+    return ", ".join(chunks)
+
+
+def has_expense_transactions(transactions: list[dict] | None) -> bool:
+    """Cek apakah daftar transaksi memiliki minimal satu expense."""
+    return any(
+        str((txn or {}).get("type", "") or "").strip().lower() == "expense"
+        for txn in (transactions or [])
+    )
+
+
+def has_net_gross_difference(transactions: list[dict] | None) -> bool:
+    """Cek apakah ada expense yang net-nya berbeda dari gross karena piutang aktif."""
+    for txn in transactions or []:
+        txn_type = str((txn or {}).get("type", "") or "").strip().lower()
+        if txn_type != "expense":
+            continue
+        gross = _safe_float_for_display((txn or {}).get("amount", 0))
+        net = get_net_expense_after_receivable(txn)
+        if abs(gross - net) > 0.0001:
+            return True
+    return False
+
+
+def append_net_gross_note(lines: list[str], transactions: list[dict] | None = None, *, force: bool = False):
+    """Tambahkan catatan Net (Gross) di awal output yang menampilkan nominal expense."""
+    if not force and not has_expense_transactions(transactions):
+        return
+    lines.append("ℹ️ Catatan: nominal pengeluaran ditampilkan sebagai *Net (Gross)* jika ada piutang aktif.\n")
+
+
+def format_expense_net_gross(net_amount: float, gross_amount: float, *, always_show_gross: bool = False) -> str:
+    """Format nominal expense: Net (Gross)."""
+    net = _safe_float_for_display(net_amount)
+    gross = _safe_float_for_display(gross_amount)
+    if always_show_gross or abs(net - gross) > 0.0001:
+        return f"{format_rupiah(net)} ({format_rupiah(gross)})"
+    return format_rupiah(gross)
+
+
+def get_transaction_account_text(txn: dict) -> str:
+    txn_type = str((txn or {}).get("type", "") or "").strip().lower()
+    source_account = str((txn or {}).get("account", "") or "").strip()
+    target_account = str((txn or {}).get("to_account", "") or "").strip()
+    if txn_type == "transfer" and target_account:
+        return f"{source_account or '-'} → {target_account}"
+    return source_account or "-"
+
+
+def build_transaction_display_lines(
+    txn: dict,
+    *,
+    index: int | None = None,
+    include_date: bool = True,
+    include_id: bool = False,
+    contribution_pct: float | None = None,
+    note: str | None = None,
+) -> list[str]:
+    """Renderer transaksi ringkas yang konsisten untuk report, rekening, dan list transaksi."""
+    txn = txn or {}
+    txn_type = str(txn.get("type", "") or "").strip().lower()
+    amount = _safe_float_for_display(txn.get("amount", 0))
+    icon = {
+        "expense": "❌",
+        "income": "✅",
+        "transfer": "🔄",
+    }.get(txn_type, "❓")
+
+    prefix = f"{index}. " if index is not None else ""
+    description = md_safe(txn.get("description") or txn.get("subject") or "-")
+    date = str(txn.get("date", "") or "").strip()
+    category = md_safe(txn.get("category") or "-")
+    account_text = md_safe(get_transaction_account_text(txn))
+
+    lines = [f"{prefix}{icon} *{description}*"]
+    meta = []
+    if include_date and date:
+        meta.append(f"📅 {md_safe(date)}")
+
+    if txn_type == "expense":
+        net_expense = get_net_expense_after_receivable(txn)
+        meta.append(f"💰 *{format_expense_net_gross(net_expense, amount)}*")
+    elif txn_type == "income":
+        meta.append(f"💰 *{format_rupiah(amount)}*")
+    elif txn_type == "transfer":
+        meta.append(f"🔁 *{format_rupiah(amount)}*")
+    else:
+        meta.append(f"💰 *{format_rupiah(amount)}*")
+
+    meta.append(category)
+    meta.append(f"🏦 {account_text}")
+    lines.append(f"   {' | '.join(meta)}")
+
+    receivable_parts = get_transaction_receivable_parts(txn)
+    receivable_text = build_debt_parts_text(receivable_parts)
+    if txn_type == "expense" and receivable_text:
+        lines.append(f"   ↳ 🤝 Piutang aktif: {receivable_text}")
+
+    payable_parts = get_transaction_payable_parts(txn)
+    payable_text = build_debt_parts_text(payable_parts)
+    if payable_text:
+        lines.append(f"   ↳ 🔴 Utang terkait aktif: {payable_text}")
+
+    if contribution_pct is not None:
+        lines.append(f"   ↳ 📊 {contribution_pct:.1f}% dari pengeluaran")
+
+    if note:
+        lines.append(f"   📝 {md_safe(note)}")
+
+    if include_id:
+        txn_id = str(txn.get("id", "") or "").strip()
+        if txn_id:
+            lines.append(f"   🔖 `{md_code_text(txn_id)}`")
+
+    return lines
 
 
 def is_authorized(update: Update) -> bool:

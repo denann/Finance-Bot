@@ -134,23 +134,38 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*C. Laporan, Budget, Koreksi Data*\n\n"
         "*11. Laporan*\n"
         "`/saldo` — saldo semua rekening\n"
+        "`/rekening Cash` — ringkasan rekening Cash bulan ini\n"
+        "`/rekening Cash 2026-06` — ringkasan rekening bulan tertentu\n"
+        "`/rekening Cash all` — ringkasan seluruh histori rekening\n"
         "`/harian` — ringkasan hari ini\n"
         "`/harian 2026-06-01` — ringkasan tanggal tertentu\n"
         "`/harian Food & Beverage` — list transaksi kategori hari ini\n"
+        "`/harian rekening Cash` — ringkasan hari ini khusus rekening Cash\n"
         "`/mingguan` — ringkasan minggu ini\n"
         "`/mingguan 2026-06-01` — ringkasan minggu yang memuat tanggal itu\n"
         "`/mingguan Bills & Utilities` — list transaksi kategori minggu ini\n"
+        "`/mingguan rekening Dana` — ringkasan minggu ini khusus rekening Dana\n"
         "`/bulanan` — ringkasan bulan ini + insight Gemini\n"
         "`/bulanan 2026-06` — ringkasan bulan tertentu + insight Gemini\n"
         "`/bulanan Food & Beverage` — list transaksi kategori bulan ini\n"
-        "`/bulanan 2026-06 Food & Beverage` — list kategori bulan tertentu\n"
+        "`/bulanan rekening Cash` — ringkasan bulan ini khusus rekening Cash\n"
+        "`/bulanan 2026-06 rekening Cash` — ringkasan rekening bulan tertentu\n"
+        "`/bulanan 2026-06 Food & Beverage rekening Cash` — list kategori + rekening bulan tertentu\n"
         "Report utama menampilkan tren vs periode sebelumnya, termasuk tren per kategori. Jika periode sebelumnya belum ada data, bot tampilkan `~`.\n"
+        "Nominal pengeluaran yang punya piutang aktif ditampilkan sebagai `Net (Gross)`, misalnya `Rp16.000 (Rp32.000)`.\n"
         "`/cari kopi` — cari transaksi dengan keyword kopi\n\n"
 
         "*12. Lihat & Koreksi Transaksi*\n"
         "`/last` — lihat 10 transaksi terakhir, urut tanggal terbaru\n"
         "`/last 20` — lihat 20 transaksi terakhir\n"
-        "`/transaksi` — alias untuk melihat transaksi terakhir\n"
+        "`/transaksi` — list transaksi bulan ini\n"
+        "`/transaksi 2026-06` — list transaksi bulan tertentu\n"
+        "`/transaksi bulan lalu` — list transaksi bulan sebelumnya\n"
+        "`/transaksi Food & Beverage 2026-06` — list transaksi kategori bulan tertentu\n"
+        "`/transaksi rekening Cash` — list transaksi Cash bulan ini\n"
+        "`/transaksi rekening Cash 2026-06` — list transaksi Cash bulan tertentu\n"
+        "`/transaksi rekening Cash bulan lalu` — list transaksi Cash bulan sebelumnya\n"
+        "`/transaksi rekening Cash all` — seluruh transaksi Cash\n"
         "`/last today`, `/last week`, `/last month`, `/last 2026-06`\n"
         "`/delete_txn 1`, `/delete_txn 1 3 5`, `/delete_txn 1-4`\n"
         "`/edit_txn 2 amount=15000`\n"
@@ -458,6 +473,60 @@ def append_report_comparison_lines(lines: list[str], report: dict, label: str):
     lines.append(f"   📝 Transaksi : {format_report_delta(comparison.get('count'), positive_when_up=False, as_count=True)}\n")
 
 
+def get_report_expense_display(report: dict) -> str:
+    """Format total expense report sebagai Net (Gross) jika ada piutang aktif."""
+    gross = float((report or {}).get("total_expense", 0) or 0)
+    net = (report or {}).get("total_net_expense_after_receivable")
+    if net is None:
+        net = gross
+    return format_expense_net_gross(float(net or 0), gross)
+
+
+def append_report_metric_lines(lines: list[str], report: dict):
+    """Tambahkan metrik ringkasan; jika filter rekening aktif, transfer dihitung masuk/keluar."""
+    account_filter = (report or {}).get("account_filter")
+    if account_filter:
+        lines.append(f"🏦 Rekening : *{md_safe(account_filter)}*")
+        category_filter = (report or {}).get("category_filter")
+        if category_filter:
+            lines.append(f"📁 Kategori : *{md_safe(category_filter)}*")
+        lines.append(f"✅ Pemasukan      : *{format_rupiah(report.get('total_income', 0))}*")
+        lines.append(f"❌ Pengeluaran    : *{get_report_expense_display(report)}*")
+        lines.append(f"🔁 Transfer Masuk : *{format_rupiah(report.get('total_transfer_in', 0))}*")
+        lines.append(f"🔁 Transfer Keluar: *{format_rupiah(report.get('total_transfer_out', 0))}*")
+        lines.append(f"📊 Net Rekening   : *{format_rupiah(report.get('net', 0))}*")
+        lines.append(f"📝 Transaksi      : {report.get('count', 0)} item")
+        return
+
+    lines.append(f"✅ Pemasukan : *{format_rupiah(report['total_income'])}*")
+    lines.append(f"❌ Pengeluaran: *{get_report_expense_display(report)}*")
+    lines.append(f"📊 Net       : *{format_rupiah(report['net'])}*")
+    lines.append(f"📝 Transaksi : {report['count']} item")
+
+
+def append_account_report_lines(lines: list[str], report: dict):
+    account = (report or {}).get("account_filter") or "-"
+    balance = (report or {}).get("account_balance")
+    lines.append(f"🏦 Rekening : *{md_safe(account)}*")
+    if balance is not None:
+        lines.append(f"💰 Saldo Saat Ini : *{format_rupiah(balance)}*")
+    lines.append(f"✅ Pemasukan      : *{format_rupiah(report.get('total_income', 0))}*")
+    lines.append(f"❌ Pengeluaran    : *{get_report_expense_display(report)}*")
+    lines.append(f"🔁 Transfer Masuk : *{format_rupiah(report.get('total_transfer_in', 0))}*")
+    lines.append(f"🔁 Transfer Keluar: *{format_rupiah(report.get('total_transfer_out', 0))}*")
+    lines.append(f"📊 Pergerakan Bersih: *{format_rupiah(report.get('net', 0))}*")
+    lines.append(f"📝 Transaksi      : {report.get('count', 0)} item")
+
+
+def append_recent_account_transaction_lines(lines: list[str], report: dict, limit: int = 8):
+    transactions = (report or {}).get("transactions") or []
+    if not transactions:
+        return
+
+    lines.append("\n*Transaksi Terbaru Rekening:*")
+    for i, txn in enumerate(transactions[:limit], 1):
+        lines.extend(build_transaction_display_lines(txn, index=i, include_date=True, include_id=True))
+
 def append_report_category_breakdown_lines(lines: list[str], report: dict, comparison_label: str):
     by_category = (report or {}).get("by_category") or {}
     if not by_category:
@@ -466,37 +535,24 @@ def append_report_category_breakdown_lines(lines: list[str], report: dict, compa
     lines.append("*Pengeluaran per Kategori:*")
     total_expense = float((report or {}).get("total_expense", 0) or 0)
     category_comparison = (report or {}).get("category_comparison") or {}
+    by_category_net = (report or {}).get("by_category_net") or {}
 
     for cat, amount in sorted(by_category.items(), key=lambda x: x[1], reverse=True):
         pct = (float(amount) / total_expense) * 100 if total_expense else 0
         bar = build_progress_bar(pct)
         trend = format_report_delta(category_comparison.get(cat), positive_when_up=False)
+        trend_text = f" | vs {comparison_label}: {trend}" if comparison_label else ""
+        net_amount = by_category_net.get(cat, amount)
+        amount_text = format_expense_net_gross(float(net_amount or 0), float(amount or 0))
         lines.append(
-            f"  • {md_safe(cat)}: *{format_rupiah(amount)}*\n"
-            f"    {bar} {pct:.1f}% | vs {comparison_label}: {trend}"
+            f"  • {md_safe(cat)}: *{amount_text}*\n"
+            f"    {bar} {pct:.1f}%{trend_text}"
         )
 
 
 def build_top_expense_debt_lines(txn: dict, amount: float) -> list[str]:
-    """Tambahkan info piutang/utang aktif yang terhubung ke transaksi top expense."""
-    receivable = float((txn or {}).get("debt_receivable_remaining", 0) or 0)
-    payable = float((txn or {}).get("debt_payable_remaining", 0) or 0)
-    people = [str(x).strip() for x in ((txn or {}).get("debt_people") or []) if str(x).strip()]
-    people_text = md_safe(", ".join(people)) if people else ""
-    extra = []
-
-    if receivable > 0:
-        suffix = f" ({people_text})" if people_text else ""
-        net_expense = max(float(amount or 0) - receivable, 0)
-        extra.append(f"     ↳ 🤝 Piutang aktif: *{format_rupiah(receivable)}*{suffix}")
-        extra.append(f"     ↳ 🧾 Pengeluaran bersih: *{format_rupiah(net_expense)}*")
-
-    if payable > 0:
-        suffix = f" ({people_text})" if people_text else ""
-        extra.append(f"     ↳ 🔴 Utang terkait aktif: *{format_rupiah(payable)}*{suffix}")
-
-    return extra
-
+    """Compatibility wrapper. Detail debt sekarang diformat oleh build_transaction_display_lines."""
+    return []
 
 def is_category_detail_report(report: dict) -> bool:
     return bool((report or {}).get("category_filter"))
@@ -511,16 +567,26 @@ def get_category_list_title(category: str) -> str:
 
 def append_category_detail_summary(lines: list[str], report: dict, comparison_label: str):
     category = (report or {}).get("category_filter") or "-"
+    account = (report or {}).get("account_filter")
     total_income = float((report or {}).get("total_income", 0) or 0)
     total_expense = float((report or {}).get("total_expense", 0) or 0)
     total_transfer = float((report or {}).get("total_transfer", 0) or 0)
 
     lines.append(f"📁 Kategori : *{md_safe(category)}*")
+    if account:
+        lines.append(f"🏦 Rekening : *{md_safe(account)}*")
     if total_income > 0:
         lines.append(f"✅ Pemasukan : *{format_rupiah(total_income)}*")
     if total_expense > 0 or total_income == 0:
-        lines.append(f"❌ Pengeluaran: *{format_rupiah(total_expense)}*")
-    if total_transfer > 0:
+        lines.append(f"❌ Pengeluaran: *{get_report_expense_display(report)}*")
+    if account:
+        transfer_in = float((report or {}).get("total_transfer_in", 0) or 0)
+        transfer_out = float((report or {}).get("total_transfer_out", 0) or 0)
+        if transfer_in > 0:
+            lines.append(f"🔁 Transfer Masuk : *{format_rupiah(transfer_in)}*")
+        if transfer_out > 0:
+            lines.append(f"🔁 Transfer Keluar: *{format_rupiah(transfer_out)}*")
+    elif total_transfer > 0:
         lines.append(f"🔄 Transfer   : *{format_rupiah(total_transfer)}*")
     if total_income > 0 and total_expense > 0:
         lines.append(f"📊 Net       : *{format_rupiah((report or {}).get('net', 0))}*")
@@ -537,30 +603,17 @@ def append_category_transaction_lines(lines: list[str], report: dict, *, include
     lines.append(get_category_list_title(category))
 
     for i, t in enumerate(transactions, 1):
-        txn_type = str(t.get("type", "") or "").strip().lower()
-        icon = "➕" if txn_type == "income" else "➖" if txn_type == "expense" else "🔄"
-        description = t.get("description") or t.get("subject") or "-"
-        amount = float(t.get("amount", 0) or 0)
-        account = str(t.get("account", "") or "").strip()
-        date = str(t.get("date", "") or "").strip()
-        spending_type = str(t.get("tipe_pengeluaran", "") or "").strip()
         note = str(t.get("catatan", "") or "").strip()
+        lines.extend(
+            build_transaction_display_lines(
+                t,
+                index=i,
+                include_date=include_date,
+                include_id=True,
+                note=note or None,
+            )
+        )
 
-        meta = []
-        if include_date and date:
-            meta.append(md_safe(date))
-        meta.append(format_rupiah(amount))
-        if account:
-            meta.append(md_safe(account))
-        if spending_type:
-            meta.append(md_safe(spending_type))
-
-        lines.append(f"  {i}. {icon} {md_safe(description)}")
-        lines.append(f"     {' | '.join(meta)}")
-        if note:
-            lines.append(f"     📝 {md_safe(note)}")
-        if txn_type == "expense":
-            lines.extend(build_top_expense_debt_lines(t, amount))
 
 
 async def saldo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -593,16 +646,77 @@ async def saldo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+async def rekening_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /rekening
+    /rekening Cash
+    /rekening Cash 2026-06
+    /rekening Cash all
+    """
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    raw_arg = " ".join(context.args).strip() if context.args else ""
+
+    # Tanpa argumen, jadikan alias yang lebih informatif untuk /saldo.
+    if not raw_arg:
+        await saldo_handler(update, context)
+        return
+
+    account_arg, period_arg = split_account_period_arg(raw_arg)
+    if not account_arg:
+        await saldo_handler(update, context)
+        return
+
+    try:
+        report = get_account_report(account_arg, period_arg)
+    except ValueError as e:
+        await update.message.reply_text(
+            f"❌ {str(e)}\n\n"
+            "Contoh:\n"
+            "`/rekening Cash`\n"
+            "`/rekening Dana 2026-06`\n"
+            "`/rekening BCA all`",
+            parse_mode="Markdown",
+        )
+        return
+
+    account = report.get("account_filter") or account_arg
+    period_label = report.get("period_label") or report.get("month") or "-"
+
+    if report.get("count", 0) == 0:
+        lines = [
+            f"🏦 *Ringkasan Rekening*\n_{md_safe(period_label)}_\n",
+            f"🏦 Rekening : *{md_safe(account)}*",
+        ]
+        balance = report.get("account_balance")
+        if balance is not None:
+            lines.append(f"💰 Saldo Saat Ini : *{format_rupiah(balance)}*")
+        lines.append("📭 Belum ada transaksi rekening ini pada periode tersebut.")
+        await reply_long_markdown(update, "\n".join(lines))
+        return
+
+    lines = [f"🏦 *Ringkasan Rekening*\n_{md_safe(period_label)}_\n"]
+    append_net_gross_note(lines, report.get("transactions"))
+    append_account_report_lines(lines, report)
+    category_compare_label = "bulan lalu" if report.get("period_type") != "all" else None
+    append_report_category_breakdown_lines(lines, report, category_compare_label)
+    append_recent_account_transaction_lines(lines, report)
+
+    await reply_long_markdown(update, "\n".join(lines))
+
+
 async def harian_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
 
     raw_arg = " ".join(context.args).strip() if context.args else None
-    date_arg, category_arg = split_report_period_and_category_arg(raw_arg, "date")
+    date_arg, category_arg, account_arg = split_report_filter_args(raw_arg, "date")
 
     try:
-        report = get_daily_report(date_arg, category_arg)
+        report = get_daily_report(date_arg, category_arg, account_arg)
     except ValueError as e:
         await update.message.reply_text(
             f"❌ {str(e)}\n\n"
@@ -612,18 +726,26 @@ async def harian_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "`/harian 01-06-2026`\n"
             "`/harian 1`\n"
             "`/harian Food & Beverage`\n"
-            "`/harian 2026-06-01 Food & Beverage`",
+            "`/harian rekening Cash`\n"
+            "`/harian 2026-06-01 rekening Cash`\n"
+            "`/harian 2026-06-01 Food & Beverage rekening Cash`",
             parse_mode="Markdown",
         )
         return
 
     date_str = report["date"]
     category_filter = report.get("category_filter")
+    account_filter = report.get("account_filter")
 
     if report["count"] == 0:
-        if category_filter:
+        if category_filter or account_filter:
+            filter_bits = []
+            if category_filter:
+                filter_bits.append(f"kategori *{md_safe(category_filter)}*")
+            if account_filter:
+                filter_bits.append(f"rekening *{md_safe(account_filter)}*")
             await update.message.reply_text(
-                f"📭 Tidak ada transaksi kategori *{md_safe(category_filter)}* pada {date_str}.",
+                f"📭 Tidak ada transaksi {' dan '.join(filter_bits)} pada {date_str}.",
                 parse_mode="Markdown",
             )
         else:
@@ -632,16 +754,15 @@ async def harian_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_category_detail_report(report):
         lines = [f"📅 *Detail Harian*\n_{date_str}_\n"]
+        append_net_gross_note(lines, report.get("transactions"))
         append_category_detail_summary(lines, report, "hari sebelumnya")
         append_category_transaction_lines(lines, report, include_date=False)
         await reply_long_markdown(update, "\n".join(lines))
         return
 
     lines = [f"📅 *Ringkasan Harian*\n_{date_str}_\n"]
-    lines.append(f"✅ Pemasukan : *{format_rupiah(report['total_income'])}*")
-    lines.append(f"❌ Pengeluaran: *{format_rupiah(report['total_expense'])}*")
-    lines.append(f"📊 Net       : *{format_rupiah(report['net'])}*")
-    lines.append(f"📝 Transaksi : {report['count']} item")
+    append_net_gross_note(lines, report.get("transactions"))
+    append_report_metric_lines(lines, report)
     append_report_comparison_lines(lines, report, "hari sebelumnya")
 
     append_report_category_breakdown_lines(lines, report, "hari sebelumnya")
@@ -660,12 +781,15 @@ async def harian_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             amount = float(t.get("amount", 0) or 0)
             contrib = (amount / total_expense * 100) if total_expense else 0
 
-            lines.append(
-                f"  {i}. {md_safe(t.get('description', '-'))}\n"
-                f"     {md_safe(t.get('category', '-'))} - "
-                f"*{format_rupiah(amount)}* | {contrib:.1f}% dari pengeluaran"
+            lines.extend(
+                build_transaction_display_lines(
+                    t,
+                    index=i,
+                    include_date=True,
+                    include_id=True,
+                    contribution_pct=contrib,
+                )
             )
-            lines.extend(build_top_expense_debt_lines(t, amount))
 
     await reply_long_markdown(update, "\n".join(lines))
 
@@ -676,10 +800,10 @@ async def mingguan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     raw_arg = " ".join(context.args).strip() if context.args else None
-    date_arg, category_arg = split_report_period_and_category_arg(raw_arg, "date")
+    date_arg, category_arg, account_arg = split_report_filter_args(raw_arg, "date")
 
     try:
-        report = get_weekly_report(date_arg, category_arg)
+        report = get_weekly_report(date_arg, category_arg, account_arg)
     except ValueError as e:
         await update.message.reply_text(
             f"❌ {str(e)}\n\n"
@@ -688,17 +812,25 @@ async def mingguan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "`/mingguan 2026-06-01`\n"
             "`/mingguan 1`\n"
             "`/mingguan Food & Beverage`\n"
-            "`/mingguan 2026-06-01 Bills & Utilities`",
+            "`/mingguan rekening Dana`\n"
+            "`/mingguan 2026-06-01 rekening Dana`\n"
+            "`/mingguan 2026-06-01 Bills & Utilities rekening Dana`",
             parse_mode="Markdown",
         )
         return
 
     category_filter = report.get("category_filter")
+    account_filter = report.get("account_filter")
 
     if report["count"] == 0:
-        if category_filter:
+        if category_filter or account_filter:
+            filter_bits = []
+            if category_filter:
+                filter_bits.append(f"kategori *{md_safe(category_filter)}*")
+            if account_filter:
+                filter_bits.append(f"rekening *{md_safe(account_filter)}*")
             await update.message.reply_text(
-                f"📭 Tidak ada transaksi kategori *{md_safe(category_filter)}* minggu ini.\n"
+                f"📭 Tidak ada transaksi {' dan '.join(filter_bits)} minggu ini.\n"
                 f"({report['date_from']} s/d {report['date_to']})",
                 parse_mode="Markdown",
             )
@@ -714,6 +846,7 @@ async def mingguan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📆 *Detail Mingguan*\n"
             f"_{report['date_from']} s/d {report['date_to']}_\n"
         ]
+        append_net_gross_note(lines, report.get("transactions"))
         append_category_detail_summary(lines, report, "minggu sebelumnya")
         append_category_transaction_lines(lines, report, include_date=True)
         await reply_long_markdown(update, "\n".join(lines))
@@ -723,10 +856,8 @@ async def mingguan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📆 *Ringkasan Mingguan*\n"
         f"_{report['date_from']} s/d {report['date_to']}_\n"
     ]
-    lines.append(f"✅ Pemasukan : *{format_rupiah(report['total_income'])}*")
-    lines.append(f"❌ Pengeluaran: *{format_rupiah(report['total_expense'])}*")
-    lines.append(f"📊 Net       : *{format_rupiah(report['net'])}*")
-    lines.append(f"📝 Transaksi : {report['count']} item")
+    append_net_gross_note(lines, report.get("transactions"))
+    append_report_metric_lines(lines, report)
     append_report_comparison_lines(lines, report, "minggu sebelumnya")
 
     append_report_category_breakdown_lines(lines, report, "minggu sebelumnya")
@@ -745,12 +876,15 @@ async def mingguan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             amount = float(t.get("amount", 0) or 0)
             contrib = (amount / total_expense * 100) if total_expense else 0
 
-            lines.append(
-                f"  {i}. {md_safe(t.get('description', '-'))}\n"
-                f"     {md_safe(t.get('category', '-'))} - "
-                f"*{format_rupiah(amount)}* | {contrib:.1f}% dari pengeluaran"
+            lines.extend(
+                build_transaction_display_lines(
+                    t,
+                    index=i,
+                    include_date=True,
+                    include_id=True,
+                    contribution_pct=contrib,
+                )
             )
-            lines.extend(build_top_expense_debt_lines(t, amount))
 
     await reply_long_markdown(update, "\n".join(lines))
 
@@ -761,11 +895,11 @@ async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     raw_arg = " ".join(context.args).strip() if context.args else None
-    month_arg, category_arg = split_report_period_and_category_arg(raw_arg, "month")
+    month_arg, category_arg, account_arg = split_report_filter_args(raw_arg, "month")
 
     try:
         year, month_num = parse_report_month_arg(month_arg)
-        report = get_monthly_report(year, month_num, category_arg)
+        report = get_monthly_report(year, month_num, category_arg, account_arg)
     except ValueError as e:
         await update.message.reply_text(
             f"❌ {str(e)}\n\n"
@@ -774,18 +908,26 @@ async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "`/bulanan 2026-06`\n"
             "`/bulanan 6`\n"
             "`/bulanan Food & Beverage`\n"
-            "`/bulanan 2026-06 Food & Beverage`",
+            "`/bulanan rekening Cash`\n"
+            "`/bulanan 2026-06 rekening Cash`\n"
+            "`/bulanan 2026-06 Food & Beverage rekening Cash`",
             parse_mode="Markdown",
         )
         return
 
     month_name = report.get("month", "-")
     category_filter = report.get("category_filter")
+    account_filter = report.get("account_filter")
 
     if report["count"] == 0:
-        if category_filter:
+        if category_filter or account_filter:
+            filter_bits = []
+            if category_filter:
+                filter_bits.append(f"kategori *{md_safe(category_filter)}*")
+            if account_filter:
+                filter_bits.append(f"rekening *{md_safe(account_filter)}*")
             await update.message.reply_text(
-                f"📭 Tidak ada transaksi kategori *{md_safe(category_filter)}* pada {month_name}.",
+                f"📭 Tidak ada transaksi {' dan '.join(filter_bits)} pada {month_name}.",
                 parse_mode="Markdown",
             )
         else:
@@ -794,16 +936,15 @@ async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_category_detail_report(report):
         lines = [f"📆 *Detail Bulanan*\n_{month_name}_\n"]
+        append_net_gross_note(lines, report.get("transactions"))
         append_category_detail_summary(lines, report, "bulan lalu")
         append_category_transaction_lines(lines, report, include_date=True)
         await reply_long_markdown(update, "\n".join(lines))
         return
 
     lines = [f"📆 *Ringkasan Bulanan*\n_{month_name}_\n"]
-    lines.append(f"✅ Pemasukan : *{format_rupiah(report['total_income'])}*")
-    lines.append(f"❌ Pengeluaran: *{format_rupiah(report['total_expense'])}*")
-    lines.append(f"📊 Net       : *{format_rupiah(report['net'])}*")
-    lines.append(f"📝 Transaksi : {report['count']} item")
+    append_net_gross_note(lines, report.get("transactions"))
+    append_report_metric_lines(lines, report)
     append_report_comparison_lines(lines, report, "bulan lalu")
 
     append_report_category_breakdown_lines(lines, report, "bulan lalu")
@@ -822,12 +963,15 @@ async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             amount = float(t.get("amount", 0) or 0)
             contrib = (amount / total_expense * 100) if total_expense else 0
 
-            lines.append(
-                f"  {i}. {md_safe(t.get('description', '-'))}\n"
-                f"     {md_safe(t.get('category', '-'))} - "
-                f"*{format_rupiah(amount)}* | {contrib:.1f}% dari pengeluaran"
+            lines.extend(
+                build_transaction_display_lines(
+                    t,
+                    index=i,
+                    include_date=True,
+                    include_id=True,
+                    contribution_pct=contrib,
+                )
             )
-            lines.extend(build_top_expense_debt_lines(t, amount))
 
     budget_summary = get_budget_summary(month_name)
     if budget_summary:
@@ -882,13 +1026,10 @@ async def cari_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     lines = [f"🔍 *Hasil pencarian: \"{md_safe(keyword)}\"*\n"]
+    append_net_gross_note(lines, results)
 
-    for t in results:
-        icon = "➕" if t.get("type") == "income" else "➖" if t.get("type") == "expense" else "🔄"
-        lines.append(
-            f"{icon} {md_safe(t.get('date') or '-')} — {md_safe(t.get('description') or '-')}\n"
-            f"   *{format_rupiah(float(t.get('amount', 0) or 0))}* | {md_safe(t.get('category') or '-')}"
-        )
+    for i, t in enumerate(results, 1):
+        lines.extend(build_transaction_display_lines(t, index=i, include_date=True, include_id=True))
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 

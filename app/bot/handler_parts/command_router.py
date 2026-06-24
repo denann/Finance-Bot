@@ -117,6 +117,10 @@ KNOWN_COMMANDS = {
         "description": "Lihat saldo semua rekening.",
         "destructive": False,
     },
+    "rekening": {
+        "description": "Lihat ringkasan rekening tertentu dan transaksinya.",
+        "destructive": False,
+    },
     "harian": {
         "description": "Lihat ringkasan transaksi hari ini.",
         "destructive": False,
@@ -230,6 +234,12 @@ COMMAND_ALIASES = {
     "void_utang": "debt_void",
     "void_piutang": "debt_void",
     "debt_void": "debt_void",
+
+    # rekening
+    "rekening": "rekening",
+    "rek": "rekening",
+    "akun": "rekening",
+    "account": "rekening",
 
     # last/history
     "last": "last",
@@ -728,36 +738,18 @@ def resolve_txn_refs_from_last(context: ContextTypes.DEFAULT_TYPE, refs: list[st
     }
 
 def build_last_transactions_text(transactions: list[dict], title: str) -> str:
+    transactions = enrich_transactions_with_debt_info(transactions or [])
     lines = [f"🧾 *{md_safe(title)}*\n"]
+    append_net_gross_note(lines, transactions)
 
     for i, txn in enumerate(transactions, 1):
-        txn_type = str(txn.get("type", "")).strip()
-
-        icon = {
-            "expense": "❌",
-            "income": "✅",
-            "transfer": "🔄",
-        }.get(txn_type, "❓")
-
-        txn_id = str(txn.get("id", ""))
-        date = md_safe(txn.get("date", "-"))
-        desc = md_safe(txn.get("description") or "-")
-        category = md_safe(txn.get("category") or "-")
-        account = md_safe(txn.get("account") or "-")
-        to_account = md_safe(txn.get("to_account") or "")
-        amount = float(txn.get("amount", 0) or 0)
-
-        account_text = account
-        if txn_type == "transfer" and str(txn.get("to_account") or "").strip():
-            account_text = f"{account} → {to_account}"
-
-        safe_txn_id = md_safe(short_txn_id(txn_id))
-
-        lines.append(
-            f"{i}. {icon} *{desc}*\n"
-            f"   💰 {format_rupiah(amount)} | {category}\n"
-            f"   📅 {date} | 🏦 {account_text}\n"
-            f"   🔖 `{safe_txn_id}`"
+        lines.extend(
+            build_transaction_display_lines(
+                txn,
+                index=i,
+                include_date=True,
+                include_id=True,
+            )
         )
 
     lines.append(

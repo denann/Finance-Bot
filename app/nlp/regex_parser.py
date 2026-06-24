@@ -707,16 +707,104 @@ def detect_account(text: str) -> str | None:
 
 
 def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
+    """
+    Deteksi rekening asal dan tujuan untuk transaksi transfer/top up.
+
+    Prinsip penting:
+    - `dari/pakai/pake/via <rekening>` = sumber dana/account asal.
+    - `ke/tujuan <rekening>` = rekening tujuan.
+    - Untuk top up/isi/ngisi, rekening setelah kata kerja adalah tujuan.
+      Contoh: "top up gopay 50k dari BRI" -> BRI ke GoPay.
+
+    Fallback lama tetap dipakai untuk pola sederhana:
+    "transfer BRI ke GoPay 50k" -> BRI ke GoPay.
+    "top up GoPay 50k" -> source belum diketahui, target GoPay.
+    "transfer GoPay 50k dari BRI" -> BRI ke GoPay.
+    "transfer BRI GoPay 50k" -> BRI ke GoPay.
+    "transfer ke GoPay dari BRI 50k" -> BRI ke GoPay.
+    "isi DANA pake BRI 50k" -> BRI ke DANA.
+    "tarik tunai 100k dari BRI ke Cash" -> BRI ke Cash.
+    "setor tunai ke BRI dari Cash 100k" -> Cash ke BRI.
+    "pindah dana dari BCA ke BRI 50k" -> BCA ke BRI.
+    "transfer Cash ke BRI 10k" -> Cash ke BRI.
+    "transfer ke BRI 10k" -> source belum diketahui, target BRI.
+    "transfer dari BRI 10k" -> source BRI, target belum diketahui.
+    "topup seabank dari bri 20k" -> BRI ke Seabank.
+    "top up sea bank dari bri 20k" -> BRI ke Seabank.
+    "top up gopay via bri 50k" -> BRI ke GoPay.
+    "ngisi gopay bri 50k" -> BRI ke GoPay.
+    "top up gopay 50k" -> source belum diketahui, target GoPay.
+    "transfer dari alpat 50k ke BRI" bukan transfer antar-rekening dan harus
+    sudah diklasifikasikan sebagai income di detect_type().
+    """
     text_lower = normalize_text(text)
-    found = []
 
-    for acc in ACCOUNT_NAMES:
-        if acc in text_lower:
-            display = display_account_name(acc)
-            found.append((text_lower.index(acc), display))
+    account_pattern = r"cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank"
 
-    found.sort(key=lambda x: x[0])
+    def normalize_account_name(raw: str | None) -> str | None:
+        if not raw:
+            return None
+        clean = re.sub(r"\s+", " ", str(raw).strip().lower())
+        if clean == "sea bank":
+            clean = "sea bank"
+        return display_account_name(clean)
 
+    def iter_accounts() -> list[tuple[int, str]]:
+        matches = []
+        for match in re.finditer(rf"\b({account_pattern})\b", text_lower, flags=re.IGNORECASE):
+            display = normalize_account_name(match.group(1))
+            if display:
+                matches.append((match.start(), display))
+        return matches
+
+    def first_account_after(pattern: str) -> str | None:
+        match = re.search(pattern, text_lower, flags=re.IGNORECASE)
+        if not match:
+            return None
+        return normalize_account_name(match.group(1))
+
+    def first_other_account(excluded: set[str]) -> str | None:
+        for _, account in found:
+            if account not in excluded:
+                return account
+        return None
+
+    found = iter_accounts()
+
+    if not found:
+        return None, None
+
+    # Explicit markers.
+    source_account = first_account_after(rf"\b(?:dari|from|pakai|pake|via)\s+({account_pattern})\b")
+    target_account = first_account_after(rf"\b(?:ke|to|tujuan|rekening\s+tujuan|ke\s+rekening)\s+({account_pattern})\b")
+
+    if source_account and target_account and source_account != target_account:
+        return source_account, target_account
+
+    # Khusus top up/isi: rekening setelah kata kerja adalah tujuan, bukan sumber.
+    topup_target = first_account_after(rf"\b(?:top\s*up|topup|isi|ngisi)\s+({account_pattern})\b")
+    if topup_target:
+        if source_account and source_account != topup_target:
+            return source_account, topup_target
+
+        other_account = first_other_account({topup_target})
+        if other_account:
+            # Contoh: "ngisi gopay bri 50k" -> BRI ke GoPay.
+            return other_account, topup_target
+
+        return None, topup_target
+
+    # Kalau hanya source/target eksplisit dan rekening lain muncul, pakai rekening lain
+    # sebagai pasangan. Ini menangani "transfer GoPay 50k dari BRI".
+    if source_account:
+        other_account = first_other_account({source_account})
+        return source_account, other_account
+
+    if target_account:
+        other_account = first_other_account({target_account})
+        return other_account, target_account
+
+    # Fallback lama: dua rekening berurutan dianggap asal -> tujuan.
     if len(found) >= 2:
         return found[0][1], found[1][1]
 

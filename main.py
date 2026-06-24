@@ -51,6 +51,7 @@ from app.bot.handlers import (
     recurring_handler,
     recurring_off_handler,
     recurring_run_handler,
+    rekening_handler,
     saldo_handler,
     scheduled_export_transactions,
     set_budget_handler,
@@ -86,6 +87,7 @@ telegram_app.add_handler(CommandHandler("health", health_handler))
 
 # ── Transaction Commands ──────────────────────────────────────────────────────
 telegram_app.add_handler(CommandHandler("saldo", saldo_handler))
+telegram_app.add_handler(CommandHandler("rekening", rekening_handler))
 telegram_app.add_handler(CommandHandler("harian", harian_handler))
 telegram_app.add_handler(CommandHandler("mingguan", mingguan_handler))
 telegram_app.add_handler(CommandHandler("bulanan", bulanan_handler))
