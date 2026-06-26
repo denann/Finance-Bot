@@ -1199,6 +1199,7 @@ def build_transactions_full_text(transactions: list[dict], title: str, account_f
     total_transfer_out = 0.0
     account_key = str(account_filter or "").strip().lower()
 
+    current_date_group = None
     for i, txn in enumerate(transactions, 1):
         txn_type = str(txn.get("type", "")).strip().lower()
         amount = _safe_float_for_display(txn.get("amount", 0))
@@ -1229,7 +1230,12 @@ def build_transactions_full_text(transactions: list[dict], title: str, account_f
             elif txn_type == "transfer":
                 total_transfer += amount
 
-        lines.extend(build_transaction_display_lines(txn, index=i, include_date=True, include_id=True))
+        date_group = str(txn.get("date", "") or "Tanpa tanggal").strip() or "Tanpa tanggal"
+        if date_group != current_date_group:
+            lines.append(f"\n*{md_safe(format_indonesian_date_group_label(date_group))}*")
+            current_date_group = date_group
+
+        lines.extend(build_transaction_display_lines(txn, index=i, include_date=False, include_id=True))
 
     if account_key:
         net = total_income + total_transfer_in - total_expense - total_transfer_out

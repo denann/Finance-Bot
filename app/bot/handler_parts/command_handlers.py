@@ -129,7 +129,8 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/debt_void Annisa 1` — batalkan rincian nomor 1 milik Annisa\n"
         "`/debt_edit 1 nominal 100k` — edit nominal rincian\n"
         "`/debt_edit 1 nama Budi` — edit nama orang\n"
-        "`/debt_edit 1 tipe piutang` — ubah arah debt\n\n"
+        "`/debt_edit 1 tipe piutang` — ubah arah debt\n"
+        "Detail `/hutang nama` dikelompokkan per tanggal dibuat, menampilkan tanggal dan debt ID full.\n\n"
 
         "*C. Laporan, Budget, Koreksi Data*\n\n"
         "*11. Laporan*\n"
@@ -166,6 +167,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/transaksi rekening Cash 2026-06` — list transaksi Cash bulan tertentu\n"
         "`/transaksi rekening Cash bulan lalu` — list transaksi Cash bulan sebelumnya\n"
         "`/transaksi rekening Cash all` — seluruh transaksi Cash\n"
+        "Output `/transaksi` dikelompokkan per tanggal terbaru ke terlama.\n"
         "`/last today`, `/last week`, `/last month`, `/last 2026-06`\n"
         "`/delete_txn 1`, `/delete_txn 1 3 5`, `/delete_txn 1-4`\n"
         "`/edit_txn 2 amount=15000`\n"
@@ -1917,6 +1919,24 @@ async def debt_edit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def format_debt_created_date_for_display(debt: dict) -> str:
+    """Ambil tanggal dibuat debt/piutang untuk grouping /hutang <nama>."""
+    raw = str((debt or {}).get("created_at", "") or "").strip()
+    if not raw:
+        return "Tanpa tanggal"
+
+    match = re.search(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", raw)
+    if match:
+        parts = match.group(0).replace("/", "-").split("-")
+        try:
+            return f"{int(parts[0]):04d}-{int(parts[1]):02d}-{int(parts[2]):02d}"
+        except Exception:
+            return match.group(0).replace("/", "-")
+
+    # Fallback kalau created_at tersimpan sebagai date serial/string lain.
+    return raw
+
+
 async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -1954,22 +1974,28 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         last_debt_map = {}
         if active_details:
+            current_debt_date_group = None
             for i, d in enumerate(active_details, 1):
                 last_debt_map[str(i)] = {
                     "debt_id": d.get("id"),
                     "row_index": d.get("_row_index"),
                 }
+                created_date = format_debt_created_date_for_display(d)
+                if created_date != current_debt_date_group:
+                    lines.append(f"\n*{md_safe(format_indonesian_date_group_label(created_date))}*")
+                    current_debt_date_group = created_date
+
                 debt_type = str(d.get("type") or "").strip()
                 icon = "🔴" if debt_type == "payable" else "🟢"
-                direction = "Anda hutang" if debt_type == "payable" else f"{person} hutang"
+                direction = "Anda hutang" if debt_type == "payable" else f"{md_safe(person)} hutang"
                 desc = str(d.get("description") or "-").strip()
                 remaining = format_rupiah(d.get("remaining_amount", 0))
                 original = format_rupiah(d.get("original_amount", 0))
-                debt_id = short_debt_id(d.get("id", "-"))
+                debt_id = str(d.get("id", "-") or "-").strip()
                 lines.append(
-                    f"{i}. {icon} {md_safe(desc[:80])}\n"
+                    f"{i}. {icon} {md_safe(desc)}\n"
                     f"   {direction}: *{remaining}* / awal {original}\n"
-                    f"   ID: `{md_safe(debt_id)}`"
+                    f"   ID: `{md_code_text(debt_id)}`"
                 )
         else:
             lines.append("Tidak ada rincian aktif.")

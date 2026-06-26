@@ -210,6 +210,32 @@ def short_txn_id(txn_id: str) -> str:
 
 
 
+
+def format_indonesian_date_group_label(date_value) -> str:
+    """Format heading grup tanggal: 🗓️ Senin, 30 Juni 2026:.
+
+    Fallback tetap rapi untuk nilai kosong/invalid.
+    """
+    raw = str(date_value or "").strip()
+    if not raw or raw.lower() in {"-", "none", "nan", "tanpa tanggal"}:
+        return "🗓️ Tanpa tanggal:"
+
+    match = re.search(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", raw)
+    if match:
+        try:
+            dt = datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+            weekdays = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
+            months = [
+                "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+                "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+            ]
+            return f"🗓️ {weekdays[dt.weekday()]}, {dt.day} {months[dt.month - 1]} {dt.year}:"
+        except Exception:
+            pass
+
+    return f"🗓️ {raw}:"
+
+
 def _safe_float_for_display(value, default: float = 0.0) -> float:
     try:
         if isinstance(value, str):
