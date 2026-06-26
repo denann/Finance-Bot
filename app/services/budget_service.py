@@ -258,55 +258,106 @@ def get_budget_months() -> list[str]:
 
 # ── Realisasi vs Budget ───────────────────────────────────────────────────────
 
-def get_actual_expense(category: str, month: str = None) -> float:
-    """
-    Hitung total pengeluaran aktual untuk kategori tertentu di bulan tertentu.
+def budget_transaction_matches_category(record: dict, category: str) -> bool:
+    """Cek apakah transaksi masuk ke budget category tertentu.
 
-    Catatan:
-    - Debt cashflow tidak dihitung sebagai konsumsi budget, kecuali kamu sengaja set budget
-      untuk kategori debt tersebut.
+    Budget resmi dicocokkan dari kolom category. Budget custom seperti
+    `Jajan` tetap bisa match dari description/raw_input.
     """
+    budget_key = str(category or "").strip().lower()
+    if not budget_key:
+        return False
+
+    txn_category = str((record or {}).get("category", "")).strip().lower()
+    if txn_category == budget_key:
+        return True
+
+    desc = str((record or {}).get("description", "") or "").lower()
+    raw = str((record or {}).get("raw_input", "") or "").lower()
+    return bool(budget_key and (budget_key in desc or budget_key in raw))
+
+
+def calculate_budget_actual_from_transactions(transactions: list[dict]) -> dict:
+    """Hitung realisasi budget sebagai Bersih (Gross).
+
+    Bersih = gross expense dikurangi piutang aktif yang menempel ke transaksi
+    split bill. Ini sengaja disamakan dengan output `/transaksi`, supaya
+    `/budget` tidak terlihat gross-only.
+    """
+    gross_total = 0.0
+    net_total = 0.0
+
+    for txn in transactions or []:
+        if str((txn or {}).get("type", "")).strip().lower() != "expense":
+            continue
+
+        amount = safe_float((txn or {}).get("amount", 0))
+        receivable = safe_float((txn or {}).get("debt_receivable_remaining", 0))
+        gross_total += amount
+        net_total += max(amount - receivable, 0.0)
+
+    return {"net": net_total, "gross": gross_total}
+
+
+def get_actual_expense_breakdown(category: str, month: str = None) -> dict:
+    """Hitung total pengeluaran bersih dan gross untuk kategori budget."""
     month = normalize_month(month)
 
     records = get_all_records(SHEET_TRANSACTIONS)
-    total = 0.0
+    matched = []
 
     for record in records:
-        txn_type = str(record.get("type", "")).strip()
-        txn_category = str(record.get("category", "")).strip()
+        txn_type = str(record.get("type", "")).strip().lower()
         txn_date = str(record.get("date", "")).strip()
 
         if txn_type != "expense":
             continue
-
         if not txn_date.startswith(month):
             continue
-
-        budget_key = category.strip().lower()
-        desc = str(record.get("description", "") or "").lower()
-        raw = str(record.get("raw_input", "") or "").lower()
-
-        # Budget kategori resmi: cocokkan kategori transaksi.
-        if txn_category.lower() == budget_key:
-            total += safe_float(record.get("amount", 0))
+        if not budget_transaction_matches_category(record, category):
             continue
 
-        # Budget custom: kalau nama budget muncul di deskripsi/raw input, ikut dihitung.
-        # Contoh: budget "Jajan" bisa menghitung input yang memang mengandung kata jajan.
-        if budget_key and (budget_key in desc or budget_key in raw):
-            total += safe_float(record.get("amount", 0))
+        matched.append(dict(record or {}))
 
-    return total
+    if not matched:
+        return {"net": 0.0, "gross": 0.0}
+
+    # Import lokal supaya budget_service tidak punya circular import saat module load.
+    from app.services.report_service import enrich_transactions_with_debt_info
+
+    enriched = enrich_transactions_with_debt_info(matched)
+    return calculate_budget_actual_from_transactions(enriched)
+
+
+def get_actual_expense(category: str, month: str = None) -> float:
+    """Return realisasi budget bersih untuk kategori tertentu."""
+    return get_actual_expense_breakdown(category, month).get("net", 0.0)
 
 
 def get_budget_summary(month: str = None) -> list[dict]:
     """
     Ambil ringkasan budget vs realisasi semua kategori pada bulan tertentu.
+
+    Output `actual` = pengeluaran bersih.
+    Output `actual_gross` = pengeluaran gross sebelum piutang aktif dikurangi.
     """
     month = normalize_month(month)
 
     budgets = get_all_budgets(month)
     result = []
+
+    records = get_all_records(SHEET_TRANSACTIONS)
+    monthly_expenses = []
+    for record in records:
+        txn_type = str(record.get("type", "")).strip().lower()
+        txn_date = str(record.get("date", "")).strip()
+        if txn_type == "expense" and txn_date.startswith(month):
+            monthly_expenses.append(dict(record or {}))
+
+    if monthly_expenses:
+        # Import lokal supaya budget_service tidak punya circular import saat module load.
+        from app.services.report_service import enrich_transactions_with_debt_info
+        monthly_expenses = enrich_transactions_with_debt_info(monthly_expenses)
 
     for b in budgets:
         category = str(b.get("category", "")).strip()
@@ -315,7 +366,14 @@ def get_budget_summary(month: str = None) -> list[dict]:
         if not category:
             continue
 
-        actual = get_actual_expense(category, month)
+        matched = [
+            txn
+            for txn in monthly_expenses
+            if budget_transaction_matches_category(txn, category)
+        ]
+        actual_info = calculate_budget_actual_from_transactions(matched)
+        actual = actual_info["net"]
+        actual_gross = actual_info["gross"]
         remaining = budget_amount - actual
         pct_used = (actual / budget_amount * 100) if budget_amount > 0 else 0
 
@@ -324,6 +382,7 @@ def get_budget_summary(month: str = None) -> list[dict]:
             "category": category,
             "budget": budget_amount,
             "actual": actual,
+            "actual_gross": actual_gross,
             "remaining": remaining,
             "pct_used": round(pct_used, 1),
             "status": "over" if pct_used >= 100 else "warning" if pct_used >= 80 else "ok",

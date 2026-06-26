@@ -46,6 +46,8 @@ from app.bot.handler_parts.transaction_flow import (
 )
 from app.bot.handler_parts.command_handlers import (
     budget_history_handler,
+    build_pending_expense_lines,
+    format_budget_net_gross,
     bulanan_handler,
     handle_natural_finance_question,
     harian_handler,
@@ -273,12 +275,13 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
 
         total_budget = sum(float(item.get("budget", 0) or 0) for item in summary)
         total_actual = sum(float(item.get("actual", 0) or 0) for item in summary)
+        total_gross_actual = sum(float(item.get("actual_gross", item.get("actual", 0)) or 0) for item in summary)
         total_remaining = total_budget - total_actual
         total_pct = (total_actual / total_budget * 100) if total_budget > 0 else 0
 
         lines = [f"📊 *Budget {format_month_label(normalized_month)}*\n"]
         lines.append(f"💰 Total Budget : *{format_rupiah(total_budget)}*")
-        lines.append(f"💸 Realisasi    : *{format_rupiah(total_actual)}*")
+        lines.append(f"💸 Realisasi Bersih (Gross): *{format_budget_net_gross(total_actual, total_gross_actual)}*")
         lines.append(f"📌 Sisa         : *{format_rupiah(total_remaining)}*")
         lines.append(f"📈 Terpakai     : *{total_pct:.1f}%*\n")
 
@@ -289,7 +292,7 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
             lines.append(
                 f"{item['emoji']} *{item['category']}*\n"
                 f"  {bar} {item['pct_used']}%\n"
-                f"  Pakai: {format_rupiah(item['actual'])} / {format_rupiah(item['budget'])}\n"
+                f"  Pakai Bersih (Gross): {format_budget_net_gross(item.get('actual', 0), item.get('actual_gross', item.get('actual', 0)))} / {format_rupiah(item['budget'])}\n"
                 f"  {remaining_label}: {format_rupiah(abs(item['remaining']))}\n"
             )
 
@@ -529,12 +532,13 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
         month = normalize_month(None)
         total_budget = sum(float(item.get("budget", 0) or 0) for item in summary)
         total_actual = sum(float(item.get("actual", 0) or 0) for item in summary)
+        total_gross_actual = sum(float(item.get("actual_gross", item.get("actual", 0)) or 0) for item in summary)
         total_remaining = total_budget - total_actual
         total_pct = (total_actual / total_budget * 100) if total_budget > 0 else 0
 
         lines = [f"📊 *Budget {format_month_label(month)}*\n"]
         lines.append(f"💰 Total Budget : *{format_rupiah(total_budget)}*")
-        lines.append(f"💸 Realisasi    : *{format_rupiah(total_actual)}*")
+        lines.append(f"💸 Realisasi Bersih (Gross): *{format_budget_net_gross(total_actual, total_gross_actual)}*")
         lines.append(f"📌 Sisa         : *{format_rupiah(total_remaining)}*")
         lines.append(f"📈 Terpakai     : *{total_pct:.1f}%*\n")
 
@@ -545,7 +549,7 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
             lines.append(
                 f"{item['emoji']} *{md_safe(item['category'])}*\n"
                 f"  {bar} {item['pct_used']}%\n"
-                f"  Pakai: {format_rupiah(item['actual'])} / {format_rupiah(item['budget'])}\n"
+                f"  Pakai Bersih (Gross): {format_budget_net_gross(item.get('actual', 0), item.get('actual_gross', item.get('actual', 0)))} / {format_rupiah(item['budget'])}\n"
                 f"  {remaining_label}: {format_rupiah(abs(item['remaining']))}\n"
             )
 
@@ -938,6 +942,38 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if local_natural_handled:
+        return
+
+    # ── Natural pending expense ──────────────────────────────────────────────
+    # Contoh:
+    # - nanti perlu bayar wisuda 750k
+    # - perlu 750k buat bayar wisuda
+    # - bakal service motor 300k tanggal 30
+    #
+    # Ditaruh sebelum debt/parser transaksi supaya input berkeyword future/planning
+    # tidak tercatat sebagai transaksi aktual. Guard-nya ada di is_pending_expense_text().
+    if is_pending_expense_text(user_text):
+        try:
+            item = add_pending_expense_from_text(user_text)
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Gagal menambah pending expense: {md_safe(str(e))}\n\n"
+                "Contoh:\n"
+                "`nanti perlu bayar wisuda 750k`\n"
+                "`nanti perlu service motor 300k tgl 30`\n"
+                "`perlu 750k buat bayar wisuda`",
+                parse_mode="Markdown",
+            )
+            return
+
+        lines = ["✅ *Pending expense tersimpan*\n"]
+        lines.extend(build_pending_expense_lines([item], "Detail Pending", float(item.get("amount", 0) or 0))[2:-1])
+        lines.append(
+            "\nCatatan: pending expense tidak mengubah saldo dan belum masuk pengeluaran aktual.\n"
+            "Kalau sudah dibayar, pakai:\n"
+            f"`/pending_paid {md_code_text(item.get('id'))} {md_safe(item.get('account') or 'BRI')}`"
+        )
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
         return
 
     # ── RAG/Gemini finance question read-only ───────────────────────────────

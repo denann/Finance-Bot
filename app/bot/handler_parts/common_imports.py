@@ -139,6 +139,7 @@ from app.services.pending_expense_service import (
     get_pending_expenses,
     mark_pending_paid,
     cancel_pending_expense,
+    is_pending_expense_text,
 )
 
 # ── Cross-part shared helpers ────────────────────────────────────────────────

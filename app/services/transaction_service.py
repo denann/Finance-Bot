@@ -2,6 +2,8 @@ from datetime import datetime, timedelta
 import re
 import uuid
 
+from app.nlp.normalizer import extract_amount_from_text
+
 from app.config import SHEET_ACCOUNTS, SHEET_TRANSACTIONS
 from app.sheets.client import (
     append_row,
@@ -327,6 +329,22 @@ def update_transaction_debt_relation(
         "success": False,
         "message": f"Transaksi {transaction_id} tidak ditemukan.",
     }
+
+
+def clear_transaction_debt_relation(transaction_id: str) -> dict:
+    """Kosongkan hutang_id/tipe_hutang transaksi setelah split bill lama dibatalkan/lunas."""
+    transaction_id = str(transaction_id or "").strip()
+    if not transaction_id:
+        return {"success": False, "message": "transaction_id kosong."}
+
+    records = get_all_records(SHEET_TRANSACTIONS)
+    for row_index, record in enumerate(records, start=2):
+        if str(record.get("id", "")).strip() == transaction_id:
+            update_cell(SHEET_TRANSACTIONS, row_index, HUTANG_ID_COL, "")
+            update_cell(SHEET_TRANSACTIONS, row_index, TIPE_HUTANG_COL, "")
+            return {"success": True, "message": "ok"}
+
+    return {"success": False, "message": f"Transaksi {transaction_id} tidak ditemukan."}
 
 
 def validate_transaction(parsed: dict) -> tuple[bool, str]:
@@ -1482,10 +1500,14 @@ def normalize_edit_updates(updates: dict) -> dict:
             raise ValueError(f"Field `{field}` tidak boleh diedit.")
 
         if field == "amount":
-            try:
-                value = float(value)
-            except Exception:
-                raise ValueError("Amount harus berupa angka.")
+            parsed_amount = extract_amount_from_text(str(value))
+            if parsed_amount is not None:
+                value = float(parsed_amount)
+            else:
+                try:
+                    value = float(value)
+                except Exception:
+                    raise ValueError("Amount harus berupa angka. Contoh: 500k atau 500000.")
 
             if value <= 0:
                 raise ValueError("Amount harus lebih dari 0.")
@@ -1780,18 +1802,3 @@ def edit_transaction_by_ref(
         "net_deltas": net_deltas,
         "new_balances": balance_result.get("new_balances", {}),
     }
-
-def clear_transaction_debt_relation(transaction_id: str) -> dict:
-    """Kosongkan hutang_id/tipe_hutang transaksi setelah split bill lama dibatalkan/lunas."""
-    transaction_id = str(transaction_id or "").strip()
-    if not transaction_id:
-        return {"success": False, "message": "transaction_id kosong."}
-
-    records = get_all_records(SHEET_TRANSACTIONS)
-    for row_index, record in enumerate(records, start=2):
-        if str(record.get("id", "")).strip() == transaction_id:
-            update_cell(SHEET_TRANSACTIONS, row_index, HUTANG_ID_COL, "")
-            update_cell(SHEET_TRANSACTIONS, row_index, TIPE_HUTANG_COL, "")
-            return {"success": True, "message": "ok"}
-
-    return {"success": False, "message": f"Transaksi {transaction_id} tidak ditemukan."}

@@ -39,6 +39,18 @@ PENDING_EXPENSE_COLUMNS = [
 ACTIVE_STATUSES = {"pending", "planned", "confirmed"}
 CLOSED_STATUSES = {"paid", "cancelled", "canceled", "void", "done"}
 
+PENDING_INTENT_KEYWORDS = {
+    "pending", "rencana", "planning", "plan", "nanti", "akan",
+    "bakal", "perlu", "butuh", "kudu", "harus",
+}
+DEBT_LIKE_KEYWORDS = {
+    "hutang", "utang", "piutang", "minjem", "pinjem", "pinjam",
+    "dipinjem", "dipinjam", "talangin", "ditalangin", "dibayarin",
+}
+PAST_OR_ACTUAL_KEYWORDS = {
+    "sudah", "udah", "sdh", "barusan", "tadi", "kemarin", "baru aja",
+}
+
 MONTH_ALIASES_ID = {
     "januari": 1,
     "jan": 1,
@@ -256,9 +268,72 @@ def detect_pending_due(text: str) -> tuple[str, str, str]:
 def clean_pending_text(text: str) -> str:
     clean = str(text or "").strip()
     clean = re.sub(r"^/(pending_add|pending|rencana)\b", "", clean, flags=re.IGNORECASE).strip()
-    clean = re.sub(r"^(pending|rencana|planning|plan|akan|nanti)\b", "", clean, flags=re.IGNORECASE).strip()
-    clean = re.sub(r"^(pengeluaran\s+)?(?:pending|rencana)\b", "", clean, flags=re.IGNORECASE).strip()
+
+    # Buang prefix natural yang menunjukkan ini rencana/pending, bukan transaksi aktual.
+    # Contoh:
+    # - nanti perlu bayar wisuda 750k -> bayar wisuda 750k
+    # - perlu 750k buat bayar wisuda -> 750k buat bayar wisuda
+    # - bakal service motor 300k -> service motor 300k
+    clean = re.sub(
+        r"^(pengeluaran\s+)?(?:pending|rencana|planning|plan|nanti|akan|bakal|perlu|butuh|kudu|harus)\b",
+        "",
+        clean,
+        flags=re.IGNORECASE,
+    ).strip()
+    clean = re.sub(
+        r"^(?:perlu|butuh|kudu|harus)\s+(?:bayar|beli|buat|untuk)\b",
+        "",
+        clean,
+        flags=re.IGNORECASE,
+    ).strip()
     return clean
+
+
+def is_pending_expense_text(text: str) -> bool:
+    """Deteksi input natural untuk pending expense.
+
+    Guard:
+    - Harus ada nominal.
+    - Harus ada keyword future/planning yang cukup jelas.
+    - Hindari bentrok dengan debt/hutang dan transaksi aktual/past-tense.
+    """
+    raw = str(text or "").strip()
+    if not raw or raw.startswith("/"):
+        return False
+
+    clean = re.sub(r"\s+", " ", raw.lower()).strip()
+
+    amount = extract_amount_from_text(clean)
+    if not amount or amount <= 0:
+        return False
+
+    if any(keyword in clean for keyword in DEBT_LIKE_KEYWORDS):
+        return False
+
+    # Kalau user jelas menandai sudah terjadi, biarkan masuk parser transaksi aktual.
+    if any(keyword in clean for keyword in PAST_OR_ACTUAL_KEYWORDS):
+        return False
+
+    starts_with_pending = re.match(
+        r"^(pending|rencana|planning|plan|nanti|akan|bakal|perlu|butuh|kudu|harus)\b",
+        clean,
+    )
+    if starts_with_pending:
+        return True
+
+    # Bentuk lain: "bulan depan bayar wifi 285k", "besok service motor 300k".
+    future_time_marker = re.search(
+        r"\b(besok|lusa|minggu depan|pekan depan|bulan depan|akhir bulan|nanti tanggal|tanggal \d{1,2})\b",
+        clean,
+    )
+    action_marker = re.search(
+        r"\b(bayar|beli|service|servis|buat|untuk|tagihan|iuran|perpanjang|top up|isi)\b",
+        clean,
+    )
+    if future_time_marker and action_marker:
+        return True
+
+    return False
 
 
 def strip_pending_time_phrases(text: str) -> str:

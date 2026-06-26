@@ -183,6 +183,9 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/pending_add bayar wifi 285k tgl 30 dari BRI` — tambah pending dengan tanggal pasti\n"
         "`pending beli token 500k` — tambah pending tanpa tanggal pasti\n"
         "`rencana beli sepatu 300k bulan depan` — tambah pending dengan bulan, tanggal belum pasti\n"
+        "`nanti perlu bayar wisuda 750k` — tambah pending natural tanpa command\n"
+        "`nanti perlu service motor 300k tgl 30` — pending natural dengan tanggal pasti\n"
+        "`perlu 750k buat bayar wisuda` — pending natural tanpa tanggal pasti\n"
         "`/pending_paid pending_id BRI` — ubah pending menjadi transaksi aktual\n"
         "`/pending_cancel pending_id` — batalkan pending expense\n\n"
 
@@ -1166,7 +1169,9 @@ def build_pending_expense_lines(items: list[dict], title: str, total: float | No
             "Tambah dengan:\n"
             "`/pending_add bayar wifi 285k tgl 30 dari BRI`\n"
             "`pending beli token 500k`\n"
-            "`rencana beli sepatu 300k bulan depan`"
+            "`rencana beli sepatu 300k bulan depan`\n"
+            "`nanti perlu bayar wisuda 750k`\n"
+            "`perlu 750k buat bayar wisuda`"
         )
         return lines
 
@@ -1257,7 +1262,9 @@ async def pending_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Contoh:\n"
             "`/pending_add bayar wifi 285k tgl 30 dari BRI`\n"
             "`/pending_add beli token 500k`\n"
-            "`rencana beli sepatu 300k bulan depan`",
+            "`rencana beli sepatu 300k bulan depan`\n"
+            "`nanti perlu bayar wisuda 750k`\n"
+            "`perlu 750k buat bayar wisuda`",
             parse_mode="Markdown",
         )
         return
@@ -1269,7 +1276,9 @@ async def pending_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"❌ Gagal menambah pending expense: {md_safe(str(e))}\n\n"
             "Contoh:\n"
             "`/pending_add bayar wifi 285k tgl 30 dari BRI`\n"
-            "`pending beli token 500k`",
+            "`pending beli token 500k`\n"
+            "`nanti perlu bayar wisuda 750k`\n"
+            "`perlu 750k buat bayar wisuda`",
             parse_mode="Markdown",
         )
         return
