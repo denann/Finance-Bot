@@ -1958,6 +1958,227 @@ def build_edit_preview_text(preview: dict) -> str:
 
     return "\n".join(lines)
 
+
+
+def extract_bulk_edit_txn_lines(raw_text: str) -> list[str]:
+    """Ambil baris /edit_txn dari pesan multi-line.
+
+    Dipakai supaya user bisa paste beberapa command edit sekaligus, misalnya:
+    /edit_txn 1 category="Food & Beverage"
+    /edit_txn 2 category="Bills & Utilities"
+    """
+    lines = [str(line or "").strip() for line in str(raw_text or "").splitlines()]
+    lines = [line for line in lines if line]
+
+    edit_lines = [
+        line for line in lines
+        if re.match(r"^/edit_txn(?:@\w+)?\b", line, flags=re.IGNORECASE)
+    ]
+
+    if len(edit_lines) >= 2 and len(edit_lines) == len(lines):
+        return edit_lines
+
+    return []
+
+
+def _format_bulk_edit_value(value) -> str:
+    if isinstance(value, (int, float)):
+        if float(value).is_integer():
+            return format_rupiah(float(value)) if abs(float(value)) >= 1000 else str(int(value))
+        return str(value)
+    return str(value if value is not None else "-").strip() or "-"
+
+
+def build_bulk_edit_preview_text(entries: list[dict]) -> str:
+    lines = [
+        "✏️ *Preview Bulk Edit Transaksi*",
+        f"Akan mengedit *{len(entries)} transaksi* dari daftar terakhir.",
+        "",
+    ]
+
+    balance_touch_count = 0
+    for idx, entry in enumerate(entries, 1):
+        preview = entry.get("preview") or {}
+        old_txn = preview.get("old_txn") or {}
+        new_txn = preview.get("new_txn") or {}
+        updates = preview.get("updates") or {}
+        net_deltas = preview.get("net_deltas") or {}
+        if net_deltas:
+            balance_touch_count += 1
+
+        ref = str(entry.get("ref") or idx).strip()
+        desc_before = str(old_txn.get("description") or old_txn.get("subject") or "-").strip()
+        desc_after = str(new_txn.get("description") or new_txn.get("subject") or "-").strip()
+        lines.append(f"{idx}. Ref `{md_code_text(ref)}` — *{md_safe(desc_before)}*")
+
+        for field, new_value in updates.items():
+            old_value = old_txn.get(field, "")
+            if field == "amount":
+                old_text = format_rupiah(float(old_value or 0))
+                new_text = format_rupiah(float(new_value or 0))
+            else:
+                old_text = _format_bulk_edit_value(old_value)
+                new_text = _format_bulk_edit_value(new_value)
+
+            label = {
+                "description": "Desc",
+                "category": "Kategori",
+                "amount": "Nominal",
+                "account": "Rekening",
+                "to_account": "Rekening tujuan",
+                "date": "Tanggal",
+                "type": "Tipe",
+                "subject": "Subject",
+                "catatan": "Catatan",
+                "tipe_pengeluaran": "Tipe pengeluaran",
+            }.get(str(field), str(field))
+
+            lines.append(f"   • {label}: {md_safe(old_text)} → *{md_safe(new_text)}*")
+
+        if desc_before != desc_after and "description" not in updates:
+            lines.append(f"   • Desc hasil: {md_safe(desc_before)} → *{md_safe(desc_after)}*")
+
+    if balance_touch_count:
+        lines.append(
+            f"\n⚠️ Ada *{balance_touch_count} edit* yang bisa mengubah saldo karena menyentuh nominal/rekening/type."
+        )
+    else:
+        lines.append("\nℹ️ Bulk edit ini tidak mengubah saldo karena hanya mengubah metadata transaksi.")
+
+    lines.append("\nSimpan semua perubahan ini?")
+    return "\n".join(lines)
+
+
+def build_bulk_edit_error_text(errors: list[str]) -> str:
+    lines = ["❌ *Bulk edit tidak bisa diproses.*", ""]
+    lines.append("Perbaiki baris berikut dulu:")
+    for err in errors[:15]:
+        lines.append(f"• {md_safe(err)}")
+    if len(errors) > 15:
+        lines.append(f"• ...dan {len(errors) - 15} error lain")
+    lines.append(
+        "\nFormat contoh:\n"
+        "`/edit_txn 1 category=\"Food & Beverage\"`\n"
+        "`/edit_txn 2 category=\"Bills & Utilities\" desc=\"Wifi\"`"
+    )
+    return "\n".join(lines)
+
+
+def parse_bulk_edit_txn_entries(lines: list[str], context: ContextTypes.DEFAULT_TYPE) -> tuple[list[dict], list[str]]:
+    entries: list[dict] = []
+    errors: list[str] = []
+    seen_targets: set[str] = set()
+
+    for line_no, line in enumerate(lines, 1):
+        try:
+            parts = shlex.split(line)
+        except Exception as e:
+            errors.append(f"Baris {line_no}: format kutip tidak valid ({e}).")
+            continue
+
+        if len(parts) < 3:
+            errors.append(f"Baris {line_no}: format edit belum lengkap.")
+            continue
+
+        args = parts[1:]
+        ref = str(args[0] or "").strip()
+        update_args = args[1:]
+
+        if edit_args_contain_split_bill(update_args):
+            errors.append(
+                f"Baris {line_no}: edit split bill perlu dijalankan satu per satu karena butuh pilihan sudah bayar/belum."
+            )
+            continue
+
+        try:
+            debt_payment_conversion = parse_edit_debt_payment_conversion_args(update_args)
+        except Exception as e:
+            errors.append(f"Baris {line_no}: {str(e)}")
+            continue
+
+        if debt_payment_conversion:
+            errors.append(
+                f"Baris {line_no}: konversi bayar_hutang/bayar_piutang perlu dijalankan satu per satu."
+            )
+            continue
+
+        resolved = resolve_txn_refs_from_last(context, [ref])
+        if resolved.get("invalid_refs") and not resolved.get("row_indices") and not resolved.get("txn_ids"):
+            errors.append(f"Baris {line_no}: nomor transaksi `{ref}` tidak ditemukan dari hasil terakhir.")
+            continue
+
+        row_index = resolved["row_indices"][0] if resolved.get("row_indices") else None
+        txn_id = resolved["txn_ids"][0] if resolved.get("txn_ids") else None
+        target_key = f"row:{row_index}" if row_index else f"id:{txn_id}"
+
+        if target_key in seen_targets:
+            errors.append(f"Baris {line_no}: transaksi `{ref}` diedit lebih dari sekali dalam bulk edit ini.")
+            continue
+        seen_targets.add(target_key)
+
+        try:
+            updates = parse_edit_updates(update_args)
+        except Exception as e:
+            errors.append(f"Baris {line_no}: {str(e)}")
+            continue
+
+        if not updates:
+            errors.append(f"Baris {line_no}: tidak ada field yang diedit.")
+            continue
+
+        preview = preview_edit_transaction_by_ref(
+            updates=updates,
+            row_index=row_index,
+            txn_id=txn_id,
+        )
+
+        if not preview.get("success"):
+            errors.append(f"Baris {line_no}: {preview.get('message') or 'Gagal preview edit.'}")
+            continue
+
+        entries.append({
+            "line_no": line_no,
+            "line": line,
+            "ref": ref,
+            "row_index": row_index,
+            "txn_id": txn_id,
+            "updates": preview.get("updates") or updates,
+            "preview": preview,
+        })
+
+    return entries, errors
+
+
+async def bulk_edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, lines: list[str]):
+    entries, errors = parse_bulk_edit_txn_entries(lines, context)
+
+    if errors or not entries:
+        await update.message.reply_text(
+            build_bulk_edit_error_text(errors or ["Tidak ada baris edit valid."]),
+            parse_mode="Markdown",
+        )
+        return
+
+    context.user_data["pending_bulk_edit_txns"] = {
+        "entries": [
+            {
+                "line_no": entry.get("line_no"),
+                "line": entry.get("line"),
+                "ref": entry.get("ref"),
+                "row_index": entry.get("row_index"),
+                "txn_id": entry.get("txn_id"),
+                "updates": entry.get("updates") or {},
+            }
+            for entry in entries
+        ]
+    }
+
+    await update.message.reply_text(
+        build_bulk_edit_preview_text(entries),
+        parse_mode="Markdown",
+        reply_markup=confirm_keyboard("edit_txns_bulk"),
+    )
+
 async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /edit_txn 2 amount=15000
@@ -1970,6 +2191,11 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     raw_text = update.message.text.strip()
+
+    bulk_lines = extract_bulk_edit_txn_lines(raw_text)
+    if bulk_lines:
+        await bulk_edit_txn_handler(update, context, bulk_lines)
+        return
 
     try:
         parts = shlex.split(raw_text)

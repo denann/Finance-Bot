@@ -800,6 +800,95 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_expense_confirm", None)
             return
 
+        if confirm_target == "edit_txns_bulk":
+            pending_bulk = context.user_data.get("pending_bulk_edit_txns") or {}
+            entries = pending_bulk.get("entries") or []
+
+            if not entries:
+                await safe_edit_message(query, "❌ Sesi bulk edit transaksi expired. Coba ulangi dari daftar transaksi terakhir.")
+                return
+
+            await safe_edit_message(
+                query,
+                "⏳ *Sedang mengedit beberapa transaksi...*",
+                parse_mode="Markdown",
+            )
+
+            success_results = []
+            failed_results = []
+            aggregate_deltas = {}
+            latest_balances = {}
+
+            for entry in entries:
+                result = edit_transaction_by_ref(
+                    updates=entry.get("updates", {}),
+                    row_index=entry.get("row_index"),
+                    txn_id=entry.get("txn_id"),
+                )
+
+                if result.get("success"):
+                    success_results.append({"entry": entry, "result": result})
+
+                    for account, delta in (result.get("net_deltas") or {}).items():
+                        aggregate_deltas[account] = aggregate_deltas.get(account, 0) + float(delta or 0)
+
+                    for account, balance in (result.get("new_balances") or {}).items():
+                        latest_balances[account] = balance
+                else:
+                    failed_results.append({"entry": entry, "result": result})
+
+            lines = [
+                "✅ *Bulk edit transaksi selesai!*" if not failed_results else "⚠️ *Bulk edit transaksi selesai sebagian.*",
+                f"Berhasil: *{len(success_results)}* / *{len(entries)}* transaksi",
+            ]
+
+            if success_results:
+                lines.append("\n*Berhasil diedit:*")
+                for item in success_results[:20]:
+                    entry = item.get("entry") or {}
+                    result = item.get("result") or {}
+                    old_txn = result.get("old_txn") or {}
+                    new_txn = result.get("new_txn") or {}
+                    ref = str(entry.get("ref") or "-").strip()
+                    old_desc = str(old_txn.get("description") or old_txn.get("subject") or "-").strip()
+                    new_desc = str(new_txn.get("description") or new_txn.get("subject") or "-").strip()
+                    old_cat = str(old_txn.get("category") or "-").strip()
+                    new_cat = str(new_txn.get("category") or "-").strip()
+                    lines.append(f"• `{md_code_text(ref)}` {md_safe(old_desc)}")
+                    if old_cat != new_cat:
+                        lines.append(f"  Kategori: {md_safe(old_cat)} → *{md_safe(new_cat)}*")
+                    if old_desc != new_desc:
+                        lines.append(f"  Desc: {md_safe(old_desc)} → *{md_safe(new_desc)}*")
+
+                if len(success_results) > 20:
+                    lines.append(f"• ...dan {len(success_results) - 20} transaksi lain")
+
+            if failed_results:
+                lines.append("\n*Gagal diedit:*")
+                for item in failed_results[:10]:
+                    entry = item.get("entry") or {}
+                    result = item.get("result") or {}
+                    lines.append(
+                        f"• `{md_code_text(entry.get('ref') or '-')}`: {md_safe(result.get('message') or 'Gagal edit.')}"
+                    )
+                if len(failed_results) > 10:
+                    lines.append(f"• ...dan {len(failed_results) - 10} gagal lain")
+
+            if aggregate_deltas:
+                lines.append("\n🔁 *Total penyesuaian saldo:*")
+                for account, delta in aggregate_deltas.items():
+                    sign = "+" if delta >= 0 else "-"
+                    lines.append(f"• {md_safe(account)}: {sign}{format_rupiah(abs(delta))}")
+
+            if latest_balances:
+                lines.append("\n💳 *Saldo terbaru:*")
+                for account, balance in latest_balances.items():
+                    lines.append(f"• {md_safe(account)}: *{format_rupiah(balance)}*")
+
+            context.user_data.pop("pending_bulk_edit_txns", None)
+            await safe_edit_message(query, "\n".join(lines), parse_mode="Markdown")
+            return
+
         if confirm_target == "edit_txn":
             pending_edit = context.user_data.get("pending_edit_txn")
 
@@ -1874,6 +1963,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_delete_refs", None)
         context.user_data.pop("pending_delete_txn_ids", None)
         context.user_data.pop("pending_edit_txn", None)
+        context.user_data.pop("pending_bulk_edit_txns", None)
         context.user_data.pop("pending_debt_void", None)
         context.user_data.pop("pending_asset_price", None)
         context.user_data.pop("pending_asset_confirm", None)
