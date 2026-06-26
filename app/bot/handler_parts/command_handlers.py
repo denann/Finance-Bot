@@ -1937,6 +1937,23 @@ def format_debt_created_date_for_display(debt: dict) -> str:
     return raw
 
 
+def debt_detail_sort_key_for_display(debt: dict) -> tuple[str, str, int]:
+    """Urutkan detail /hutang <nama> dari terbaru ke terlama.
+
+    created_at di sheet debts saat ini umumnya hanya YYYY-MM-DD, sedangkan debt_id
+    menyimpan timestamp lengkap: debt_YYYYMMDD_HHMMSS_microsecond. Karena itu
+    debt_id dipakai sebagai tie-breaker agar item dalam tanggal yang sama juga
+    konsisten terbaru ke terlama.
+    """
+    created_date = format_debt_created_date_for_display(debt)
+    debt_id = str((debt or {}).get("id", "") or "").strip()
+    try:
+        row_index = int((debt or {}).get("_row_index", 0) or 0)
+    except Exception:
+        row_index = 0
+    return (created_date, debt_id, row_index)
+
+
 async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -1948,7 +1965,11 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # /hutang <nama> = detail rincian per orang
     if person_query:
         detail = get_debt_person_detail(person_query, include_settled=True)
-        active_details = detail.get("active_details") or []
+        active_details = sorted(
+            detail.get("active_details") or [],
+            key=debt_detail_sort_key_for_display,
+            reverse=True,
+        )
         all_details = detail.get("details") or []
 
         if not all_details:
