@@ -1611,6 +1611,7 @@ def parse_edit_updates(args: list[str]) -> dict:
 
     Format utama:
     amount=15000
+    amount = 500k
     account=Cash
     category="Food & Beverage"
     desc="Kopi susu"
@@ -1619,38 +1620,91 @@ def parse_edit_updates(args: list[str]) -> dict:
     Shortcut:
     /edit_txn 2 15000
     -> amount=15000
+
+    Catatan split bill:
+    token setelah kata `dibagi/bagi/split/patungan` diabaikan di sini,
+    lalu diproses terpisah oleh attach_split_bill_if_any().
     """
     if not args:
         return {}
 
     if len(args) == 1:
         first = args[0].strip()
+        if re.fullmatch(r"\d+(?:[.,]\d+)?(?:\s*(?:rb|ribu|k|jt|juta|m))?", first, flags=re.IGNORECASE):
+            return {"amount": first.replace(",", ".")}
 
-        if re.fullmatch(r"\d+(?:[.,]\d+)?", first):
-            return {
-                "amount": first.replace(",", ".")
-            }
-
+    split_words = {"dibagi", "bagi", "patungan", "split", "share"}
     updates = {}
+    i = 0
 
-    for arg in args:
-        if "=" not in arg:
-            raise ValueError(
-                f"Argumen `{arg}` tidak valid. Gunakan format key=value."
-            )
+    while i < len(args):
+        arg = str(args[i] or "").strip()
+        low = arg.lower()
 
-        key, value = arg.split("=", 1)
-        key = key.strip()
-        value = value.strip()
+        if not arg:
+            i += 1
+            continue
 
-        if not key or value == "":
-            raise ValueError(
-                f"Argumen `{arg}` tidak valid. Gunakan format key=value."
-            )
+        # Begitu masuk frasa split bill, sisanya bukan field edit biasa.
+        if low in split_words or low.replace("-", "") in {"dibagi"}:
+            break
 
-        updates[key] = value
+        # Support: amount = 500k
+        if i + 2 < len(args) and args[i + 1] == "=":
+            key = arg
+            value = str(args[i + 2]).strip()
+            updates[key] = value
+            i += 3
+            continue
+
+        # Support: amount=500k dan amount= 500k
+        if "=" in arg:
+            key, value = arg.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if value == "" and i + 1 < len(args):
+                value = str(args[i + 1]).strip()
+                i += 2
+            else:
+                i += 1
+
+            if not key or value == "":
+                raise ValueError(f"Argumen `{arg}` tidak valid. Gunakan format key=value.")
+            updates[key] = value
+            continue
+
+        # Support shortcut: /edit_txn 2 500k
+        if not updates and re.fullmatch(r"\d+(?:[.,]\d+)?(?:\s*(?:rb|ribu|k|jt|juta|m))?", arg, flags=re.IGNORECASE):
+            updates["amount"] = arg
+            i += 1
+            continue
+
+        raise ValueError(
+            f"Argumen `{arg}` tidak valid. Gunakan format key=value."
+        )
 
     return updates
+
+
+def edit_args_contain_split_bill(args: list[str]) -> bool:
+    raw = " ".join(str(x or "") for x in args)
+    return bool(re.search(r"\b(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)\b", raw, flags=re.IGNORECASE))
+
+
+def build_edit_split_preview_text(preview: dict, split_parsed: dict | None = None) -> str:
+    text = build_edit_preview_text(preview)
+    split_bill = (split_parsed or {}).get("split_bill") or {}
+    status = split_bill.get("status")
+    if split_bill:
+        total_receivable = float(split_bill.get("total_receivable", 0) or 0)
+        if status == "unpaid":
+            text += (
+                "\n\n🤝 *Split bill:* belum dibayar, jadi piutang baru akan dibuat "
+                f"sebesar *{format_rupiah(total_receivable)}*."
+            )
+        elif status == "paid":
+            text += "\n\n🤝 *Split bill:* sudah dibayar, transaksi disimpan sebesar bagian bersih kamu."
+    return text
 
 
 def build_edit_preview_text(preview: dict) -> str:
@@ -1787,14 +1841,37 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    split_parsed = None
+    split_raw = " ".join(update_args)
+    if edit_args_contain_split_bill(update_args):
+        split_parsed = dict(preview.get("new_txn", {}) or {})
+        attach_split_bill_if_any(split_parsed, split_raw)
+
+        if split_bill_needs_decision(split_parsed):
+            context.user_data["pending_edit_txn"] = {
+                "row_index": row_index,
+                "txn_id": txn_id,
+                "updates": updates,
+                "split_raw": split_raw,
+                "split_parsed": split_parsed,
+            }
+            await update.message.reply_text(
+                build_split_bill_prompt_from_parsed(split_parsed),
+                parse_mode="Markdown",
+                reply_markup=split_bill_keyboard("edit_txn"),
+            )
+            return
+
     context.user_data["pending_edit_txn"] = {
         "row_index": row_index,
         "txn_id": txn_id,
         "updates": updates,
+        "split_raw": split_raw if split_parsed else "",
+        "split_parsed": split_parsed,
     }
 
     await update.message.reply_text(
-        build_edit_preview_text(preview),
+        build_edit_split_preview_text(preview, split_parsed),
         parse_mode="Markdown",
         reply_markup=confirm_keyboard("edit_txn"),
     )

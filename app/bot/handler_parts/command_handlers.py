@@ -171,6 +171,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/edit_txn 2 amount=15000`\n"
         "`/edit_txn 2 desc=Kopi susu`\n"
         "`/edit_txn 2 account=BRI category=Food & Beverage`\n"
+        "`/edit_txn txn_id amount=500k dibagi 4 sama Sapto:125k Alpat:125k Opik:100k`\n"
         "Jika transaksi punya `hutang_id`, `/delete_txn` akan mencoba void debt terkait otomatis.\n\n"
 
         "*13. Pending Expense / Rencana Pengeluaran*\n"

@@ -57,6 +57,63 @@ def mark_debt_as_historical(debt_parsed: dict) -> dict:
     return debt_parsed
 
 
+
+def build_edit_txn_preview_text_for_callback(preview: dict, split_parsed: dict | None = None) -> str:
+    """Preview edit transaksi untuk flow split bill di callback_handler."""
+    old_txn = preview.get("old_txn", {}) or {}
+    new_txn = preview.get("new_txn", {}) or {}
+    updates = preview.get("updates", {}) or {}
+    net_deltas = preview.get("net_deltas", {}) or {}
+
+    lines = ["✏️ *Preview Edit Transaksi*\n"]
+    lines.append("*Sebelum:*")
+    lines.append(
+        f"• {old_txn.get('date')} — *{md_safe(old_txn.get('description') or '-')}*\n"
+        f"  {format_rupiah(float(old_txn.get('amount', 0) or 0))} | "
+        f"{md_safe(old_txn.get('category') or '-')} | {md_safe(old_txn.get('account') or '-')}"
+    )
+
+    lines.append("\n*Sesudah:*")
+    lines.append(
+        f"• {new_txn.get('date')} — *{md_safe(new_txn.get('description') or '-')}*\n"
+        f"  {format_rupiah(float(new_txn.get('amount', 0) or 0))} | "
+        f"{md_safe(new_txn.get('category') or '-')} | {md_safe(new_txn.get('account') or '-')}"
+    )
+
+    if updates:
+        lines.append("\n*Field yang diubah:*")
+        for field, value in updates.items():
+            lines.append(f"• {md_safe(field)}: `{md_code_text(value)}`")
+
+    split_bill = (split_parsed or {}).get("split_bill") or {}
+    if split_bill:
+        total_receivable = float(split_bill.get("total_receivable", 0) or 0)
+        if split_bill.get("status") == "unpaid":
+            lines.append(
+                f"\n🤝 *Split bill:* belum dibayar, piutang baru akan dibuat sebesar *{format_rupiah(total_receivable)}*."
+            )
+        elif split_bill.get("status") == "paid":
+            lines.append("\n🤝 *Split bill:* sudah dibayar, tidak membuat piutang baru.")
+
+    if net_deltas:
+        lines.append("\n*Efek ke saldo:*")
+        for account, delta in net_deltas.items():
+            sign = "+" if delta >= 0 else "-"
+            lines.append(f"• {md_safe(account)}: {sign}{format_rupiah(abs(delta))}")
+    else:
+        lines.append("\n*Efek ke saldo:*\n• Tidak ada perubahan saldo")
+
+    lines.append("\nSimpan perubahan ini?")
+    return "\n".join(lines)
+
+
+def parse_debt_ids_from_txn_record_for_edit(txn: dict) -> list[str]:
+    raw = str((txn or {}).get("hutang_id", "") or "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in re.split(r"[,;\s]+", raw) if part.strip()]
+
+
 def resolve_payment_target_type(parsed: dict, debts: list[dict]) -> tuple[str | None, str | None]:
     """Tentukan arah debt untuk pembayaran by person tanpa memblokir mixed arah.
 
@@ -595,6 +652,40 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+        if scope == "edit_txn":
+            pending_edit = context.user_data.get("pending_edit_txn") or {}
+            split_parsed = pending_edit.get("split_parsed") or {}
+            if not pending_edit or not split_parsed:
+                await safe_edit_message(query, "❌ Sesi edit split bill expired. Coba ulangi `/edit_txn`.")
+                return
+
+            apply_split_bill_decision_to_parsed(split_parsed, status)
+            updates = dict(pending_edit.get("updates", {}) or {})
+            updates["amount"] = split_parsed.get("amount")
+
+            preview = preview_edit_transaction_by_ref(
+                updates=updates,
+                row_index=pending_edit.get("row_index"),
+                txn_id=pending_edit.get("txn_id"),
+            )
+            if not preview.get("success"):
+                await safe_edit_message(query, f"❌ {preview.get('message')}", parse_mode="Markdown")
+                context.user_data.pop("pending_edit_txn", None)
+                return
+
+            pending_edit["updates"] = updates
+            pending_edit["split_parsed"] = split_parsed
+            pending_edit["split_status"] = status
+            context.user_data["pending_edit_txn"] = pending_edit
+
+            await safe_edit_message(
+                query,
+                build_edit_txn_preview_text_for_callback(preview, split_parsed),
+                parse_mode="Markdown",
+                reply_markup=confirm_keyboard("edit_txn"),
+            )
+            return
+
         parsed = context.user_data.get("pending_parsed")
         if not parsed:
             await safe_edit_message(query, "❌ Sesi split bill expired. Coba input ulang.")
@@ -723,6 +814,31 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
             )
 
+            split_parsed = pending_edit.get("split_parsed") or None
+            split_status = (split_parsed or {}).get("split_bill", {}).get("status") if split_parsed else None
+            target_txn_id = str(pending_edit.get("txn_id") or "").strip()
+
+            if split_parsed:
+                preview_before_edit = preview_edit_transaction_by_ref(
+                    updates=pending_edit.get("updates", {}),
+                    row_index=pending_edit.get("row_index"),
+                    txn_id=pending_edit.get("txn_id"),
+                )
+                old_txn_for_debt = preview_before_edit.get("old_txn", {}) if preview_before_edit.get("success") else {}
+                target_txn_id = target_txn_id or str(old_txn_for_debt.get("id") or "").strip()
+                linked_ids = parse_debt_ids_from_txn_record_for_edit(old_txn_for_debt)
+                void_result = void_debts_for_transaction(target_txn_id, linked_ids) if target_txn_id else {"success": True}
+                if not void_result.get("success"):
+                    await safe_edit_message(
+                        query,
+                        "❌ *Gagal edit split bill.*\n"
+                        "Debt/piutang lama tidak bisa dibatalkan otomatis, kemungkinan sudah ada pembayaran/mutasi.\n\n"
+                        f"Detail: {md_safe(void_result.get('message') or '-')}",
+                        parse_mode="Markdown",
+                    )
+                    context.user_data.pop("pending_edit_txn", None)
+                    return
+
             result = edit_transaction_by_ref(
                 updates=pending_edit.get("updates", {}),
                 row_index=pending_edit.get("row_index"),
@@ -768,6 +884,29 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines.append("\n💳 *Saldo terbaru:*")
                 for account, balance in new_balances.items():
                     lines.append(f"• {account}: *{format_rupiah(balance)}*")
+
+            if split_parsed and target_txn_id:
+                if split_status == "unpaid":
+                    split_debt = create_split_bill_debt(
+                        split_parsed,
+                        pending_edit.get("split_raw", "edit split bill"),
+                        source_transaction_id=target_txn_id,
+                    )
+                    if split_debt and split_debt.get("success"):
+                        debt_ids = [
+                            item.get("debt_id")
+                            for item in split_debt.get("created", [])
+                            if item.get("debt_id")
+                        ]
+                        if debt_ids:
+                            update_transaction_debt_relation(target_txn_id, debt_ids, tipe_hutang="piutang")
+                        lines.append("\n🤝 *Piutang split bill baru dibuat:*")
+                        lines.extend(format_split_debt_result_lines(split_debt))
+                    elif split_debt:
+                        lines.append(f"\n⚠️ Gagal membuat piutang split bill baru: {md_safe(split_debt.get('message') or '-')}")
+                elif split_status == "paid":
+                    clear_transaction_debt_relation(target_txn_id)
+                    lines.append("\n🤝 Split bill ditandai sudah dibayar, jadi tidak ada piutang aktif baru.")
 
             await safe_edit_message(query, 
                 "\n".join(lines),
