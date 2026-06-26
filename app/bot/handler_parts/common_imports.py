@@ -136,6 +136,8 @@ from app.services.recurring_service import (
 )
 from app.services.pending_expense_service import (
     add_pending_expense_from_text,
+    build_pending_expense_from_text,
+    save_pending_expense,
     get_pending_expenses,
     mark_pending_paid,
     cancel_pending_expense,

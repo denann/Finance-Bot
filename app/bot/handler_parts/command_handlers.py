@@ -180,10 +180,10 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/pending bulan depan` — lihat pending bulan depan\n"
         "`/pending all` — lihat semua pending aktif\n"
         "`/pending tanpa tanggal` — lihat pending yang tanggalnya belum pasti\n"
-        "`/pending_add bayar wifi 285k tgl 30 dari BRI` — tambah pending dengan tanggal pasti\n"
-        "`pending beli token 500k` — tambah pending tanpa tanggal pasti\n"
+        "`/pending_add bayar wifi 285k tgl 30 dari BRI` — preview pending dengan tanggal pasti\n"
+        "`pending beli token 500k` — preview pending tanpa tanggal pasti\n"
         "`rencana beli sepatu 300k bulan depan` — tambah pending dengan bulan, tanggal belum pasti\n"
-        "`nanti perlu bayar wisuda 750k` — tambah pending natural tanpa command\n"
+        "`nanti perlu bayar wisuda 750k` — preview pending natural tanpa command\n"
         "`nanti perlu service motor 300k tgl 30` — pending natural dengan tanggal pasti\n"
         "`perlu 750k buat bayar wisuda` — pending natural tanpa tanggal pasti\n"
         "`/pending_paid pending_id BRI` — ubah pending menjadi transaksi aktual\n"
@@ -1270,10 +1270,10 @@ async def pending_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     try:
-        item = add_pending_expense_from_text(raw_text)
+        item = build_pending_expense_from_text(raw_text)
     except Exception as e:
         await update.message.reply_text(
-            f"❌ Gagal menambah pending expense: {md_safe(str(e))}\n\n"
+            f"❌ Gagal membaca pending expense: {md_safe(str(e))}\n\n"
             "Contoh:\n"
             "`/pending_add bayar wifi 285k tgl 30 dari BRI`\n"
             "`pending beli token 500k`\n"
@@ -1283,14 +1283,18 @@ async def pending_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return
 
-    lines = ["✅ *Pending expense tersimpan*\n"]
+    context.user_data["pending_expense_confirm"] = item
+    lines = ["🕒 *Preview Pending Expense*\n"]
     lines.extend(build_pending_expense_lines([item], "Detail Pending", float(item.get("amount", 0) or 0))[2:-1])
     lines.append(
         "\nCatatan: pending expense tidak mengubah saldo dan belum masuk pengeluaran aktual.\n"
-        "Kalau sudah dibayar, pakai:\n"
-        f"`/pending_paid {md_code_text(item.get('id'))} {md_safe(item.get('account') or 'BRI')}`"
+        "Simpan pending expense ini?"
     )
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=confirm_keyboard("pending_expense"),
+    )
 
 
 async def pending_paid_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -655,6 +655,60 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_asset_price", None)
             return
 
+        if confirm_target == "pending_expense":
+            item = context.user_data.get("pending_expense_confirm")
+
+            if not item:
+                await safe_edit_message(query, "❌ Sesi pending expense expired. Coba input ulang.")
+                return
+
+            await safe_edit_message(
+                query,
+                "⏳ *Sedang menyimpan pending expense...*",
+                parse_mode="Markdown",
+            )
+
+            try:
+                saved_item = save_pending_expense(item)
+            except Exception as e:
+                await safe_edit_message(
+                    query,
+                    f"❌ Gagal menyimpan pending expense: {md_safe(str(e))}",
+                    parse_mode="Markdown",
+                )
+                return
+
+            subject = str(saved_item.get("subject") or saved_item.get("description") or "Pending Expense")
+            due_date = str(saved_item.get("due_date") or "").strip()
+            due_precision = str(saved_item.get("due_precision") or "unknown").strip().lower()
+            month = str(saved_item.get("month") or "-").strip()
+            if due_date:
+                due_text = due_date
+            elif due_precision == "month":
+                due_text = f"{month} (tanggal belum pasti)"
+            else:
+                due_text = "Belum pasti"
+
+            account = str(saved_item.get("account") or "-").strip() or "-"
+            category = str(saved_item.get("category") or "Other Expense").strip()
+            amount = float(saved_item.get("amount", 0) or 0)
+            pending_id = str(saved_item.get("id") or "").strip()
+
+            await safe_edit_message(
+                query,
+                "✅ *Pending expense tersimpan!*\n\n"
+                f"🕒 *{md_safe(subject)}*\n"
+                f"📅 {md_safe(due_text)} | 💰 *{format_rupiah(amount)}* | {md_safe(category)} | 🏦 {md_safe(account)}\n"
+                f"🔖 `{md_code_text(pending_id)}`\n\n"
+                "Catatan: pending expense tidak mengubah saldo dan belum masuk pengeluaran aktual.\n"
+                "Kalau sudah dibayar, pakai:\n"
+                f"`/pending_paid {md_code_text(pending_id)} {md_safe(account if account != '-' else 'BRI')}`",
+                parse_mode="Markdown",
+            )
+
+            context.user_data.pop("pending_expense_confirm", None)
+            return
+
         if confirm_target == "edit_txn":
             pending_edit = context.user_data.get("pending_edit_txn")
 
@@ -1640,6 +1694,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_asset_price", None)
         context.user_data.pop("pending_asset_confirm", None)
         context.user_data.pop("pending_asset_add_flow", None)
+        context.user_data.pop("pending_expense_confirm", None)
         context.user_data.pop("pending_preview_edit", None)
         context.user_data.pop("pending_missing_amount", None)
         context.user_data.pop("mixed_review_preview_sent", None)

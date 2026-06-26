@@ -954,10 +954,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # tidak tercatat sebagai transaksi aktual. Guard-nya ada di is_pending_expense_text().
     if is_pending_expense_text(user_text):
         try:
-            item = add_pending_expense_from_text(user_text)
+            item = build_pending_expense_from_text(user_text)
         except Exception as e:
             await update.message.reply_text(
-                f"❌ Gagal menambah pending expense: {md_safe(str(e))}\n\n"
+                f"❌ Gagal membaca pending expense: {md_safe(str(e))}\n\n"
                 "Contoh:\n"
                 "`nanti perlu bayar wisuda 750k`\n"
                 "`nanti perlu service motor 300k tgl 30`\n"
@@ -966,14 +966,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        lines = ["✅ *Pending expense tersimpan*\n"]
+        context.user_data["pending_expense_confirm"] = item
+        lines = ["🕒 *Preview Pending Expense*\n"]
         lines.extend(build_pending_expense_lines([item], "Detail Pending", float(item.get("amount", 0) or 0))[2:-1])
         lines.append(
             "\nCatatan: pending expense tidak mengubah saldo dan belum masuk pengeluaran aktual.\n"
-            "Kalau sudah dibayar, pakai:\n"
-            f"`/pending_paid {md_code_text(item.get('id'))} {md_safe(item.get('account') or 'BRI')}`"
+            "Simpan pending expense ini?"
         )
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        await update.message.reply_text(
+            "\n".join(lines),
+            parse_mode="Markdown",
+            reply_markup=confirm_keyboard("pending_expense"),
+        )
         return
 
     # ── RAG/Gemini finance question read-only ───────────────────────────────

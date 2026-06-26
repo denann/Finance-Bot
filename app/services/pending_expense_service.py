@@ -379,7 +379,12 @@ def build_pending_row(item: dict) -> list:
     return [item.get(col, "") for col in PENDING_EXPENSE_COLUMNS]
 
 
-def add_pending_expense_from_text(text: str) -> dict:
+def build_pending_expense_from_text(text: str) -> dict:
+    """Parse input pending expense menjadi item, tanpa menyimpan ke Google Sheets.
+
+    Dipakai untuk preview + tombol Simpan/Batal. Penyimpanan sebenarnya
+    dilakukan oleh save_pending_expense() setelah user klik Simpan.
+    """
     raw_input = str(text or "").strip()
     clean_text = clean_pending_text(raw_input)
 
@@ -401,7 +406,7 @@ def add_pending_expense_from_text(text: str) -> dict:
     subject = parsed.get("subject") or title_from_description(description)
 
     created_at = now_str()
-    item = {
+    return {
         "id": generate_pending_id(),
         "due_date": due_date,
         "month": month,
@@ -418,8 +423,29 @@ def add_pending_expense_from_text(text: str) -> dict:
         "raw_input": raw_input,
     }
 
+
+def save_pending_expense(item: dict) -> dict:
+    """Simpan item pending expense yang sudah dipreview/di-confirm user."""
+    item = dict(item or {})
+    if not item.get("id"):
+        item["id"] = generate_pending_id()
+    if not item.get("created_at"):
+        item["created_at"] = now_str()
+    item["updated_at"] = now_str()
+    item["status"] = item.get("status") or "pending"
+    item.setdefault("paid_transaction_id", "")
     append_row_raw(SHEET_PENDING_EXPENSES, build_pending_row(item))
     return item
+
+
+def add_pending_expense_from_text(text: str) -> dict:
+    """Parse dan langsung simpan pending expense.
+
+    Dipertahankan untuk kompatibilitas internal. Untuk flow Telegram user-facing,
+    gunakan build_pending_expense_from_text() + save_pending_expense() agar ada
+    preview Simpan/Batal.
+    """
+    return save_pending_expense(build_pending_expense_from_text(text))
 
 
 def get_pending_expenses(period: str | None = None, active_only: bool = True) -> dict:
