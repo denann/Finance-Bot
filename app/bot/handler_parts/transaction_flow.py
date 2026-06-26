@@ -1041,6 +1041,47 @@ def strip_split_bill_phrase(text: str) -> str:
     return clean or str(text or "").strip()
 
 
+def strip_trailing_split_person_names(text: str, person_names: list[str]) -> str:
+    """Buang rangkaian nama teman split bill yang bocor di akhir deskripsi/subject.
+
+    Parser regex bisa lebih dulu menghapus token nominal dan "dibagi 4",
+    sehingga input seperti "beli galon 24k dibagi 4 sapto opik alpat"
+    sementara menjadi "Galon Sapto Opik Alpat". Setelah split bill valid,
+    nama-nama itu harus hanya hidup di split_bill.person_names, bukan di item.
+    """
+    clean = str(text or "").strip(" .,-")
+    if not clean or not person_names:
+        return clean
+
+    # Urutkan yang panjang dulu supaya nama multi-token tidak kalah oleh token pendek.
+    ordered_names = sorted(
+        [str(name or "").strip() for name in person_names if str(name or "").strip()],
+        key=len,
+        reverse=True,
+    )
+
+    changed = True
+    while changed and clean:
+        changed = False
+        clean = clean.strip(" .,-")
+
+        # Buang konektor yang mungkin tersisa setelah nama-nama teman dihapus.
+        new_clean = re.sub(r"\b(?:sama|ama|dengan|bareng|dan)\s*$", "", clean, flags=re.IGNORECASE).strip(" .,-")
+        if new_clean != clean:
+            clean = new_clean
+            changed = True
+
+        for person in ordered_names:
+            pattern = rf"(?:^|[\s,;&]+){re.escape(person)}\s*$"
+            new_clean = re.sub(pattern, "", clean, flags=re.IGNORECASE).strip(" .,-")
+            if new_clean != clean:
+                clean = new_clean
+                changed = True
+                break
+
+    return clean
+
+
 def split_split_bill_person_names(name_text: str) -> list[str]:
     """
     Ambil daftar nama teman dari frasa split bill.
@@ -1333,21 +1374,20 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     # "bagi/dibagi 2 sama ...".
     desc = parsed.get("description") or ""
     clean_desc = strip_split_bill_phrase(desc)
-    # Kalau parser regex sudah menghapus frasa "dibagi 2" lebih dulu, nama teman
-    # bisa tersisa di akhir description, misalnya "Nasi Kuning Sapto".
-    # Setelah split_bill valid, buang nama teman dari ujung description/subject.
-    for person in person_names:
-        clean_desc = re.sub(rf"\b{re.escape(person)}\b\s*$", "", clean_desc, flags=re.IGNORECASE).strip(" .,-")
+    # Kalau parser regex sudah menghapus frasa "dibagi 2" lebih dulu, rangkaian
+    # nama teman bisa tersisa di akhir description, misalnya:
+    # "Galon Sapto Opik Alpat". Setelah split_bill valid, semua nama teman
+    # harus hanya masuk field split_bill, bukan description/subject transaksi.
+    clean_desc = strip_trailing_split_person_names(clean_desc, person_names)
     parsed["description"] = clean_desc
 
     subject = parsed.get("subject") or ""
     if subject:
         clean_subject = strip_split_bill_phrase(subject)
-        for person in person_names:
-            clean_subject = re.sub(rf"\b{re.escape(person)}\b\s*$", "", clean_subject, flags=re.IGNORECASE).strip(" .,-")
+        clean_subject = strip_trailing_split_person_names(clean_subject, person_names)
         # Subject biasanya mengikuti description. Kalau masih mengandung kata split,
         # atau nama teman tersisa di ujung, pakai versi bersih agar output/sheet
-        # tidak menjadi "Nasi Kuning Sapto".
+        # tidak menjadi "Nasi Kuning Sapto" / "Galon Sapto Opik".
         if clean_subject != subject or re.search(split_word, subject, flags=re.IGNORECASE):
             parsed["subject"] = clean_subject or clean_desc
 
