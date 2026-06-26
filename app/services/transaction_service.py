@@ -1780,3 +1780,18 @@ def edit_transaction_by_ref(
         "net_deltas": net_deltas,
         "new_balances": balance_result.get("new_balances", {}),
     }
+
+def clear_transaction_debt_relation(transaction_id: str) -> dict:
+    """Kosongkan hutang_id/tipe_hutang transaksi setelah split bill lama dibatalkan/lunas."""
+    transaction_id = str(transaction_id or "").strip()
+    if not transaction_id:
+        return {"success": False, "message": "transaction_id kosong."}
+
+    records = get_all_records(SHEET_TRANSACTIONS)
+    for row_index, record in enumerate(records, start=2):
+        if str(record.get("id", "")).strip() == transaction_id:
+            update_cell(SHEET_TRANSACTIONS, row_index, HUTANG_ID_COL, "")
+            update_cell(SHEET_TRANSACTIONS, row_index, TIPE_HUTANG_COL, "")
+            return {"success": True, "message": "ok"}
+
+    return {"success": False, "message": f"Transaksi {transaction_id} tidak ditemukan."}
