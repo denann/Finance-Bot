@@ -265,6 +265,59 @@ def detect_pending_due(text: str) -> tuple[str, str, str]:
     return "", current_month(), "unknown"
 
 
+
+def has_past_time_marker(text: str) -> bool:
+    """True kalau teks jelas merujuk waktu yang sudah lewat.
+
+    Ini dipakai sebagai guard agar natural pending tidak menimpa parser
+    transaksi aktual. Contoh yang harus tetap transaksi aktual:
+    - beli galon 24k kemarin
+    - beli nasi 20k 2 hari lalu
+    - beli token 500k 20-06-2026  (kalau hari ini setelah tanggal itu)
+    - beli bensin 30k minggu lalu
+    """
+    clean = str(text or "").strip().lower().replace("/", "-")
+    if not clean:
+        return False
+
+    # Frasa lampau eksplisit.
+    if re.search(
+        r"\b(kemarin|tadi|barusan|baru aja|minggu lalu|pekan lalu|bulan lalu|tahun lalu)\b",
+        clean,
+    ):
+        return True
+
+    # Pola relatif lampau: 2 hari lalu, 3 minggu yang lalu, dua hari lalu, dst.
+    if re.search(
+        r"\b(?:\d+|satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh)\s+"
+        r"(?:hari|minggu|pekan|bulan|tahun)\s+(?:yang\s+)?lalu\b",
+        clean,
+    ):
+        return True
+
+    # Tanggal lengkap masa lampau, baik dengan prefix maupun bare.
+    date_candidates = []
+    for match in re.finditer(
+        r"\b(?:tanggal|tgl|tg|date|pada tanggal)?\s*"
+        r"(20\d{2}[-](?:0?[1-9]|1[0-2])[-](?:0?[1-9]|[12]\d|3[01])|"
+        r"(?:0?[1-9]|[12]\d|3[01])[-](?:0?[1-9]|1[0-2])[-]20\d{2})\b",
+        clean,
+        flags=re.IGNORECASE,
+    ):
+        date_candidates.append(match.group(1))
+
+    for candidate in date_candidates:
+        parsed = parse_explicit_date(candidate)
+        if parsed:
+            try:
+                parsed_date = datetime.strptime(parsed, "%Y-%m-%d").date()
+                if parsed_date < today():
+                    return True
+            except Exception:
+                pass
+
+    return False
+
 def clean_pending_text(text: str) -> str:
     clean = str(text or "").strip()
     clean = re.sub(r"^/(pending_add|pending|rencana)\b", "", clean, flags=re.IGNORECASE).strip()
@@ -310,8 +363,10 @@ def is_pending_expense_text(text: str) -> bool:
     if any(keyword in clean for keyword in DEBT_LIKE_KEYWORDS):
         return False
 
-    # Kalau user jelas menandai sudah terjadi, biarkan masuk parser transaksi aktual.
-    if any(keyword in clean for keyword in PAST_OR_ACTUAL_KEYWORDS):
+    # Kalau user jelas menandai sudah terjadi / tanggalnya masa lampau,
+    # biarkan masuk parser transaksi aktual. Ini mencegah pending overwrite
+    # input seperti "kemarin", "2 hari lalu", atau "20-06-2026".
+    if any(keyword in clean for keyword in PAST_OR_ACTUAL_KEYWORDS) or has_past_time_marker(clean):
         return False
 
     starts_with_pending = re.match(
@@ -321,9 +376,23 @@ def is_pending_expense_text(text: str) -> bool:
     if starts_with_pending:
         return True
 
-    # Bentuk lain: "bulan depan bayar wifi 285k", "besok service motor 300k".
+    # Jangan overwrite parser transaksi aktual.
+    # Contoh: "beli galon 24k dibagi 4 ... tanggal 10" adalah transaksi aktual
+    # bertanggal 10 bulan berjalan, bukan pending expense.
+    if re.search(r"\b(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)\b", clean):
+        return False
+
+    # Bentuk lain yang boleh dianggap pending tanpa keyword pembuka hanya jika
+    # marker waktunya jelas masa depan, misalnya:
+    # - "bulan depan bayar wifi 285k"
+    # - "minggu depan service motor 300k"
+    # - "besok service motor 300k"
+    #
+    # Catatan penting: "tanggal 10" sengaja TIDAK dianggap future marker.
+    # Di bot ini, tanggal angka saja berarti tanggal di bulan berjalan dan harus
+    # tetap masuk parser transaksi normal.
     future_time_marker = re.search(
-        r"\b(besok|lusa|minggu depan|pekan depan|bulan depan|akhir bulan|nanti tanggal|tanggal \d{1,2})\b",
+        r"\b(besok|lusa|minggu depan|pekan depan|bulan depan|akhir bulan)\b",
         clean,
     )
     action_marker = re.search(

@@ -885,6 +885,51 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for account, balance in new_balances.items():
                     lines.append(f"• {account}: *{format_rupiah(balance)}*")
 
+            debt_payment_conversion = pending_edit.get("debt_payment_conversion") or None
+            if debt_payment_conversion:
+                target_type = str(debt_payment_conversion.get("target_type") or "").strip().lower()
+                person = str(debt_payment_conversion.get("person_name") or "").strip().title()
+                label = "utang" if target_type == "payable" else "piutang"
+                payment_amount = float(new_txn.get("amount", 0) or 0)
+                target_txn_id = target_txn_id or str(new_txn.get("id") or "").strip()
+
+                payment_result = add_payment_by_person(
+                    person,
+                    payment_amount,
+                    note=f"Konversi dari transaksi {target_txn_id}",
+                    target_debt_type=target_type,
+                )
+
+                if payment_result.get("success"):
+                    allocations = payment_result.get("allocations") or []
+                    debt_ids = [a.get("debt_id") for a in allocations if a.get("debt_id")]
+                    if debt_ids and target_txn_id:
+                        tipe_hutang = "utang" if target_type == "payable" else "piutang"
+                        update_transaction_debt_relation(target_txn_id, debt_ids, tipe_hutang=tipe_hutang)
+
+                    lines.append(f"\n💸 *Pembayaran {label.title()} tercatat:*")
+                    lines.append(f"• Orang: {md_safe(person)}")
+                    lines.append(f"• Nominal: *{format_rupiah(payment_amount)}*")
+                    if allocations:
+                        lines.append("• Alokasi debt:")
+                        for alloc in allocations:
+                            lines.append(
+                                f"  - `{md_code_text(alloc.get('debt_id') or '-')}`: "
+                                f"{format_rupiah(float(alloc.get('amount', 0) or 0))}"
+                            )
+                    if float(payment_result.get("overpayment", 0) or 0) > 0:
+                        lines.append(
+                            f"⚠️ Kelebihan pembayaran: {format_rupiah(payment_result.get('overpayment', 0))}. "
+                            "Kelebihan tidak mengurangi debt."
+                        )
+                    lines.append(f"• Sisa {label}: *{format_rupiah(payment_result.get('remaining', 0))}*")
+                else:
+                    lines.append(
+                        "\n⚠️ *Transaksi sudah diedit, tapi pembayaran debt gagal dicatat.*\n"
+                        f"Detail: {md_safe(payment_result.get('message') or '-')}\n"
+                        "Cek sheet debts/debt_payments secara manual."
+                    )
+
             if split_parsed and target_txn_id:
                 if split_status == "unpaid":
                     split_debt = create_split_bill_debt(

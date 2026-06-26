@@ -1691,6 +1691,211 @@ def edit_args_contain_split_bill(args: list[str]) -> bool:
     return bool(re.search(r"\b(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)\b", raw, flags=re.IGNORECASE))
 
 
+def _normalize_edit_arg_token(token: str) -> str:
+    return str(token or "").strip().lower().replace("_", "-")
+
+
+def parse_edit_debt_payment_conversion_args(args: list[str]) -> dict | None:
+    """Parse /edit_txn untuk mengubah transaksi biasa menjadi pembayaran debt.
+
+    Format yang didukung:
+    - /edit_txn 2 bayar_hutang Sapto
+    - /edit_txn 2 pembayaran_hutang Sapto
+    - /edit_txn 2 bayar hutang Sapto
+    - /edit_txn 2 bayar_piutang Sapto
+    - /edit_txn 2 pembayaran_piutang Sapto
+    - /edit_txn 2 debt=payable person=Sapto
+    - /edit_txn 2 debt=receivable person=Sapto amount=100k
+
+    target_type:
+    - payable    => Anda membayar utang ke orang tersebut, cashflow expense.
+    - receivable => orang tersebut membayar piutang ke Anda, cashflow income.
+    """
+    if not args:
+        return None
+
+    raw_tokens = [str(x or "").strip() for x in args if str(x or "").strip()]
+    if not raw_tokens:
+        return None
+
+    target_type = ""
+    explicit_person = ""
+    field_tokens: list[str] = []
+    person_tokens: list[str] = []
+    consume_person = False
+    found_marker = False
+
+    i = 0
+    while i < len(raw_tokens):
+        token = raw_tokens[i]
+        low = _normalize_edit_arg_token(token)
+
+        # Explicit fields khusus conversion.
+        if "=" in token:
+            key, value = token.split("=", 1)
+            key_low = key.strip().lower().replace("_", "-")
+            value_clean = value.strip()
+
+            if key_low in {"debt", "debt-type", "tipe-hutang", "tipehutang", "hutang-type", "jenis-debt"}:
+                found_marker = True
+                value_low = value_clean.lower()
+                if value_low in {"payable", "utang", "hutang", "bayar-utang", "bayar-hutang"}:
+                    target_type = "payable"
+                elif value_low in {"receivable", "piutang", "bayar-piutang"}:
+                    target_type = "receivable"
+                else:
+                    raise ValueError("Nilai debt harus payable/utang/hutang atau receivable/piutang.")
+                i += 1
+                continue
+
+            if key_low in {"person", "orang", "nama", "ke", "dari", "sama"}:
+                explicit_person = value_clean
+                i += 1
+                continue
+
+            field_tokens.append(token)
+            i += 1
+            continue
+
+        # Marker satu token: bayar_hutang / pembayaran_piutang.
+        compact = low.replace("-", "")
+        if compact in {"bayarhutang", "bayarutang", "pembayaranhutang", "pembayaranutang", "hutang", "utang"}:
+            target_type = "payable"
+            found_marker = True
+            consume_person = True
+            i += 1
+            continue
+
+        if compact in {"bayarpiutang", "pembayaranpiutang", "piutang"}:
+            target_type = "receivable"
+            found_marker = True
+            consume_person = True
+            i += 1
+            continue
+
+        # Marker dua token: bayar hutang / pembayaran piutang.
+        next_low = _normalize_edit_arg_token(raw_tokens[i + 1]) if i + 1 < len(raw_tokens) else ""
+        next_compact = next_low.replace("-", "")
+        if compact in {"bayar", "pembayaran", "payment", "jadi", "menjadi", "ubah", "konversi", "convert"} and next_compact in {"hutang", "utang", "piutang"}:
+            target_type = "receivable" if next_compact == "piutang" else "payable"
+            found_marker = True
+            consume_person = True
+            i += 2
+            continue
+
+        # Preposisi setelah marker tidak masuk nama.
+        if consume_person and compact in {"ke", "dari", "sama", "dengan", "untuk", "sebagai"}:
+            i += 1
+            continue
+
+        # Setelah marker, token non-field dianggap nama sampai ketemu key=value.
+        if consume_person:
+            person_tokens.append(token)
+            i += 1
+            continue
+
+        field_tokens.append(token)
+        i += 1
+
+    if not found_marker:
+        return None
+
+    person = explicit_person or " ".join(person_tokens).strip()
+    person = re.sub(r"\s+", " ", person).strip()
+    person = re.sub(r"^(ke|dari|sama|dengan|untuk)\s+", "", person, flags=re.IGNORECASE).strip()
+
+    # Jangan biarkan field amount=... atau account=... ketelan sebagai nama.
+    person = re.sub(r"\s+\w+\s*=.*$", "", person).strip()
+
+    if not target_type:
+        raise ValueError("Tipe pembayaran debt belum jelas. Gunakan bayar_hutang atau bayar_piutang.")
+    if not person:
+        raise ValueError("Nama orang belum jelas. Contoh: /edit_txn 2 bayar_hutang Sapto")
+
+    extra_updates = parse_edit_updates(field_tokens) if field_tokens else {}
+
+    return {
+        "target_type": target_type,
+        "person_name": person.title(),
+        "extra_updates": extra_updates,
+    }
+
+
+def build_debt_payment_conversion_updates(conversion: dict, old_txn: dict | None = None) -> dict:
+    target_type = str(conversion.get("target_type") or "").strip().lower()
+    person = str(conversion.get("person_name") or "").strip().title()
+    updates = dict(conversion.get("extra_updates") or {})
+
+    if target_type == "payable":
+        updates.update({
+            "type": "expense",
+            "category": "Bayar Utang",
+            "subject": person,
+            "description": f"Bayar utang ke {person}",
+            "catatan": f"Dikonversi dari transaksi biasa menjadi pembayaran utang ke {person}",
+        })
+    elif target_type == "receivable":
+        updates.update({
+            "type": "income",
+            "category": "Pembayaran Piutang",
+            "subject": person,
+            "description": f"Pembayaran piutang dari {person}",
+            "catatan": f"Dikonversi dari transaksi biasa menjadi pembayaran piutang dari {person}",
+        })
+    else:
+        raise ValueError("Tipe pembayaran debt tidak valid.")
+
+    return updates
+
+
+def validate_edit_debt_payment_conversion(conversion: dict, amount: float) -> dict:
+    person = str(conversion.get("person_name") or "").strip().title()
+    target_type = str(conversion.get("target_type") or "").strip().lower()
+    label = "utang" if target_type == "payable" else "piutang"
+
+    debts = get_debt_by_person(person)
+    target_debts = [d for d in debts if str(d.get("type", "")).strip() == target_type]
+    total_remaining = sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in target_debts)
+
+    if not target_debts or total_remaining <= 0:
+        return {
+            "success": False,
+            "message": f"Tidak ada {label} aktif dengan {person}.",
+            "total_remaining": 0,
+            "overpayment": 0,
+        }
+
+    overpayment = max(0.0, float(amount or 0) - total_remaining)
+    return {
+        "success": True,
+        "message": "ok",
+        "total_remaining": total_remaining,
+        "overpayment": overpayment,
+        "target_count": len(target_debts),
+        "label": label,
+    }
+
+
+def build_edit_debt_payment_preview_text(preview: dict, conversion: dict, debt_check: dict) -> str:
+    text = build_edit_preview_text(preview)
+    person = str(conversion.get("person_name") or "-").strip()
+    target_type = str(conversion.get("target_type") or "").strip().lower()
+    label = "utang" if target_type == "payable" else "piutang"
+    amount = float((preview.get("new_txn") or {}).get("amount", 0) or 0)
+
+    text += (
+        f"\n\n💸 *Konversi Debt:* transaksi ini akan dijadikan pembayaran {label}."
+        f"\n👤 Orang: *{md_safe(person)}*"
+        f"\n💰 Pembayaran: *{format_rupiah(amount)}*"
+        f"\n📌 Sisa {label} aktif saat ini: *{format_rupiah(debt_check.get('total_remaining', 0))}*"
+    )
+
+    if float(debt_check.get("overpayment", 0) or 0) > 0:
+        text += f"\n⚠️ Nominal melebihi sisa {label}: {format_rupiah(debt_check.get('overpayment', 0))}. Kelebihannya tidak mengurangi debt."
+
+    return text
+
+
 def build_edit_split_preview_text(preview: dict, split_parsed: dict | None = None) -> str:
     text = build_edit_preview_text(preview)
     split_bill = (split_parsed or {}).get("split_bill") or {}
@@ -1800,6 +2005,71 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Lalu edit dengan:\n"
             "`/edit_txn 2 amount=15000`",
             parse_mode="Markdown",
+        )
+        return
+
+    row_index = resolved["row_indices"][0] if resolved["row_indices"] else None
+    txn_id = resolved["txn_ids"][0] if resolved["txn_ids"] else None
+
+    try:
+        debt_payment_conversion = parse_edit_debt_payment_conversion_args(update_args)
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ {str(e)}\n\n"
+            "Contoh konversi pembayaran debt:\n"
+            "`/edit_txn 2 bayar_hutang Sapto`\n"
+            "`/edit_txn 2 bayar_piutang Sapto`\n"
+            "`/edit_txn 2 debt=payable person=Sapto`",
+            parse_mode="Markdown",
+        )
+        return
+
+    if debt_payment_conversion:
+        try:
+            updates = build_debt_payment_conversion_updates(debt_payment_conversion)
+        except Exception as e:
+            await update.message.reply_text(f"❌ {md_safe(str(e))}", parse_mode="Markdown")
+            return
+
+        preview = preview_edit_transaction_by_ref(
+            updates=updates,
+            row_index=row_index,
+            txn_id=txn_id,
+        )
+
+        if not preview.get("success"):
+            await update.message.reply_text(
+                f"❌ {preview.get('message')}",
+                parse_mode="Markdown",
+            )
+            return
+
+        debt_check = validate_edit_debt_payment_conversion(
+            debt_payment_conversion,
+            float((preview.get("new_txn") or {}).get("amount", 0) or 0),
+        )
+
+        if not debt_check.get("success"):
+            await update.message.reply_text(
+                f"❌ {md_safe(debt_check.get('message') or 'Debt aktif tidak ditemukan.')}",
+                parse_mode="Markdown",
+            )
+            return
+
+        context.user_data["pending_edit_txn"] = {
+            "row_index": row_index,
+            "txn_id": txn_id,
+            "updates": updates,
+            "split_raw": "",
+            "split_parsed": None,
+            "debt_payment_conversion": debt_payment_conversion,
+            "debt_check": debt_check,
+        }
+
+        await update.message.reply_text(
+            build_edit_debt_payment_preview_text(preview, debt_payment_conversion, debt_check),
+            parse_mode="Markdown",
+            reply_markup=confirm_keyboard("edit_txn"),
         )
         return
 
