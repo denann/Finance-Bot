@@ -23,6 +23,7 @@ from app.config import (
     SHEET_TRANSACTIONS,
     SHEET_ACCOUNTS,
     SHEET_BUDGETS,
+    SHEET_PENDING_EXPENSES,
     SHEET_DEBTS,
     SHEET_DEBT_PAYMENTS,
     WEBHOOK_URL,
@@ -31,13 +32,9 @@ from app.config import (
 
 from app.services.net_worth_service import (
     add_asset,
-    add_liability,
     get_assets,
-    get_liabilities,
     update_asset,
-    update_liability,
     deactivate_asset,
-    deactivate_liability,
     calculate_net_worth,
     create_net_worth_snapshot,
     get_net_worth_snapshots,
@@ -67,6 +64,7 @@ from app.services.transaction_service import (
     get_transactions_for_export,
     calculate_account_deltas,
     update_transaction_debt_relation,
+    clear_transaction_debt_relation,
     EXPORT_TRANSACTION_COLUMNS,
 )
 
@@ -123,6 +121,7 @@ from app.services.debt_service import (
     void_debt,
     void_debt_ids,
     void_debts_by_person,
+    void_debts_for_transaction,
     update_debt,
 )
 import csv
@@ -134,6 +133,12 @@ from app.services.recurring_service import (
     process_due_recurring_rules,
     mark_recurring_rule_paid,
     edit_recurring_rule,
+)
+from app.services.pending_expense_service import (
+    add_pending_expense_from_text,
+    get_pending_expenses,
+    mark_pending_paid,
+    cancel_pending_expense,
 )
 
 # ── Cross-part shared helpers ────────────────────────────────────────────────

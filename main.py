@@ -20,6 +20,10 @@ from app.bot.handlers import (
     audit_handler,
     budget_handler,
     budget_history_handler,
+    pending_add_handler,
+    pending_cancel_handler,
+    pending_handler,
+    pending_paid_handler,
     bulanan_handler,
     callback_handler,
     cari_handler,
@@ -37,10 +41,6 @@ from app.bot.handlers import (
     image_handler,
     insight_handler,
     last_handler,
-    liabilities_handler,
-    liability_add_handler,
-    liability_off_handler,
-    liability_update_handler,
     message_handler,
     mingguan_handler,
     networth_handler,
@@ -108,6 +108,15 @@ telegram_app.add_handler(CommandHandler("budget_history", budget_history_handler
 telegram_app.add_handler(MessageHandler(filters.Regex(r"(?i)^budget\b"), set_budget_handler))
 
 
+# ── Pending Expense Commands ─────────────────────────────────────────────────
+telegram_app.add_handler(CommandHandler("pending", pending_handler))
+telegram_app.add_handler(CommandHandler("pending_add", pending_add_handler))
+telegram_app.add_handler(CommandHandler("rencana", pending_add_handler))
+telegram_app.add_handler(CommandHandler("pending_paid", pending_paid_handler))
+telegram_app.add_handler(CommandHandler("pending_cancel", pending_cancel_handler))
+telegram_app.add_handler(MessageHandler(filters.Regex(r"(?i)^(pending|rencana)\b"), pending_add_handler))
+
+
 # ── Debt Commands ─────────────────────────────────────────────────────────────
 telegram_app.add_handler(CommandHandler("hutang", hutang_handler))
 telegram_app.add_handler(CommandHandler("debt_void", debt_void_handler))
@@ -125,15 +134,11 @@ telegram_app.add_handler(CommandHandler("recurring_off", recurring_off_handler))
 # ── Net Worth Commands ────────────────────────────────────────────────────────
 telegram_app.add_handler(CommandHandler("networth", networth_handler))
 telegram_app.add_handler(CommandHandler("assets", assets_handler))
-telegram_app.add_handler(CommandHandler("liabilities", liabilities_handler))
 
 telegram_app.add_handler(CommandHandler("asset_add", asset_add_handler))
 telegram_app.add_handler(CommandHandler("asset_update", asset_update_handler))
 telegram_app.add_handler(CommandHandler("asset_off", asset_off_handler))
 
-telegram_app.add_handler(CommandHandler("liability_add", liability_add_handler))
-telegram_app.add_handler(CommandHandler("liability_update", liability_update_handler))
-telegram_app.add_handler(CommandHandler("liability_off", liability_off_handler))
 
 telegram_app.add_handler(CommandHandler("networth_snapshot", networth_snapshot_handler))
 telegram_app.add_handler(CommandHandler("networth_history", networth_history_handler))

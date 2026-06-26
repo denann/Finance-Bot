@@ -139,6 +139,7 @@ async def health_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "transactions": "transactions",
         "accounts": "accounts",
         "budgets": "budgets",
+        "pending_expenses": "pending_expenses",
         "debts": "debts",
         "debt_payments": "debt_payments",
         "recurring_rules": "recurring_rules",

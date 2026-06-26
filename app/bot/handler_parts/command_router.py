@@ -141,6 +141,22 @@ KNOWN_COMMANDS = {
         "description": "Lihat daftar bulan yang punya data budget.",
         "destructive": False,
     },
+    "pending": {
+        "description": "Lihat pending expense/rencana pengeluaran aktif.",
+        "destructive": False,
+    },
+    "pending_add": {
+        "description": "Tambah pending expense/rencana pengeluaran.",
+        "destructive": False,
+    },
+    "pending_paid": {
+        "description": "Ubah pending expense menjadi transaksi aktual.",
+        "destructive": True,
+    },
+    "pending_cancel": {
+        "description": "Batalkan pending expense.",
+        "destructive": True,
+    },
     "hutang": {
         "description": "Lihat utang/piutang aktif.",
         "destructive": False,
@@ -226,6 +242,18 @@ COMMAND_ALIASES = {
     "budget_histori": "budget_history",
     "budgethistori": "budget_history",
     "histori_budget": "budget_history",
+
+    # pending expense
+    "pending": "pending",
+    "rencana": "pending_add",
+    "planning": "pending_add",
+    "planned": "pending",
+    "pending_add": "pending_add",
+    "tambah_pending": "pending_add",
+    "pending_paid": "pending_paid",
+    "bayar_pending": "pending_paid",
+    "pending_cancel": "pending_cancel",
+    "cancel_pending": "pending_cancel",
 
     # hutang
     "utang": "hutang",
@@ -542,14 +570,14 @@ def build_command_suggestion_text(resolved: dict, original_text: str) -> str:
             "Command tersebut mirip dengan beberapa command lain, jadi saya tidak mau menebak.\n\n"
             "Command yang tersedia:\n"
             "`/saldo`, `/harian`, `/mingguan`, `/bulanan`, `/budget`, `/budget_history`, "
-            "`/hutang`, `/cari`, `/last`, `/delete_txn`, `/edit_txn`, `/help`"
+            "`/hutang`, `/pending`, `/cari`, `/last`, `/delete_txn`, `/edit_txn`, `/help`"
         )
 
     return (
         f"❓ Command `/{clean}` tidak tersedia.\n\n"
         "Command yang tersedia:\n"
         "`/saldo`, `/harian`, `/mingguan`, `/bulanan`, `/budget`, `/budget_history`, "
-        "`/hutang`, `/cari`, `/last`, `/delete_txn`, `/edit_txn`, `/help`\n\n"
+        "`/hutang`, `/pending`, `/cari`, `/last`, `/delete_txn`, `/edit_txn`, `/help`\n\n"
         "Ketik `/help` untuk panduan lengkap."
     )
 

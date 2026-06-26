@@ -233,7 +233,7 @@ def check_config(modules):
         "SHEET_RECURRING_RULES",
         "SHEET_RECURRING_LOGS",
         "SHEET_ASSETS",
-        "SHEET_LIABILITIES",
+        "SHEET_PENDING_EXPENSES",
         "SHEET_NET_WORTH_SNAPSHOTS",
     ]
 
@@ -278,7 +278,7 @@ def check_google_sheets(modules):
         ("recurring_rules", "SHEET_RECURRING_RULES"),
         ("recurring_logs", "SHEET_RECURRING_LOGS"),
         ("assets", "SHEET_ASSETS"),
-        ("liabilities", "SHEET_LIABILITIES"),
+        ("pending_expenses", "SHEET_PENDING_EXPENSES"),
         ("net_worth_snapshots", "SHEET_NET_WORTH_SNAPSHOTS"),
     ]
 
@@ -587,13 +587,9 @@ def check_net_worth_service(modules):
 
     funcs = [
         "add_asset",
-        "add_liability",
         "get_assets",
-        "get_liabilities",
         "update_asset",
-        "update_liability",
         "deactivate_asset",
-        "deactivate_liability",
         "calculate_net_worth",
         "create_net_worth_snapshot",
         "get_net_worth_snapshots",
@@ -610,13 +606,6 @@ def check_net_worth_service(modules):
             lambda: f"{len(nw.get_assets(active_only=True))} assets",
         )
 
-    if nw and hasattr(nw, "get_liabilities"):
-        safe_run(
-            "Net Worth Service",
-            "get_liabilities(active_only=True)",
-            "Liabilities terbaca",
-            lambda: f"{len(nw.get_liabilities(active_only=True))} liabilities",
-        )
 
     if nw and hasattr(nw, "calculate_net_worth"):
         def run_networth():
@@ -624,7 +613,6 @@ def check_net_worth_service(modules):
             return (
                 f"accounts={rupiah(summary.get('total_accounts'))}, "
                 f"assets={rupiah(summary.get('total_assets'))}, "
-                f"liabilities={rupiah(summary.get('total_liabilities'))}, "
                 f"networth={rupiah(summary.get('net_worth'))}"
             )
 
@@ -683,13 +671,9 @@ def check_bot_handlers(modules):
         "health_handler",
         "networth_handler",
         "assets_handler",
-        "liabilities_handler",
         "asset_add_handler",
         "asset_update_handler",
         "asset_off_handler",
-        "liability_add_handler",
-        "liability_update_handler",
-        "liability_off_handler",
         "networth_snapshot_handler",
         "networth_history_handler",
         "message_handler",
@@ -1175,6 +1159,10 @@ def check_regression_commands(modules):
         ("/bulanan", "bulanan_handler"),
         ("/budget", "budget_handler"),
         ("/budget_history", "budget_history_handler"),
+        ("/pending", "pending_handler"),
+        ("/pending_add", "pending_add_handler"),
+        ("/pending_paid", "pending_paid_handler"),
+        ("/pending_cancel", "pending_cancel_handler"),
         ("/hutang", "hutang_handler"),
         ("/cari", "cari_handler"),
         ("/last", "last_handler"),
@@ -1189,13 +1177,9 @@ def check_regression_commands(modules):
         ("/health", "health_handler"),
         ("/networth", "networth_handler"),
         ("/assets", "assets_handler"),
-        ("/liabilities", "liabilities_handler"),
         ("/asset_add", "asset_add_handler"),
         ("/asset_update", "asset_update_handler"),
         ("/asset_off", "asset_off_handler"),
-        ("/liability_add", "liability_add_handler"),
-        ("/liability_update", "liability_update_handler"),
-        ("/liability_off", "liability_off_handler"),
         ("/networth_snapshot", "networth_snapshot_handler"),
         ("/networth_history", "networth_history_handler"),
     ]

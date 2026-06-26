@@ -10,7 +10,6 @@ from app.config import (
     SHEET_ASSETS,
     SHEET_BUDGETS,
     SHEET_DEBTS,
-    SHEET_LIABILITIES,
     SHEET_TRANSACTIONS,
 )
 from app.sheets.client import get_all_records
@@ -29,7 +28,8 @@ FINANCE_QUESTION_KEYWORDS = [
     "anomali", "aneh", "tidak biasa", "audit", "data quality", "duplikat",
     "transaksi terbesar", "terakhir", "kapan", "berapa total", "total", "cari transaksi",
     "saran", "coach", "rekomendasi", "nabung", "tabung", "kurangi",
-    "saldo", "utang", "hutang", "piutang", "net worth", "aset", "liabilitas",
+    "pending", "rencana", "pengeluaran akan datang",
+    "saldo", "utang", "hutang", "piutang", "net worth", "aset",
 ]
 
 AVAILABLE_COMMANDS_FOR_AI = [
@@ -41,6 +41,7 @@ AVAILABLE_COMMANDS_FOR_AI = [
     "/last",
     "/transaksi",
     "/budget",
+    "/pending",
     "/hutang",
     "/insight",
     "/ask",
@@ -390,12 +391,9 @@ def get_debt_summary_compact() -> dict:
 
 def get_net_worth_compact() -> dict:
     assets = get_all_records(SHEET_ASSETS)
-    liabilities = get_all_records(SHEET_LIABILITIES)
     active_assets = []
-    active_liabilities = []
 
     total_assets = 0.0
-    total_liabilities = 0.0
 
     for a in assets:
         is_active = str(a.get("is_active", "TRUE")).strip().upper() != "FALSE"
@@ -412,26 +410,15 @@ def get_net_worth_compact() -> dict:
             "price_per_unit": safe_float(a.get("price_per_unit")),
         })
 
-    for l in liabilities:
-        is_active = str(l.get("is_active", "TRUE")).strip().upper() != "FALSE"
-        if not is_active:
-            continue
-        balance = safe_float(l.get("current_balance"))
-        total_liabilities += balance
-        active_liabilities.append({
-            "name": l.get("name", "-"),
-            "balance": balance,
-            "category": l.get("category", ""),
-        })
-
     accounts = get_accounts_summary()
     return {
         "total_accounts": accounts["total"],
         "total_assets": total_assets,
-        "total_liabilities": total_liabilities,
-        "net_worth": accounts["total"] + total_assets - total_liabilities,
+        "total_liabilities": 0.0,
+        "net_worth": accounts["total"] + total_assets,
         "top_assets": sorted(active_assets, key=lambda x: x["value"], reverse=True)[:8],
-        "top_liabilities": sorted(active_liabilities, key=lambda x: x["balance"], reverse=True)[:8],
+        "top_liabilities": [],
+        "note": "Liabilities sudah dihapus dari fitur net worth; kewajiban antar orang dikelola via /hutang.",
     }
 
 

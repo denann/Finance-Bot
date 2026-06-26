@@ -5,7 +5,6 @@ from datetime import datetime
 
 from app.config import (
     SHEET_ASSETS,
-    SHEET_LIABILITIES,
     SHEET_NET_WORTH_SNAPSHOTS,
 )
 
@@ -747,7 +746,6 @@ def deactivate_liability(liability_id: str) -> bool:
 def calculate_net_worth() -> dict:
     accounts = get_all_accounts()
     assets = get_assets(active_only=True)
-    liabilities = get_liabilities(active_only=True)
 
     total_accounts = sum(
         safe_float(acc.get("balance", 0))
@@ -759,12 +757,10 @@ def calculate_net_worth() -> dict:
         for asset in assets
     )
 
-    total_liabilities = sum(
-        safe_float(liability.get("current_balance", 0))
-        for liability in liabilities
-    )
-
-    net_worth = total_accounts + total_assets - total_liabilities
+    # Liabilities sudah dihapus dari konsep bot.
+    # Kewajiban personal antar orang tetap dikelola melalui fitur /hutang.
+    total_liabilities = 0.0
+    net_worth = total_accounts + total_assets
 
     return {
         "total_accounts": total_accounts,
@@ -773,9 +769,8 @@ def calculate_net_worth() -> dict:
         "net_worth": net_worth,
         "accounts": accounts,
         "assets": assets,
-        "liabilities": liabilities,
+        "liabilities": [],
     }
-
 
 def create_net_worth_snapshot() -> dict:
     summary = calculate_net_worth()

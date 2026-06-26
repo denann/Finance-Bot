@@ -25,15 +25,15 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `nasi goreng 30k bagi 3 sama Akmal Sapto`\n\n"
 
         "📊 *Laporan & koreksi data*\n"
-        "`/saldo`, `/harian`, `/mingguan`, `/bulanan`, `/last`, `/cari`\n"
-        "`/edit_txn`, `/delete_txn`, `/download_data`\n\n"
+        "`/saldo`, `/rekening`, `/harian`, `/mingguan`, `/bulanan`, `/last`, `/cari`\n"
+        "`/transaksi`, `/edit_txn`, `/delete_txn`, `/download_data`\n\n"
 
-        "🔁 *Budget & transaksi rutin*\n"
-        "`/budget`, `/budget_history`, `/recurring`\n"
-        "Recurring akan muncul sebagai reminder dengan tombol `Sudah bayar`.\n\n"
+        "🕒 *Pending, budget & transaksi rutin*\n"
+        "`/pending`, `/pending_add`, `/budget`, `/budget_history`, `/recurring`\n"
+        "Pending tidak mengubah saldo sampai ditandai `/pending_paid`. Recurring akan muncul sebagai reminder dengan tombol `Sudah bayar`.\n\n"
 
         "💼 *Net worth*\n"
-        "`/assets`, `/liabilities`, `/networth`, `/networth_snapshot`\n\n"
+        "`/assets`, `/networth`, `/networth_snapshot`\n\n"
 
         "🤖 *Analisis Gemini / RAG Finance*\n"
         "`/insight`, `/ask`, `/audit`, `/coach`\n\n"
@@ -173,15 +173,29 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/edit_txn 2 account=BRI category=Food & Beverage`\n"
         "Jika transaksi punya `hutang_id`, `/delete_txn` akan mencoba void debt terkait otomatis.\n\n"
 
-        "*13. Budget*\n"
+        "*13. Pending Expense / Rencana Pengeluaran*\n"
+        "Pending expense dipakai untuk pengeluaran yang akan ada, tapi belum dibayar. Tidak mengubah saldo dan belum masuk pengeluaran aktual.\n"
+        "`/pending` — lihat pending expense bulan ini\n"
+        "`/pending 2026-07` — lihat pending bulan tertentu\n"
+        "`/pending bulan depan` — lihat pending bulan depan\n"
+        "`/pending all` — lihat semua pending aktif\n"
+        "`/pending tanpa tanggal` — lihat pending yang tanggalnya belum pasti\n"
+        "`/pending_add bayar wifi 285k tgl 30 dari BRI` — tambah pending dengan tanggal pasti\n"
+        "`pending beli token 500k` — tambah pending tanpa tanggal pasti\n"
+        "`rencana beli sepatu 300k bulan depan` — tambah pending dengan bulan, tanggal belum pasti\n"
+        "`/pending_paid pending_id BRI` — ubah pending menjadi transaksi aktual\n"
+        "`/pending_cancel pending_id` — batalkan pending expense\n\n"
+
+        "*14. Budget*\n"
         "`/budget` — lihat budget bulan berjalan\n"
         "`/budget 2026-06` — lihat budget bulan tertentu\n"
         "`/budget_history` — lihat daftar bulan yang punya budget\n"
         "`budget makan 1.5 juta` — otomatis map ke Food & Beverage\n"
         "`budget jajan 500rb` — buat budget custom Jajan\n"
-        "`budget transport 300rb 2026-07` — set budget bulan tertentu\n\n"
+        "`budget transport 300rb 2026-07` — set budget bulan tertentu\n"
+        "Catatan: `/budget` memakai realisasi bersih. Jika ada split bill, output tampil sebagai Bersih (Gross).\n\n"
 
-        "*14. Export, Recurring, Health*\n"
+        "*15. Export, Recurring, Health*\n"
         "`/download_data`, `/download_data today`, `/download_data week`, `/download_data 2026-06`\n"
         "`/recurring` — lihat transaksi rutin\n"
         "`/recurring_add Netflix | expense | 65000 | Entertainment | DANA | monthly | 5 | Langganan Netflix`\n"
@@ -189,13 +203,13 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Recurring otomatis muncul sebagai reminder dengan tombol `Sudah bayar`. Klik tombol itu untuk mencatat transaksi dan menghentikan notifikasi sampai periode berikutnya.\n"
         "`/health` — cek status bot, env, Google Sheets, dan sheet utama\n\n"
 
-        "*D. Net Worth, Aset, Liabilitas*\n\n"
-        "*15. Net Worth*\n"
-        "`/networth` — lihat kekayaan bersih\n"
+        "*D. Net Worth & Aset*\n\n"
+        "*16. Net Worth*\n"
+        "`/networth` — lihat kekayaan bersih dari saldo rekening + aset aktif\n"
         "`/networth_snapshot` — simpan snapshot net worth hari ini\n"
         "`/networth_history` — lihat riwayat snapshot\n\n"
 
-        "*16. Aset*\n"
+        "*17. Aset*\n"
         "`/assets` — lihat daftar aset aktif\n"
         "`/asset_add` — tambah aset mode tanya-jawab/guided input\n"
         "Format lama tetap bisa dipakai:\n"
@@ -208,12 +222,6 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/asset_update asset_id | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
         "`/asset_update asset_id | value=9000000`\n"
         "`/asset_off asset_id`\n\n"
-
-        "*17. Liabilitas*\n"
-        "`/liabilities` — lihat daftar liabilitas aktif\n"
-        "`/liability_add Paylater | 1200000 | Paylater | Cicilan aktif`\n"
-        "`/liability_update liab_id | balance=500000`\n"
-        "`/liability_off liab_id` — nonaktifkan liabilitas yang sudah lunas/tidak dipakai\n\n"
 
         "*E. Input Gambar & Analisis Gemini/RAG*\n\n"
         "*18. Input Gambar / Struk*\n"
@@ -1034,6 +1042,14 @@ async def cari_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+def format_budget_net_gross(net_amount: float, gross_amount: float) -> str:
+    """Format budget realisasi sebagai Bersih (Gross)."""
+    net = float(net_amount or 0)
+    gross = float(gross_amount or 0)
+    if abs(net - gross) > 0.0001:
+        return f"{format_rupiah(net)} ({format_rupiah(gross)})"
+    return format_rupiah(net)
+
 async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /budget
@@ -1074,13 +1090,14 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     total_budget = sum(float(item.get("budget", 0) or 0) for item in summary)
     total_actual = sum(float(item.get("actual", 0) or 0) for item in summary)
+    total_gross_actual = sum(float(item.get("actual_gross", item.get("actual", 0)) or 0) for item in summary)
     total_remaining = total_budget - total_actual
     total_pct = (total_actual / total_budget * 100) if total_budget > 0 else 0
 
     lines = [f"📊 *Budget {format_month_label(month)}*\n"]
 
     lines.append(f"💰 Total Budget : *{format_rupiah(total_budget)}*")
-    lines.append(f"💸 Realisasi    : *{format_rupiah(total_actual)}*")
+    lines.append(f"💸 Realisasi Bersih (Gross): *{format_budget_net_gross(total_actual, total_gross_actual)}*")
     lines.append(f"📌 Sisa         : *{format_rupiah(total_remaining)}*")
     lines.append(f"📈 Terpakai     : *{total_pct:.1f}%*\n")
 
@@ -1091,7 +1108,7 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(
             f"{item['emoji']} *{item['category']}*\n"
             f"  {bar} {item['pct_used']}%\n"
-            f"  Pakai: {format_rupiah(item['actual'])} / {format_rupiah(item['budget'])}\n"
+            f"  Pakai Bersih (Gross): {format_budget_net_gross(item.get('actual', 0), item.get('actual_gross', item.get('actual', 0)))} / {format_rupiah(item['budget'])}\n"
             f"  {remaining_label}: {format_rupiah(abs(item['remaining']))}\n"
         )
 
@@ -1139,6 +1156,200 @@ async def budget_history_handler(update: Update, context: ContextTypes.DEFAULT_T
     )
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+def build_pending_expense_lines(items: list[dict], title: str, total: float | None = None) -> list[str]:
+    lines = [f"🕒 *{md_safe(title)}*\n"]
+
+    if not items:
+        lines.append(
+            "📭 Belum ada pending expense aktif.\n\n"
+            "Tambah dengan:\n"
+            "`/pending_add bayar wifi 285k tgl 30 dari BRI`\n"
+            "`pending beli token 500k`\n"
+            "`rencana beli sepatu 300k bulan depan`"
+        )
+        return lines
+
+    if total is None:
+        total = sum(float(item.get("amount", 0) or 0) for item in items)
+
+    lines.append(f"💰 Total pending: *{format_rupiah(total)}*")
+    lines.append(f"📝 Item: {len(items)}\n")
+
+    for i, item in enumerate(items, 1):
+        due_date = str(item.get("due_date", "") or "").strip()
+        due_precision = str(item.get("due_precision", "") or "unknown").strip().lower()
+        month = str(item.get("month", "") or "-").strip()
+
+        if due_date:
+            due_text = due_date
+        elif due_precision == "month":
+            due_text = f"{month} (tanggal belum pasti)"
+        else:
+            due_text = "Belum pasti"
+
+        account = str(item.get("account", "") or "-").strip() or "-"
+        category = str(item.get("category", "") or "Other Expense").strip()
+        status = str(item.get("status", "pending") or "pending").strip()
+        subject = str(item.get("subject", "Pending Expense") or "Pending Expense").strip()
+        amount = float(item.get("amount", 0) or 0)
+        pending_id = str(item.get("id", "") or "").strip()
+
+        lines.append(
+            f"{i}. 🕒 *{md_safe(subject)}*\n"
+            f"   📅 {md_safe(due_text)} | 💰 *{format_rupiah(amount)}* | {md_safe(category)} | 🏦 {md_safe(account)}\n"
+            f"   Status: `{md_safe(status)}`\n"
+            f"   🔖 `{md_code_text(pending_id)}`"
+        )
+
+    lines.append(
+        "\nTandai sudah dibayar:\n"
+        "`/pending_paid pending_id BRI`\n"
+        "Batalkan:\n"
+        "`/pending_cancel pending_id`"
+    )
+    return lines
+
+
+async def pending_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /pending [YYYY-MM|bulan ini|bulan lalu|bulan depan|all|tanpa tanggal]
+    """
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    period = " ".join(context.args).strip() if context.args else None
+
+    try:
+        result = get_pending_expenses(period=period, active_only=True)
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Gagal membaca pending expense: {md_safe(str(e))}",
+            parse_mode="Markdown",
+        )
+        return
+
+    label = result.get("label") or "bulan ini"
+    title = f"Pending Expense — {label}"
+    lines = build_pending_expense_lines(result.get("items") or [], title, result.get("total", 0))
+    await reply_long_markdown(update, "\n".join(lines))
+
+
+async def pending_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /pending_add bayar wifi 285k tgl 30 dari BRI
+    Bisa juga dipanggil dari MessageHandler regex: pending/rencana ...
+    """
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    raw_text = update.message.text.strip()
+    if raw_text.lower().startswith("/pending_add"):
+        raw_text = re.sub(r"^/pending_add(?:@\w+)?\s*", "", raw_text, flags=re.IGNORECASE).strip()
+    elif raw_text.lower().startswith("/rencana"):
+        raw_text = re.sub(r"^/rencana(?:@\w+)?\s*", "", raw_text, flags=re.IGNORECASE).strip()
+
+    if not raw_text:
+        await update.message.reply_text(
+            "❌ Tulis pending expense-nya.\n\n"
+            "Contoh:\n"
+            "`/pending_add bayar wifi 285k tgl 30 dari BRI`\n"
+            "`/pending_add beli token 500k`\n"
+            "`rencana beli sepatu 300k bulan depan`",
+            parse_mode="Markdown",
+        )
+        return
+
+    try:
+        item = add_pending_expense_from_text(raw_text)
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Gagal menambah pending expense: {md_safe(str(e))}\n\n"
+            "Contoh:\n"
+            "`/pending_add bayar wifi 285k tgl 30 dari BRI`\n"
+            "`pending beli token 500k`",
+            parse_mode="Markdown",
+        )
+        return
+
+    lines = ["✅ *Pending expense tersimpan*\n"]
+    lines.extend(build_pending_expense_lines([item], "Detail Pending", float(item.get("amount", 0) or 0))[2:-1])
+    lines.append(
+        "\nCatatan: pending expense tidak mengubah saldo dan belum masuk pengeluaran aktual.\n"
+        "Kalau sudah dibayar, pakai:\n"
+        f"`/pending_paid {md_code_text(item.get('id'))} {md_safe(item.get('account') or 'BRI')}`"
+    )
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def pending_paid_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/pending_paid pending_id [rekening]"""
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Masukkan pending ID.\n\n"
+            "Contoh:\n"
+            "`/pending_paid pend_20260626_123456_xxxxxxxx BRI`",
+            parse_mode="Markdown",
+        )
+        return
+
+    pending_id = context.args[0].strip()
+    account = context.args[1].strip() if len(context.args) >= 2 else None
+
+    result = mark_pending_paid(pending_id, account=account)
+    if not result.get("success"):
+        await update.message.reply_text(
+            f"❌ {md_safe(result.get('message', 'Gagal menandai pending sebagai paid.'))}",
+            parse_mode="Markdown",
+        )
+        return
+
+    lines = [
+        "✅ *Pending expense sudah dicatat sebagai transaksi aktual.*",
+        f"🔖 Transaction ID: `{md_code_text(result.get('transaction_id'))}`",
+    ]
+    if result.get("new_balance") is not None:
+        lines.append(f"💰 Saldo baru: *{format_rupiah(result.get('new_balance'))}*")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def pending_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/pending_cancel pending_id"""
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Masukkan pending ID.\n\n"
+            "Contoh:\n"
+            "`/pending_cancel pend_20260626_123456_xxxxxxxx`",
+            parse_mode="Markdown",
+        )
+        return
+
+    result = cancel_pending_expense(context.args[0])
+    if not result.get("success"):
+        await update.message.reply_text(
+            f"❌ {md_safe(result.get('message', 'Gagal membatalkan pending expense.'))}",
+            parse_mode="Markdown",
+        )
+        return
+
+    item = result.get("item") or {}
+    await update.message.reply_text(
+        "✅ Pending expense dibatalkan.\n"
+        f"🔖 `{md_code_text(item.get('id'))}`",
+        parse_mode="Markdown",
+    )
+
 
 def parse_amount_text(value: str) -> float:
     raw = str(value or "").strip().lower()

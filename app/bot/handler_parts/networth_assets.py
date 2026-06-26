@@ -422,18 +422,15 @@ def short_networth_id(record_id: str) -> str:
 def build_networth_text(summary: dict) -> str:
     total_accounts = summary.get("total_accounts", 0)
     total_assets = summary.get("total_assets", 0)
-    total_liabilities = summary.get("total_liabilities", 0)
     net_worth = summary.get("net_worth", 0)
 
     accounts = summary.get("accounts", [])
     assets = summary.get("assets", [])
-    liabilities = summary.get("liabilities", [])
 
     lines = ["💎 *Net Worth Tracker*\n"]
 
     lines.append(f"💰 Saldo rekening : *{format_rupiah(total_accounts)}*")
     lines.append(f"📦 Total aset     : *{format_rupiah(total_assets)}*")
-    lines.append(f"💳 Liabilitas     : *{format_rupiah(total_liabilities)}*")
     lines.append(f"🏁 *Net Worth     : {format_rupiah(net_worth)}*\n")
 
     if accounts:
@@ -475,23 +472,12 @@ def build_networth_text(summary: dict) -> str:
                     f"{format_rupiah(value)}"
                 )
 
-    if liabilities:
-        lines.append("\n*Liabilitas aktif:*")
-        for liability in liabilities:
-            lines.append(
-                f"• {liability.get('name', '-')} "
-                f"({liability.get('category', '-')}) — "
-                f"{format_rupiah(float(liability.get('current_balance', 0) or 0))}"
-            )
 
     lines.append(
         "\nCommand:\n"
         "`/asset_add Nama | nominal | kategori | deskripsi`\n"
         "`/asset_update asset_id | value=nominal`\n"
         "`/asset_off asset_id`\n"
-        "`/liability_add Nama | nominal | kategori | deskripsi`\n"
-        "`/liability_update liab_id | balance=nominal`\n"
-        "`/liability_off liab_id`\n"
         "`/networth_snapshot`"
     )
 
@@ -621,8 +607,7 @@ def build_snapshots_text(snapshots: list[dict]) -> str:
             f"• `{snap.get('snapshot_date', '-')}` — "
             f"*{format_rupiah(float(snap.get('net_worth', 0) or 0))}*\n"
             f"  Rekening: {format_rupiah(float(snap.get('total_accounts', 0) or 0))} | "
-            f"Aset: {format_rupiah(float(snap.get('total_assets', 0) or 0))} | "
-            f"Liabilitas: {format_rupiah(float(snap.get('total_liabilities', 0) or 0))}"
+            f"Aset: {format_rupiah(float(snap.get('total_assets', 0) or 0))}"
         )
 
     return "\n".join(lines)
@@ -1264,7 +1249,6 @@ async def networth_snapshot_handler(update: Update, context: ContextTypes.DEFAUL
             f"📅 Tanggal: `{snapshot.get('snapshot_date')}`\n"
             f"💰 Rekening: *{format_rupiah(float(snapshot.get('total_accounts', 0) or 0))}*\n"
             f"📦 Aset: *{format_rupiah(float(snapshot.get('total_assets', 0) or 0))}*\n"
-            f"💳 Liabilitas: *{format_rupiah(float(snapshot.get('total_liabilities', 0) or 0))}*\n"
             f"🏁 Net Worth: *{format_rupiah(float(snapshot.get('net_worth', 0) or 0))}*",
             parse_mode="Markdown",
         )
