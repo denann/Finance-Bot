@@ -112,6 +112,7 @@ from app.services.debt_service import (
     add_payment_by_person,
     parse_sheet_number,
     offset_debt_by_person,
+    settle_opposite_debts_by_person,
     get_debt_summary,
     get_debt_person_summary,
     get_debt_person_detail,
@@ -327,14 +328,16 @@ def get_transaction_payable_parts(txn: dict) -> list[dict]:
 
 
 def get_net_expense_after_receivable(txn: dict) -> float:
-    """Gross expense dikurangi piutang aktif terkait transaksi."""
+    """Gross expense dikurangi piutang split bill terkait.
+
+    Gunakan original_amount debt, bukan remaining_amount, supaya transaksi tetap
+    tampil Net (Gross) walaupun piutangnya sudah dibayar/settled. Jika debt
+    di-void, report_service tidak lagi menempelkan debt tersebut.
+    """
     amount = _safe_float_for_display((txn or {}).get("amount", 0))
-    receivable = sum(
-        _safe_float_for_display(part.get("remaining_amount", 0))
-        for part in get_transaction_receivable_parts(txn)
+    receivable = _safe_float_for_display(
+        (txn or {}).get("debt_receivable_original", (txn or {}).get("debt_receivable_remaining", 0))
     )
-    if receivable <= 0:
-        receivable = _safe_float_for_display((txn or {}).get("debt_receivable_remaining", 0))
     return max(amount - receivable, 0.0)
 
 
@@ -375,7 +378,7 @@ def append_net_gross_note(lines: list[str], transactions: list[dict] | None = No
     """Tambahkan catatan Net (Gross) di awal output yang menampilkan nominal expense."""
     if not force and not has_expense_transactions(transactions):
         return
-    lines.append("ℹ️ Catatan: nominal pengeluaran ditampilkan sebagai *Net (Gross)* jika ada piutang aktif.\n")
+    lines.append("ℹ️ Catatan: nominal pengeluaran ditampilkan sebagai *Net (Gross)* jika ada piutang split bill terkait.\n")
 
 
 def format_expense_net_gross(net_amount: float, gross_amount: float, *, always_show_gross: bool = False) -> str:

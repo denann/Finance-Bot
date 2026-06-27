@@ -292,7 +292,7 @@ def calculate_budget_actual_from_transactions(transactions: list[dict]) -> dict:
             continue
 
         amount = safe_float((txn or {}).get("amount", 0))
-        receivable = safe_float((txn or {}).get("debt_receivable_remaining", 0))
+        receivable = safe_float((txn or {}).get("debt_receivable_original", (txn or {}).get("debt_receivable_remaining", 0)))
         gross_total += amount
         net_total += max(amount - receivable, 0.0)
 

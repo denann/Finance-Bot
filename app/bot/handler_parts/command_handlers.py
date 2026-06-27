@@ -1967,6 +1967,13 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # /hutang <nama> = detail rincian per orang
     if person_query:
+        # Auto-netting ringan: jika orang yang sama punya utang dan piutang
+        # aktif yang saling menutup, settle keduanya tanpa cashflow. Ini bukan
+        # /debt_void, jadi transaksi sumber tidak di-rollback ke gross.
+        netting_result = settle_opposite_debts_by_person(
+            person_query,
+            note=f"Auto-netting saat /hutang {person_query}",
+        )
         detail = get_debt_person_detail(person_query, include_settled=True)
         active_details = sorted(
             detail.get("active_details") or [],
@@ -1994,6 +2001,11 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             header = f"⚪ *Debt dengan {md_safe(person)} sudah netral/lunas.*"
 
         lines = [header, ""]
+        if netting_result.get("success") and float(netting_result.get("offset_amount", 0) or 0) > 0:
+            lines.append(
+                f"🔁 Auto-netting hutang/piutang: *{format_rupiah(netting_result.get('offset_amount', 0))}* "
+                "sudah saling menghapus tanpa mengubah transaksi sumber.\n"
+            )
         lines.append("*Rincian aktif:*")
 
         last_debt_map = {}
@@ -2102,10 +2114,11 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(f"\n{net_label}: *{format_rupiah(abs(net))}*")
     lines.append(
         "\nContoh pembayaran/pengurangan:\n"
-        "`Sapto bayar 5k` — mengurangi piutang Sapto\n"
-        "`bayar hutang Sapto 10k` — mengurangi debt aktif sesuai net Sapto\n"
-        "`potong hutang Sapto 500k` — mengurangi hutang Sapto ke Anda\n"
-        "`potong piutang Akmal 20k buat badminton` — kompensasi tanpa rekening"
+        "`Sapto bayar 5k` — mengurangi piutang Sapto, setelah hutang/piutang berlawanan di-netting otomatis\n"
+        "`bayar hutang Sapto 10k` — mengurangi utang Anda, setelah hutang/piutang berlawanan di-netting otomatis\n"
+        "`potong hutang Sapto 500k` — kompensasi tanpa rekening/manual offset\n"
+        "`potong piutang Akmal 20k buat badminton` — kompensasi tanpa rekening\n"
+        "`/debt_void 1` — hanya untuk input salah; boleh rollback transaksi sumber ke gross"
     )
 
     # /debt_void dan /debt_edit sekarang lebih aman dipakai dari /hutang <nama>,

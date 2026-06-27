@@ -382,6 +382,12 @@ def is_truthy_sheet_value(value) -> bool:
     return raw in {"true", "yes", "y", "1", "settled", "lunas", "void", "voided"}
 
 
+def is_voided_debt_record(debt: dict) -> bool:
+    """Void beda dengan settled/lunas. Settled tetap dihitung untuk Net (Gross)."""
+    description = str((debt or {}).get("description", "") or "")
+    return "[VOID" in description.upper()
+
+
 def parse_transaction_debt_ids_from_record(txn: dict) -> list[str]:
     """Ambil daftar debt id dari kolom transactions.hutang_id."""
     raw = str((txn or {}).get("hutang_id", "") or "").strip()
@@ -404,6 +410,9 @@ def build_debt_lookup(active_only: bool = True) -> dict:
         item = dict(debt or {})
         debt_id = str(item.get("id", "") or "").strip()
         if not debt_id:
+            continue
+
+        if is_voided_debt_record(item):
             continue
 
         settled = is_truthy_sheet_value(item.get("is_settled", "FALSE"))
@@ -445,8 +454,13 @@ def get_linked_debts_for_transaction(txn: dict, lookup: dict) -> list[dict]:
 
 
 def enrich_transactions_with_debt_info(transactions: list[dict]) -> list[dict]:
-    """Tambahkan ringkasan debt aktif ke setiap transaksi laporan."""
-    lookup = build_debt_lookup(active_only=True)
+    """Tambahkan ringkasan debt ke transaksi.
+
+    Debt settled/lunas tetap dipakai untuk menghitung Net (Gross), karena
+    biaya bersih user tidak berubah hanya karena teman sudah membayar.
+    Debt yang di-void tidak dihitung, karena void berarti input debt dibatalkan.
+    """
+    lookup = build_debt_lookup(active_only=False)
     enriched = []
 
     for txn in transactions or []:
@@ -455,28 +469,43 @@ def enrich_transactions_with_debt_info(transactions: list[dict]) -> list[dict]:
 
         receivable_remaining = 0.0
         payable_remaining = 0.0
+        receivable_original = 0.0
+        payable_original = 0.0
         people = []
         receivable_by_person = {}
         payable_by_person = {}
+        receivable_original_by_person = {}
+        payable_original_by_person = {}
 
         for debt in linked_debts:
-            amount = safe_float(debt.get("remaining_amount", 0))
+            remaining_amount = safe_float(debt.get("remaining_amount", 0))
+            original_amount = safe_float(debt.get("original_amount", remaining_amount))
             debt_type = str(debt.get("type", "") or "").strip().lower()
             person = str(debt.get("person_name", "") or "").strip() or "Tanpa nama"
             if person and person not in people:
                 people.append(person)
 
             if debt_type == "receivable":
-                receivable_remaining += amount
-                receivable_by_person[person] = receivable_by_person.get(person, 0.0) + amount
+                receivable_remaining += remaining_amount
+                receivable_original += original_amount
+                if remaining_amount > 0:
+                    receivable_by_person[person] = receivable_by_person.get(person, 0.0) + remaining_amount
+                if original_amount > 0:
+                    receivable_original_by_person[person] = receivable_original_by_person.get(person, 0.0) + original_amount
             elif debt_type == "payable":
-                payable_remaining += amount
-                payable_by_person[person] = payable_by_person.get(person, 0.0) + amount
+                payable_remaining += remaining_amount
+                payable_original += original_amount
+                if remaining_amount > 0:
+                    payable_by_person[person] = payable_by_person.get(person, 0.0) + remaining_amount
+                if original_amount > 0:
+                    payable_original_by_person[person] = payable_original_by_person.get(person, 0.0) + original_amount
 
         expense_amount = safe_float(item.get("amount", 0))
         item["linked_debts"] = linked_debts
         item["debt_receivable_remaining"] = receivable_remaining
         item["debt_payable_remaining"] = payable_remaining
+        item["debt_receivable_original"] = receivable_original
+        item["debt_payable_original"] = payable_original
         item["debt_people"] = people
         item["debt_receivable_parts"] = [
             {"person_name": person, "remaining_amount": amount}
@@ -488,7 +517,17 @@ def enrich_transactions_with_debt_info(transactions: list[dict]) -> list[dict]:
             for person, amount in payable_by_person.items()
             if amount > 0
         ]
-        item["net_expense_after_receivable"] = max(expense_amount - receivable_remaining, 0.0)
+        item["debt_receivable_original_parts"] = [
+            {"person_name": person, "original_amount": amount}
+            for person, amount in receivable_original_by_person.items()
+            if amount > 0
+        ]
+        item["debt_payable_original_parts"] = [
+            {"person_name": person, "original_amount": amount}
+            for person, amount in payable_original_by_person.items()
+            if amount > 0
+        ]
+        item["net_expense_after_receivable"] = max(expense_amount - receivable_original, 0.0)
         enriched.append(item)
 
     return enriched
@@ -502,7 +541,7 @@ def calculate_net_expense_after_receivable(transactions: list[dict]) -> float:
         if txn_type != "expense":
             continue
         amount = safe_float((txn or {}).get("amount", 0))
-        receivable = safe_float((txn or {}).get("debt_receivable_remaining", 0))
+        receivable = safe_float((txn or {}).get("debt_receivable_original", (txn or {}).get("debt_receivable_remaining", 0)))
         total += max(amount - receivable, 0.0)
     return total
 
@@ -516,7 +555,7 @@ def calculate_net_expense_by_category(transactions: list[dict]) -> dict:
             continue
         category = str((txn or {}).get("category") or "Other").strip() or "Other"
         amount = safe_float((txn or {}).get("amount", 0))
-        receivable = safe_float((txn or {}).get("debt_receivable_remaining", 0))
+        receivable = safe_float((txn or {}).get("debt_receivable_original", (txn or {}).get("debt_receivable_remaining", 0)))
         result[category] = result.get(category, 0.0) + max(amount - receivable, 0.0)
     return dict(sorted(result.items(), key=lambda x: x[1], reverse=True))
 

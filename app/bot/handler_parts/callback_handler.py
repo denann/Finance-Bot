@@ -269,7 +269,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     d for d in debts
                     if str(d.get("type", "")).strip() == debt_type_for_payment
                 ]
-                parsed["target_debt_id"] = target_debts[0].get("id") if len(target_debts) == 1 else ""
+                opposite_type = "payable" if debt_type_for_payment == "receivable" else "receivable"
+                has_opposite_debt = any(
+                    str(d.get("type", "")).strip() == opposite_type
+                    and parse_sheet_number(d.get("remaining_amount", 0)) > 0
+                    for d in debts
+                )
+                parsed["target_debt_id"] = target_debts[0].get("id") if len(target_debts) == 1 and not has_opposite_debt else ""
                 parsed["debt_type_for_payment"] = debt_type_for_payment
                 parsed["target_debt_type"] = debt_type_for_payment
 
@@ -356,7 +362,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 d for d in debts
                 if str(d.get("type", "")).strip() == debt_type_for_payment
             ]
-            debt_parsed["target_debt_id"] = target_debts[0].get("id") if len(target_debts) == 1 else ""
+            opposite_type = "payable" if debt_type_for_payment == "receivable" else "receivable"
+            has_opposite_debt = any(
+                str(d.get("type", "")).strip() == opposite_type
+                and parse_sheet_number(d.get("remaining_amount", 0)) > 0
+                for d in debts
+            )
+            # Kalau ada dua arah debt, jangan target 1 debt langsung. Biarkan
+            # add_payment_by_person melakukan auto-netting dulu.
+            debt_parsed["target_debt_id"] = target_debts[0].get("id") if len(target_debts) == 1 and not has_opposite_debt else ""
             debt_parsed["debt_type_for_payment"] = debt_type_for_payment
             debt_parsed["target_debt_type"] = debt_type_for_payment
 
@@ -445,7 +459,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         d for d in debts
                         if str(d.get("type", "")).strip() == debt_type_for_payment
                     ]
-                    parsed["target_debt_id"] = target_debts[0].get("id") if len(target_debts) == 1 else ""
+                    opposite_type = "payable" if debt_type_for_payment == "receivable" else "receivable"
+                    has_opposite_debt = any(
+                        str(d.get("type", "")).strip() == opposite_type
+                        and parse_sheet_number(d.get("remaining_amount", 0)) > 0
+                        for d in debts
+                    )
+                    parsed["target_debt_id"] = target_debts[0].get("id") if len(target_debts) == 1 and not has_opposite_debt else ""
                     parsed["debt_type_for_payment"] = debt_type_for_payment
                     parsed["target_debt_type"] = debt_type_for_payment
 
@@ -999,6 +1019,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     lines.append(f"\n💸 *Pembayaran {label.title()} tercatat:*")
                     lines.append(f"• Orang: {md_safe(person)}")
                     lines.append(f"• Nominal: *{format_rupiah(payment_amount)}*")
+                    netting = payment_result.get("netting") or None
+                    if netting and float(netting.get("offset_amount", 0) or 0) > 0:
+                        lines.append(
+                            f"• Auto-netting: *{format_rupiah(netting.get('offset_amount', 0))}* "
+                            "hutang/piutang saling menghapus tanpa rollback transaksi sumber"
+                        )
                     if allocations:
                         lines.append("• Alokasi debt:")
                         for alloc in allocations:
@@ -1333,6 +1359,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 transaction_result = save_transaction(debt_txn, raw_input=raw)
 
             lines = ["✅ *Debt berhasil diproses!*\n"]
+
+            netting = (debt_result or {}).get("netting") or None
+            if netting and float(netting.get("offset_amount", 0) or 0) > 0:
+                lines.append(
+                    f"🔁 Auto-netting hutang/piutang: *{format_rupiah(netting.get('offset_amount', 0))}* "
+                    "sudah saling menghapus tanpa mengubah transaksi sumber.\n"
+                )
 
             if intent in ["add_payable", "add_receivable"]:
                 if debt_result.get("is_settled"):
