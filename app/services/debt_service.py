@@ -1399,16 +1399,9 @@ def find_debt_initial_cashflow_candidates(debt: dict) -> list[dict]:
         txn_amount = parse_sheet_number(txn.get("amount", 0))
         txn_notes = str(txn.get("catatan", "") or "")
         txn_raw = str(txn.get("raw_input", "") or "")
-        txn_hutang_id = str(txn.get("hutang_id", "") or "")
 
-        # Kalau versi baru menyimpan debt_id di transactions.hutang_id/catatan/raw_input,
-        # pakai itu sebagai match kuat. Ini penting untuk ditalangin yang sekarang
-        # disimpan sebagai expense tanpa update saldo, bukan kategori Penerimaan Utang.
-        if debt_id and (
-            debt_id in txn_hutang_id
-            or debt_id in txn_notes
-            or debt_id in txn_raw
-        ):
+        # Kalau versi baru menyimpan debt_id di catatan/raw_input, pakai itu sebagai match kuat.
+        if debt_id and (debt_id in txn_notes or debt_id in txn_raw):
             candidates.append(txn)
             continue
 
@@ -1462,6 +1455,275 @@ def get_debts_by_source_transaction_id(transaction_id: str, active_only: bool = 
         if str(debt.get("source_transaction_id", "")).strip() == target:
             result.append(debt)
     return result
+
+
+def parse_debt_ids_from_transaction_record(txn: dict) -> list[str]:
+    """Ambil daftar debt_id dari kolom transactions.hutang_id."""
+    raw = str((txn or {}).get("hutang_id", "") or "").strip()
+    if not raw:
+        return []
+    parts = re.split(r"[,;|]", raw)
+    result = []
+    seen = set()
+    for part in parts:
+        clean = str(part or "").strip()
+        if clean and clean not in seen:
+            result.append(clean)
+            seen.add(clean)
+    return result
+
+
+def get_debts_linked_to_transaction_record(txn: dict, active_only: bool = False) -> list[dict]:
+    """Cari semua debt yang terhubung ke sebuah transaksi.
+
+    Sumber relasi:
+    1. debts.source_transaction_id == transactions.id
+    2. transactions.hutang_id berisi debt id
+
+    active_only default False karena debt yang sudah settled karena pembayaran tetap
+    harus bisa di-sync ulang kalau transaksi sumbernya diedit.
+    """
+    txn_id = str((txn or {}).get("id", "") or "").strip()
+    result = []
+    seen = set()
+
+    for debt in get_debts_by_source_transaction_id(txn_id, active_only=active_only):
+        debt_id = str(debt.get("id", "") or "").strip()
+        if debt_id and debt_id not in seen:
+            result.append(debt)
+            seen.add(debt_id)
+
+    for debt_id in parse_debt_ids_from_transaction_record(txn):
+        row_index, debt = get_debt_by_id_any_status(debt_id)
+        if not debt:
+            continue
+        if active_only and is_settled_value(debt.get("is_settled", "FALSE")):
+            continue
+        clean = str(debt.get("id", "") or "").strip()
+        if clean and clean not in seen:
+            item = dict(debt)
+            if row_index:
+                item["_row_index"] = row_index
+            result.append(item)
+            seen.add(clean)
+
+    return result
+
+
+def get_debt_paid_amount_from_state(debt: dict) -> float:
+    """Paid amount = original_amount - remaining_amount.
+
+    Ini membuat debt diperlakukan seperti ledger ringan: pembayaran/mutasi yang
+    sudah terjadi tetap dihormati saat charge dari transaksi sumber diubah.
+    """
+    original = parse_sheet_number((debt or {}).get("original_amount", 0))
+    remaining = parse_sheet_number((debt or {}).get("remaining_amount", 0))
+    return max(0.0, original - remaining)
+
+
+def find_overpaid_adjustment_for_debt(debt_id: str) -> tuple[int | None, dict | None]:
+    """Cari debt adjustment auto untuk overpaid dari debt tertentu."""
+    marker = f"overpaid:{str(debt_id or '').strip()}"
+    if marker == "overpaid:":
+        return None, None
+
+    for debt in get_debts_with_row_index(active_only=False):
+        if str(debt.get("source_transaction_id", "") or "").strip() == marker:
+            return int(debt.get("_row_index") or 0), debt
+
+    return None, None
+
+
+def upsert_overpaid_adjustment(original_debt: dict, overpaid_amount: float) -> dict:
+    """Buat/update adjustment debt saat payment melebihi charge baru.
+
+    Contoh:
+    - Sapto awalnya hutang 125k dan sudah bayar 100k.
+    - Transaksi sumber diedit sehingga Sapto seharusnya cuma hutang 80k.
+    - Overpaid 20k menjadi payable: Anda hutang ke Sapto 20k.
+
+    Adjustment ini tetap global per orang dan berbeda dari void.
+    """
+    original_debt = original_debt or {}
+    debt_id = str(original_debt.get("id", "") or "").strip()
+    if not debt_id:
+        return {"success": False, "message": "Debt sumber kosong.", "overpaid_amount": 0.0}
+
+    overpaid_amount = max(0.0, float(overpaid_amount or 0))
+    person = normalize_person_name(original_debt.get("person_name", ""))
+    old_type = str(original_debt.get("type", "") or "").strip()
+    if old_type not in {"payable", "receivable"} or not person:
+        return {"success": False, "message": "Debt sumber tidak valid.", "overpaid_amount": overpaid_amount}
+
+    adjustment_type = "payable" if old_type == "receivable" else "receivable"
+    source_marker = f"overpaid:{debt_id}"
+    today = datetime.now().strftime("%Y-%m-%d")
+    description = f"[OVERPAID_ADJUSTMENT] Kelebihan pembayaran dari {debt_id}"
+    row_index, existing = find_overpaid_adjustment_for_debt(debt_id)
+
+    if existing and row_index:
+        paid_on_adjustment = get_debt_paid_amount_from_state(existing)
+        new_remaining = max(0.0, overpaid_amount - paid_on_adjustment)
+        is_settled = new_remaining <= 0.0001
+        old_original = parse_sheet_number(existing.get("original_amount", 0))
+
+        update_cell(SHEET_DEBTS, row_index, DEBT_TYPE_COL, adjustment_type)
+        update_cell(SHEET_DEBTS, row_index, DEBT_PERSON_COL, person)
+        update_cell(SHEET_DEBTS, row_index, DEBT_ORIGINAL_AMOUNT_COL, overpaid_amount)
+        update_cell(SHEET_DEBTS, row_index, DEBT_REMAINING_AMOUNT_COL, 0 if is_settled else new_remaining)
+        update_cell(SHEET_DEBTS, row_index, DEBT_DESCRIPTION_COL, description)
+        update_cell(SHEET_DEBTS, row_index, DEBT_IS_SETTLED_COL, "TRUE" if is_settled else "FALSE")
+        update_cell(SHEET_DEBTS, row_index, DEBT_SETTLED_AT_COL, today if is_settled else "")
+        append_debt_mutation(
+            existing.get("id"),
+            overpaid_amount - old_original,
+            f"Sync overpaid adjustment dari {debt_id}",
+            mutation_type="sync_overpaid_adjustment",
+        )
+        return {
+            "success": True,
+            "action": "updated" if overpaid_amount > 0 else "settled",
+            "debt_id": existing.get("id"),
+            "type": adjustment_type,
+            "person_name": person,
+            "overpaid_amount": overpaid_amount,
+            "remaining_amount": 0 if is_settled else new_remaining,
+        }
+
+    if overpaid_amount <= 0:
+        return {"success": True, "action": "none", "overpaid_amount": 0.0}
+
+    created = add_debt(
+        adjustment_type,
+        person,
+        overpaid_amount,
+        description=description,
+        source_transaction_id=source_marker,
+        cashflow_mode="overpaid_adjustment",
+    )
+    created["overpaid_amount"] = overpaid_amount
+    created["type"] = adjustment_type
+    return created
+
+
+def sync_debt_charges_from_transaction_edit(old_txn: dict, new_txn: dict) -> dict:
+    """Sync debt charge yang berasal dari transaksi setelah transaksi diedit.
+
+    Prinsip ledger/global per orang:
+    - original_amount debt = charge dari transaksi sumber.
+    - paid_amount = original_amount lama - remaining_amount lama.
+    - Saat transaksi diubah, charge dihitung ulang, payment lama tetap.
+    - Jika paid_amount > charge baru, selisih dicatat sebagai overpaid adjustment
+      ke arah berlawanan.
+    - Void tetap beda: debt yang punya marker [VOID] tidak di-sync dan tetap
+      dianggap input salah.
+    """
+    old_txn = old_txn or {}
+    new_txn = new_txn or {}
+    linked_debts = [
+        d for d in get_debts_linked_to_transaction_record(old_txn, active_only=False)
+        if not is_voided_debt(d)
+    ]
+
+    if not linked_debts:
+        return {"success": True, "message": "Tidak ada debt charge terkait.", "updated": [], "overpaid": []}
+
+    # Jangan sync transaksi pembayaran debt. Payment event harus diedit lewat flow
+    # pembayaran khusus agar alokasi payment tidak tertukar dengan charge.
+    old_category = str(old_txn.get("category", "") or "").strip()
+    new_category = str(new_txn.get("category", "") or "").strip()
+    # Pembayaran aktual adalah event payment global per orang.
+    # Piutang Diberikan/Penerimaan Utang adalah charge awal dan masih boleh di-sync.
+    payment_categories = {"Pembayaran Piutang", "Bayar Utang"}
+    if old_category in payment_categories or new_category in payment_categories:
+        return {
+            "success": False,
+            "message": "Transaksi pembayaran hutang/piutang belum bisa di-sync dari edit umum. Pakai flow bayar_hutang/bayar_piutang.",
+            "updated": [],
+            "overpaid": [],
+        }
+
+    old_amount = parse_sheet_number(old_txn.get("amount", 0))
+    new_amount = parse_sheet_number(new_txn.get("amount", 0))
+    if old_amount <= 0 or new_amount <= 0:
+        return {"success": False, "message": "Nominal transaksi lama/baru tidak valid.", "updated": [], "overpaid": []}
+
+    ratio = new_amount / old_amount
+    today = datetime.now().strftime("%Y-%m-%d")
+    updated = []
+    overpaid_items = []
+    failed = []
+
+    for debt in linked_debts:
+        debt_id = str(debt.get("id", "") or "").strip()
+        row_index = int(debt.get("_row_index") or 0)
+        debt_type = str(debt.get("type", "") or "").strip()
+        if not debt_id or not row_index or debt_type not in {"payable", "receivable"}:
+            continue
+
+        old_original = parse_sheet_number(debt.get("original_amount", 0))
+        old_remaining = parse_sheet_number(debt.get("remaining_amount", 0))
+        paid_amount = max(0.0, old_original - old_remaining)
+        new_original = max(0.0, old_original * ratio)
+        new_remaining = max(0.0, new_original - paid_amount)
+        overpaid_amount = max(0.0, paid_amount - new_original)
+        is_settled = new_remaining <= 0.0001
+
+        try:
+            update_cell(SHEET_DEBTS, row_index, DEBT_ORIGINAL_AMOUNT_COL, new_original)
+            update_cell(SHEET_DEBTS, row_index, DEBT_REMAINING_AMOUNT_COL, 0 if is_settled else new_remaining)
+            update_cell(SHEET_DEBTS, row_index, DEBT_IS_SETTLED_COL, "TRUE" if is_settled else "FALSE")
+            update_cell(SHEET_DEBTS, row_index, DEBT_SETTLED_AT_COL, today if is_settled else "")
+
+            append_debt_mutation(
+                debt_id,
+                new_original - old_original,
+                (
+                    f"Sync charge dari edit transaksi {new_txn.get('id') or old_txn.get('id')}: "
+                    f"{format_rupiah(old_original)} -> {format_rupiah(new_original)}; "
+                    f"paid tetap {format_rupiah(paid_amount)}"
+                ),
+                mutation_type="sync_charge_from_transaction",
+            )
+
+            adjustment = upsert_overpaid_adjustment(debt, overpaid_amount)
+            if overpaid_amount > 0:
+                overpaid_items.append({
+                    "source_debt_id": debt_id,
+                    "person_name": debt.get("person_name", ""),
+                    "amount": overpaid_amount,
+                    "adjustment": adjustment,
+                })
+
+            updated.append({
+                "debt_id": debt_id,
+                "person_name": debt.get("person_name", ""),
+                "type": debt_type,
+                "old_original": old_original,
+                "new_original": new_original,
+                "paid_amount": paid_amount,
+                "new_remaining": 0 if is_settled else new_remaining,
+                "overpaid_amount": overpaid_amount,
+            })
+        except Exception as e:
+            failed.append({"debt_id": debt_id, "message": str(e)})
+
+    if failed:
+        return {
+            "success": False,
+            "message": "; ".join(f"{x.get('debt_id')}: {x.get('message')}" for x in failed),
+            "updated": updated,
+            "overpaid": overpaid_items,
+            "failed": failed,
+        }
+
+    return {
+        "success": True,
+        "message": "ok",
+        "updated": updated,
+        "overpaid": overpaid_items,
+        "ratio": ratio,
+    }
 
 
 def void_debts_for_transaction(transaction_id: str, debt_ids: list[str] | None = None) -> dict:

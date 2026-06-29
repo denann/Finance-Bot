@@ -838,6 +838,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             failed_results = []
             aggregate_deltas = {}
             latest_balances = {}
+            synced_debt_count = 0
+            overpaid_count = 0
 
             for entry in entries:
                 result = edit_transaction_by_ref(
@@ -851,6 +853,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     for account, delta in (result.get("net_deltas") or {}).items():
                         aggregate_deltas[account] = aggregate_deltas.get(account, 0) + float(delta or 0)
+
+                    debt_sync = result.get("debt_sync") or {}
+                    synced_debt_count += len(debt_sync.get("updated") or [])
+                    overpaid_count += len(debt_sync.get("overpaid") or [])
 
                     for account, balance in (result.get("new_balances") or {}).items():
                         latest_balances[account] = balance
@@ -904,6 +910,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines.append("\n💳 *Saldo terbaru:*")
                 for account, balance in latest_balances.items():
                     lines.append(f"• {md_safe(account)}: *{format_rupiah(balance)}*")
+
+            if synced_debt_count:
+                lines.append(f"\n🧾 Debt charge ikut di-sync: *{synced_debt_count} item*")
+            if overpaid_count:
+                lines.append(f"⚠️ Overpaid adjustment dibuat/diupdate: *{overpaid_count} item*")
 
             context.user_data.pop("pending_bulk_edit_txns", None)
             await safe_edit_message(query, "\n".join(lines), parse_mode="Markdown")
@@ -993,6 +1004,28 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines.append("\n💳 *Saldo terbaru:*")
                 for account, balance in new_balances.items():
                     lines.append(f"• {account}: *{format_rupiah(balance)}*")
+
+            debt_sync = result.get("debt_sync") or {}
+            if debt_sync.get("updated"):
+                lines.append("\n🧾 *Debt charge ikut di-sync dari transaksi:*")
+                for item in debt_sync.get("updated", [])[:8]:
+                    person = item.get("person_name") or "-"
+                    lines.append(
+                        f"• {md_safe(person)}: "
+                        f"{format_rupiah(item.get('old_original', 0))} → "
+                        f"*{format_rupiah(item.get('new_original', 0))}*, "
+                        f"sudah bayar {format_rupiah(item.get('paid_amount', 0))}, "
+                        f"sisa {format_rupiah(item.get('new_remaining', 0))}"
+                    )
+            if debt_sync.get("overpaid"):
+                lines.append("\n⚠️ *Overpaid terdeteksi dan dicatat sebagai debt lawan arah:*")
+                for item in debt_sync.get("overpaid", [])[:8]:
+                    lines.append(
+                        f"• {md_safe(item.get('person_name') or '-')}: "
+                        f"{format_rupiah(item.get('amount', 0))}"
+                    )
+            if debt_sync and debt_sync.get("success") is False:
+                lines.append(f"\n⚠️ Sync debt perlu dicek: {md_safe(debt_sync.get('message') or '-')}")
 
             debt_payment_conversion = pending_edit.get("debt_payment_conversion") or None
             if debt_payment_conversion:
@@ -1395,10 +1428,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if transaction_result:
                 if transaction_result.get("success"):
-                    if debt_txn.get("skip_account") and debt_txn.get("type") == "expense":
-                        lines.append("\n📝 Pengeluaran tersimpan di transactions tanpa update saldo rekening.")
-                    else:
-                        lines.append("\n📝 Cashflow tersimpan di transactions.")
+                    lines.append("\n📝 Cashflow tersimpan di transactions.")
                     if transaction_result.get("transaction_id"):
                         lines.append(f"🔖 ID: `{transaction_result['transaction_id']}`")
                     if transaction_result.get("new_balance") is not None:
@@ -1406,7 +1436,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     lines.append(f"\n⚠️ Debt tersimpan, tapi cashflow gagal: {md_safe(transaction_result.get('message'))}")
             elif not debt_uses_cashflow(debt_parsed):
-                lines.append("\n📝 Debt tersimpan tanpa update saldo rekening.")
+                lines.append("\n📝 Cashflow tidak dicatat karena ini mode talangan/ditalangin tanpa uang masuk/keluar dari rekening Anda.")
 
             await safe_edit_message(query, 
                 "\n".join(lines),
@@ -1506,7 +1536,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if debt_txn.get("type") != "pending":
                     debt_transaction_items.append({"parsed": debt_txn, "raw": raw})
-                    if debt_txn.get("skip_account") or debt_txn.get("type") in ["debt_only", "debt_offset"]:
+                    if debt_txn.get("type") in ["debt_only", "debt_offset"]:
                         result_lines.append("   📝 Masuk transactions tanpa update saldo rekening")
 
             transaction_result = None
@@ -1671,7 +1701,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parsed,
                         account,
                     )
-                    if debt_txn.get("skip_account") or debt_txn.get("type") in ["debt_only", "debt_offset"]:
+                    if debt_txn.get("type") in ["debt_only", "debt_offset"]:
                         result_lines.append("   📝 Masuk transactions tanpa update saldo rekening")
 
                 elif intent == "add_payment":

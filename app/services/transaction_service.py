@@ -217,6 +217,9 @@ SKIP_ACCOUNT_NAMES = {
     "tanpa rekening",
     "tidak masuk rekening",
     "jangan ubah saldo",
+    "ditalangin",
+    "debt only",
+    "debt_only",
     "__skip_account__",
 }
 
@@ -837,13 +840,8 @@ def get_expense_by_category(year: int, month: int) -> dict:
 def is_debt_cashflow_transaction(txn: dict) -> bool:
     category = str(txn.get("category", "")).strip()
     parsed_by = str(txn.get("parsed_by", "")).strip().lower()
-    hutang_id = str(txn.get("hutang_id", "") or "").strip()
 
-    return (
-        category in DEBT_CASHFLOW_CATEGORIES
-        or parsed_by in {"debt", "debt_only", "debt_offset"}
-        or bool(hutang_id)
-    )
+    return category in DEBT_CASHFLOW_CATEGORIES or parsed_by == "debt"
 
 
 def parse_transaction_date(date_value: str):
@@ -1034,6 +1032,9 @@ def calculate_reverse_deltas_for_delete(transactions: list[dict]) -> dict:
         amount = float(txn.get("amount", 0) or 0)
         account = str(txn.get("account", "")).strip()
         to_account = str(txn.get("to_account", "")).strip()
+
+        if is_skip_account_transaction(txn):
+            continue
 
         if txn_type == "expense":
             add_delta(account, amount)
@@ -1609,6 +1610,9 @@ def calculate_account_effect(txn: dict) -> dict:
     account = str(txn.get("account", "")).strip()
     to_account = str(txn.get("to_account", "")).strip()
 
+    if is_skip_account_transaction(txn):
+        return deltas
+
     if txn_type == "expense":
         add_delta(account, -amount)
 
@@ -1700,11 +1704,26 @@ def preview_edit_transaction_by_ref(
             "message": "Transaksi tidak ditemukan.",
         }
 
-    if is_debt_cashflow_transaction(old_txn):
+    old_payment_category = str(old_txn.get("category", "") or "").strip()
+    if old_payment_category in {"Pembayaran Piutang", "Bayar Utang"}:
         return {
             "success": False,
             "message": (
-                "Transaksi debt cashflow belum boleh diedit dari fitur ini "
+                "Transaksi pembayaran hutang/piutang belum boleh diedit dari edit umum. "
+                "Ubah lewat flow pembayaran debt agar alokasi payment tetap konsisten."
+            ),
+        }
+
+    old_has_debt_relation = transaction_has_debt_relation(old_txn)
+
+    # Transaksi debt-linked boleh diedit selama charge debt terkait bisa di-sync ulang.
+    # Yang tetap diblok adalah transaksi debt cashflow tanpa hutang_id, karena tidak
+    # ada target debt yang jelas untuk direkonsiliasi.
+    if is_debt_cashflow_transaction(old_txn) and not old_has_debt_relation:
+        return {
+            "success": False,
+            "message": (
+                "Transaksi debt cashflow tanpa hutang_id belum boleh diedit dari fitur ini "
                 "supaya sheet debts tidak inkonsisten."
             ),
         }
@@ -1799,11 +1818,26 @@ def edit_transaction_by_ref(
             "new_balances": balance_result.get("new_balances", {}),
         }
 
+    debt_sync_result = {"success": True, "updated": [], "overpaid": []}
+    if transaction_has_debt_relation(old_txn) or transaction_has_debt_relation(new_txn):
+        try:
+            from app.services.debt_service import sync_debt_charges_from_transaction_edit
+
+            debt_sync_result = sync_debt_charges_from_transaction_edit(old_txn, new_txn)
+        except Exception as e:
+            debt_sync_result = {
+                "success": False,
+                "message": str(e),
+                "updated": [],
+                "overpaid": [],
+            }
+
     return {
         "success": True,
-        "message": "ok",
+        "message": "ok" if debt_sync_result.get("success") else "Transaksi diedit, tapi sync debt perlu dicek: " + str(debt_sync_result.get("message") or "-"),
         "old_txn": old_txn,
         "new_txn": new_txn,
         "net_deltas": net_deltas,
         "new_balances": balance_result.get("new_balances", {}),
+        "debt_sync": debt_sync_result,
     }
