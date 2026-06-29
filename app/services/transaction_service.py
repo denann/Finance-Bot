@@ -837,8 +837,13 @@ def get_expense_by_category(year: int, month: int) -> dict:
 def is_debt_cashflow_transaction(txn: dict) -> bool:
     category = str(txn.get("category", "")).strip()
     parsed_by = str(txn.get("parsed_by", "")).strip().lower()
+    hutang_id = str(txn.get("hutang_id", "") or "").strip()
 
-    return category in DEBT_CASHFLOW_CATEGORIES or parsed_by == "debt"
+    return (
+        category in DEBT_CASHFLOW_CATEGORIES
+        or parsed_by in {"debt", "debt_only", "debt_offset"}
+        or bool(hutang_id)
+    )
 
 
 def parse_transaction_date(date_value: str):

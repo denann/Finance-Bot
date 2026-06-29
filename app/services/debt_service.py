@@ -1399,9 +1399,16 @@ def find_debt_initial_cashflow_candidates(debt: dict) -> list[dict]:
         txn_amount = parse_sheet_number(txn.get("amount", 0))
         txn_notes = str(txn.get("catatan", "") or "")
         txn_raw = str(txn.get("raw_input", "") or "")
+        txn_hutang_id = str(txn.get("hutang_id", "") or "")
 
-        # Kalau versi baru menyimpan debt_id di catatan/raw_input, pakai itu sebagai match kuat.
-        if debt_id and (debt_id in txn_notes or debt_id in txn_raw):
+        # Kalau versi baru menyimpan debt_id di transactions.hutang_id/catatan/raw_input,
+        # pakai itu sebagai match kuat. Ini penting untuk ditalangin yang sekarang
+        # disimpan sebagai expense tanpa update saldo, bukan kategori Penerimaan Utang.
+        if debt_id and (
+            debt_id in txn_hutang_id
+            or debt_id in txn_notes
+            or debt_id in txn_raw
+        ):
             candidates.append(txn)
             continue
 

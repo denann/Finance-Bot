@@ -1750,13 +1750,57 @@ def append_saved_summary_lines(lines: list[str], items: list[dict], title: str =
         lines.append(f"🔄 Transfer  : *{format_rupiah(summary['transfer'])}*")
     lines.append(f"📌 Net       : *{format_rupiah(summary['net'])}*")
 
+def _fronting_expense_description(debt_parsed: dict) -> str:
+    """Ambil nama item untuk ditalangin agar report tidak tampil sebagai label debt."""
+    description = str(debt_parsed.get("description") or "").strip()
+    if ":" in description:
+        item = description.split(":", 1)[1].strip()
+        if item:
+            return item
+
+    raw = str(debt_parsed.get("raw_input") or "").strip()
+    person = str(debt_parsed.get("person_name") or "").strip()
+
+    item = re.sub(r"\b(?:saya|aku|gw|gue)?\s*(?:nitip|ditalangin|ditalangi|dibayarin|duluin)\b", " ", raw, flags=re.IGNORECASE)
+    if person:
+        item = re.sub(rf"\b(?:sama|oleh|ke|dari)?\s*(?:si\s+)?{re.escape(person)}\b", " ", item, flags=re.IGNORECASE)
+    item = re.sub(r"\b(?:tanggal|tgl|kemarin|hari\s+ini|besok|bulan\s+depan|minggu\s+depan)\b.*$", " ", item, flags=re.IGNORECASE)
+    item = re.sub(r"\b(?:rp|idr)?\s*\d+[\d.,]*\s*(?:rb|ribu|k|jt|juta)?\b", " ", item, flags=re.IGNORECASE)
+    item = re.sub(r"\s+", " ", item).strip(" .,-:")
+    return item.title() if item else (description or "Ditalangin")
+
+
+def _fronting_expense_category(debt_parsed: dict) -> str:
+    """Infer kategori expense untuk ditalangin dari raw input bila memungkinkan."""
+    raw = str(debt_parsed.get("raw_input") or "").strip()
+    if raw:
+        try:
+            parsed = parse_with_regex(raw)
+            category = str((parsed or {}).get("category") or "").strip()
+            txn_type = str((parsed or {}).get("type") or "").strip().lower()
+            if txn_type == "expense" and category:
+                return category
+        except Exception:
+            pass
+    return str(debt_parsed.get("category") or "Other Expense").strip() or "Other Expense"
+
+
+def is_ditalangin_expense_without_balance(debt_parsed: dict) -> bool:
+    """Ditalangin = expense sudah terjadi, tapi saldo rekening user belum berubah."""
+    return (
+        str(debt_parsed.get("cashflow_mode") or "").strip() == "debt_only"
+        and str(debt_parsed.get("fronting_mode") or "").strip().lower() == "ditalangin"
+        and str(debt_parsed.get("intent") or "").strip() == "add_payable"
+    )
+
+
 def build_debt_cashflow_transaction(
     debt_parsed: dict,
     account: str,
     debt_type_for_payment: str | None = None,
 ) -> dict:
     """
-    Ubah aktivitas utang/piutang menjadi transaksi cashflow.
+    Ubah aktivitas utang/piutang menjadi transaksi cashflow/fact table.
     """
     intent = debt_parsed.get("intent")
     person = debt_parsed.get("person_name") or ""
@@ -1773,6 +1817,29 @@ def build_debt_cashflow_transaction(
 
 
     if str(debt_parsed.get("cashflow_mode") or "").strip() == "debt_only":
+        # Khusus ditalangin/nitip/dibayarin: pengeluaran aslinya sudah terjadi,
+        # tetapi uang belum keluar dari rekening user karena orang lain yang menalangi.
+        # Jadi transaksi harus muncul di /harian, /mingguan, /bulanan, /budget,
+        # namun tetap tidak mengubah saldo rekening.
+        if is_ditalangin_expense_without_balance(debt_parsed):
+            item_desc = _fronting_expense_description(debt_parsed)
+            return {
+                "type": "expense",
+                "amount": amount,
+                "category": _fronting_expense_category(debt_parsed),
+                "account": "Ditalangin",
+                "to_account": None,
+                "subject": item_desc,
+                "description": item_desc,
+                "catatan": (str(raw or "").strip() + " | ditalangin/tanpa update saldo rekening").strip(" |"),
+                "tipe_pengeluaran": "",
+                "date": transaction_date,
+                "hutang_id": hutang_id,
+                "tipe_hutang": tipe_hutang or "utang",
+                "parsed_by": "debt",
+                "skip_account": True,
+            }
+
         if intent == "add_payable":
             category = "Utang Tanpa Cashflow"
             description = f"Utang tanpa cashflow ke {person}: {debt_parsed.get('description') or raw}"
@@ -1914,26 +1981,43 @@ def debt_uses_cashflow(debt_parsed: dict) -> bool:
 
 
 def build_debt_only_confirm_preview(debt_parsed: dict) -> str:
-    """Preview untuk talangan/ditalangin yang hanya mengubah sheet debts."""
+    """Preview untuk debt tanpa update saldo rekening.
+
+    Khusus ditalangin, transaksi tetap disimpan sebagai expense agar muncul di
+    report, tetapi skip_account=True sehingga saldo rekening tidak berubah.
+    """
     intent = debt_parsed.get("intent")
     person = debt_parsed.get("person_name") or "-"
     amount = debt_parsed.get("amount") or 0
     raw = debt_parsed.get("raw_input") or "-"
     fronting_mode = debt_parsed.get("fronting_mode") or "debt_only"
+    transaction_parsed = build_debt_cashflow_transaction(debt_parsed, account="Debt Only")
 
     if intent == "add_payable":
-        title = "🟠 *Ditalangin / Utang Tanpa Cashflow*"
-        debt_effect = f"Anda punya utang ke {md_safe(person)}."
+        if is_ditalangin_expense_without_balance(debt_parsed):
+            title = "🟠 *Ditalangin / Pengeluaran Ditanggung Dulu*"
+            debt_effect = f"Anda punya utang ke {md_safe(person)}."
+            transaction_effect = (
+                "Dicatat sebagai *pengeluaran* di sheet transactions agar masuk /harian, /mingguan, /bulanan, dan /budget.\n"
+                "Saldo rekening *tidak berubah* karena uang belum keluar dari rekening Anda."
+            )
+        else:
+            title = "🟠 *Utang Tanpa Cashflow*"
+            debt_effect = f"Anda punya utang ke {md_safe(person)}."
+            transaction_effect = "Tetap dicatat di sheet transactions sebagai fact table, tetapi saldo rekening tidak berubah."
     elif intent == "add_receivable":
         title = "🟢 *Talangin / Piutang Tanpa Cashflow*"
         debt_effect = f"{md_safe(person)} punya utang ke Anda."
+        transaction_effect = "Tetap dicatat di sheet transactions sebagai fact table, tetapi saldo rekening tidak berubah."
     elif intent == "offset_debt":
         title = "🔁 *Kompensasi Hutang/Piutang*"
         target_label = "piutang" if debt_parsed.get("target_debt_type") == "receivable" else "utang"
         debt_effect = f"Memotong {target_label} aktif dengan {md_safe(person)} tanpa rekening."
+        transaction_effect = "Tetap dicatat sebagai debt offset tanpa mengubah saldo rekening."
     else:
         title = "💸 *Debt Tanpa Cashflow*"
         debt_effect = "Debt dicatat tanpa transaksi kas."
+        transaction_effect = "Tetap dicatat di sheet transactions sebagai fact table, tetapi saldo rekening tidak berubah."
 
     return (
         f"{title}\n\n"
@@ -1943,11 +2027,13 @@ def build_debt_only_confirm_preview(debt_parsed: dict) -> str:
         f"*Efek Debt:*\n"
         f"{debt_effect}\n\n"
         f"*Efek Transactions:*\n"
-        f"Tetap dicatat di sheet transactions sebagai fact table, tetapi saldo rekening tidak berubah.\n"
+        f"{transaction_effect}\n"
+        f"📌 Tipe: `{md_safe(transaction_parsed.get('type') or '-')}`\n"
+        f"📁 Kategori: {md_safe(transaction_parsed.get('category') or '-')}\n"
+        f"📝 Deskripsi: {md_safe(transaction_parsed.get('description') or '-')}\n"
         f"Mode: `{md_safe(fronting_mode)}`\n\n"
-        f"Simpan debt tanpa cashflow ini?"
+        f"Simpan utang/piutang ini?"
     )
-
 
 def build_debt_account_prompt(debt_parsed: dict) -> str:
     """Preview debt sebelum memilih rekening."""
@@ -2025,12 +2111,14 @@ def build_debt_confirm_preview(
         debt_effect = "-"
 
     cashflow_type = {
-        "expense": "❌ Cash Out / Pengeluaran",
+        "expense": "❌ Pengeluaran",
         "income": "✅ Cash In / Pemasukan",
         "transfer": "🔄 Transfer",
         "debt_offset": "🔁 Debt Offset / Tanpa Rekening",
         "debt_only": "📝 Debt Fact / Tanpa Rekening",
     }.get(transaction_parsed.get("type"), "❓")
+    if transaction_parsed.get("type") == "expense" and transaction_parsed.get("skip_account"):
+        cashflow_type = "❌ Pengeluaran / tanpa update saldo rekening"
 
     return (
         f"{title}\n\n"
@@ -2078,8 +2166,11 @@ def build_debt_batch_confirm_preview(
             cashflow_label = "✅ Cash In"
             total_cash_in += amount
         elif txn_type == "expense":
-            cashflow_label = "❌ Cash Out"
-            total_cash_out += amount
+            if transaction_parsed.get("skip_account"):
+                cashflow_label = "❌ Expense fact / tanpa update saldo"
+            else:
+                cashflow_label = "❌ Cash Out"
+                total_cash_out += amount
         elif txn_type == "debt_offset":
             cashflow_label = "🔁 Debt Offset / tanpa rekening"
         elif txn_type == "debt_only":

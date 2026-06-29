@@ -21,7 +21,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤝 *Utang, piutang, split bill*\n"
         "• `Budi minjem 300k`\n"
         "• `saya talangin Sapto beli nasi kuning 12k`\n"
-        "• `saya ditalangin Alpat beli nasi uduk 10k`\n"
+        "• `saya ditalangin Alpat beli nasi uduk 10k` — tercatat sebagai pengeluaran tanpa mengubah saldo\n"
         "• `nasi goreng 30k bagi 3 sama Akmal Sapto`\n\n"
 
         "📊 *Laporan & koreksi data*\n"
@@ -103,9 +103,9 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         "*7. Talangin / Ditalangin*\n"
         "`saya talangin Sapto beli nasi kuning 12k` — uang Anda keluar, jadi piutang Sapto\n"
-        "`saya ditalangin Alpat beli nasi uduk 10k` — utang Anda ke Alpat tanpa cashflow rekening\n"
-        "`saya nitip Sapto beli nasi kuning 12k` — sama seperti ditalangin\n"
-        "`ditalangin nasi uduk sama Alpat 10k kemarin` — Alpat menalangi Anda\n\n"
+        "`saya ditalangin Alpat beli nasi uduk 10k` — masuk pengeluaran/report, tetapi saldo rekening tidak berubah; utang Anda ke Alpat tercatat\n"
+        "`saya nitip Sapto beli nasi kuning 12k` — sama seperti ditalangin: expense fact + utang, tanpa update saldo\n"
+        "`ditalangin nasi uduk sama Alpat 10k kemarin` — Alpat menalangi Anda; tetap muncul di ringkasan pengeluaran\n\n"
 
         "*8. Split Bill*\n"
         "`Ayam dcelup 26k bagi 2 sama Sapto`\n"
@@ -173,7 +173,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/edit_txn 2 amount=15000`\n"
         "`/edit_txn 2 desc=Kopi susu`\n"
         "`/edit_txn 2 account=BRI category=Food & Beverage`\n"
-        "Bulk edit juga bisa dengan paste beberapa baris `/edit_txn` sekaligus setelah `/last`, `/transaksi`, atau `/cari`. Bot akan kasih preview Simpan/Batal.\n"
+        "Bulk/mass edit juga bisa dengan paste beberapa baris `/edit_txn` sekaligus setelah `/last`, `/transaksi`, `/cari`, atau report transaksi lain. Bot akan kasih preview Simpan/Batal.\n"
         "`/edit_txn 1 category=\"Household & Supplies\" desc=\"Galon\"`\n"
         "`/edit_txn 2 category=\"Food & Beverage\"`\n"
         "`/edit_txn txn_id amount=500k dibagi 4 sama Sapto:125k Alpat:125k Opik:100k`\n"
@@ -259,7 +259,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         "*Catatan penting:*\n"
         "• Fitur inti mengubah data, fitur Gemini/RAG hanya membaca dan memberi insight.\n"
-        "• Sheet `transactions` dipakai sebagai fact table utama, termasuk debt-only dan debt offset.\n"
+        "• Sheet `transactions` dipakai sebagai fact table utama; ditalangin masuk sebagai expense tanpa update saldo, sedangkan debt offset tetap tanpa rekening.\n"
         "• Untuk `/delete_txn` dan `/edit_txn`, jalankan `/last` dulu.\n"
         "• Data yang dikirim ke Gemini adalah ringkasan relevan, bukan seluruh spreadsheet mentah.\n"
         "• `/ask` memakai session history terbatas agar paham pertanyaan lanjutan; history hilang jika bot restart."

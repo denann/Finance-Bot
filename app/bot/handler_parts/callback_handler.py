@@ -1395,7 +1395,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if transaction_result:
                 if transaction_result.get("success"):
-                    lines.append("\n📝 Cashflow tersimpan di transactions.")
+                    if debt_txn.get("skip_account") and debt_txn.get("type") == "expense":
+                        lines.append("\n📝 Pengeluaran tersimpan di transactions tanpa update saldo rekening.")
+                    else:
+                        lines.append("\n📝 Cashflow tersimpan di transactions.")
                     if transaction_result.get("transaction_id"):
                         lines.append(f"🔖 ID: `{transaction_result['transaction_id']}`")
                     if transaction_result.get("new_balance") is not None:
@@ -1403,7 +1406,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     lines.append(f"\n⚠️ Debt tersimpan, tapi cashflow gagal: {md_safe(transaction_result.get('message'))}")
             elif not debt_uses_cashflow(debt_parsed):
-                lines.append("\n📝 Cashflow tidak dicatat karena ini mode talangan/ditalangin tanpa uang masuk/keluar dari rekening Anda.")
+                lines.append("\n📝 Debt tersimpan tanpa update saldo rekening.")
 
             await safe_edit_message(query, 
                 "\n".join(lines),
@@ -1503,7 +1506,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if debt_txn.get("type") != "pending":
                     debt_transaction_items.append({"parsed": debt_txn, "raw": raw})
-                    if debt_txn.get("type") in ["debt_only", "debt_offset"]:
+                    if debt_txn.get("skip_account") or debt_txn.get("type") in ["debt_only", "debt_offset"]:
                         result_lines.append("   📝 Masuk transactions tanpa update saldo rekening")
 
             transaction_result = None
@@ -1668,7 +1671,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parsed,
                         account,
                     )
-                    if debt_txn.get("type") in ["debt_only", "debt_offset"]:
+                    if debt_txn.get("skip_account") or debt_txn.get("type") in ["debt_only", "debt_offset"]:
                         result_lines.append("   📝 Masuk transactions tanpa update saldo rekening")
 
                 elif intent == "add_payment":
