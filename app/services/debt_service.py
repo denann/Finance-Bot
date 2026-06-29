@@ -1444,11 +1444,48 @@ def is_debt_without_initial_cashflow(debt: dict) -> bool:
 
 
 
-def get_debts_by_source_transaction_id(transaction_id: str, active_only: bool = True) -> list[dict]:
+def build_debts_index(records: list[dict] | None = None, active_only: bool = False) -> dict:
+    """Bangun index debts sekali baca untuk menghindari get_all_records berulang.
+
+    Banyak flow debt/sync perlu mencari debt berdasarkan id dan
+    source_transaction_id. Tanpa index, satu transaksi split bill berisi 3 debt
+    bisa membaca sheet debts berkali-kali dan cepat kena quota read Google
+    Sheets.
+    """
+    if records is None:
+        records = get_debts_with_row_index(active_only=active_only)
+
+    by_id = {}
+    by_source_txn = {}
+    items = []
+
+    for debt in records or []:
+        item = dict(debt or {})
+        if active_only and is_settled_value(item.get("is_settled", "FALSE")):
+            continue
+
+        debt_id = str(item.get("id", "") or "").strip()
+        if not debt_id:
+            continue
+
+        items.append(item)
+        by_id[debt_id] = item
+
+        source_txn = str(item.get("source_transaction_id", "") or "").strip()
+        if source_txn:
+            by_source_txn.setdefault(source_txn, []).append(item)
+
+    return {"items": items, "by_id": by_id, "by_source_txn": by_source_txn}
+
+
+def get_debts_by_source_transaction_id(transaction_id: str, active_only: bool = True, debt_index: dict | None = None) -> list[dict]:
     """Cari debt granular yang dibuat dari source_transaction_id tertentu."""
     target = str(transaction_id or "").strip()
     if not target:
         return []
+
+    if debt_index is not None:
+        return list((debt_index.get("by_source_txn", {}) or {}).get(target, []) or [])
 
     result = []
     for debt in get_debts_with_row_index(active_only=active_only):
@@ -1473,7 +1510,7 @@ def parse_debt_ids_from_transaction_record(txn: dict) -> list[str]:
     return result
 
 
-def get_debts_linked_to_transaction_record(txn: dict, active_only: bool = False) -> list[dict]:
+def get_debts_linked_to_transaction_record(txn: dict, active_only: bool = False, debt_index: dict | None = None) -> list[dict]:
     """Cari semua debt yang terhubung ke sebuah transaksi.
 
     Sumber relasi:
@@ -1484,27 +1521,29 @@ def get_debts_linked_to_transaction_record(txn: dict, active_only: bool = False)
     harus bisa di-sync ulang kalau transaksi sumbernya diedit.
     """
     txn_id = str((txn or {}).get("id", "") or "").strip()
+    if debt_index is None:
+        debt_index = build_debts_index(active_only=active_only)
+
+    by_id = debt_index.get("by_id", {}) or {}
+    by_source = debt_index.get("by_source_txn", {}) or {}
     result = []
     seen = set()
 
-    for debt in get_debts_by_source_transaction_id(txn_id, active_only=active_only):
+    for debt in by_source.get(txn_id, []) or []:
         debt_id = str(debt.get("id", "") or "").strip()
         if debt_id and debt_id not in seen:
             result.append(debt)
             seen.add(debt_id)
 
     for debt_id in parse_debt_ids_from_transaction_record(txn):
-        row_index, debt = get_debt_by_id_any_status(debt_id)
+        debt = by_id.get(debt_id)
         if not debt:
             continue
         if active_only and is_settled_value(debt.get("is_settled", "FALSE")):
             continue
         clean = str(debt.get("id", "") or "").strip()
         if clean and clean not in seen:
-            item = dict(debt)
-            if row_index:
-                item["_row_index"] = row_index
-            result.append(item)
+            result.append(dict(debt))
             seen.add(clean)
 
     return result
@@ -1521,10 +1560,17 @@ def get_debt_paid_amount_from_state(debt: dict) -> float:
     return max(0.0, original - remaining)
 
 
-def find_overpaid_adjustment_for_debt(debt_id: str) -> tuple[int | None, dict | None]:
+def find_overpaid_adjustment_for_debt(debt_id: str, debt_index: dict | None = None) -> tuple[int | None, dict | None]:
     """Cari debt adjustment auto untuk overpaid dari debt tertentu."""
     marker = f"overpaid:{str(debt_id or '').strip()}"
     if marker == "overpaid:":
+        return None, None
+
+    if debt_index is not None:
+        matches = (debt_index.get("by_source_txn", {}) or {}).get(marker, []) or []
+        if matches:
+            debt = matches[0]
+            return int(debt.get("_row_index") or 0), debt
         return None, None
 
     for debt in get_debts_with_row_index(active_only=False):
@@ -1534,7 +1580,7 @@ def find_overpaid_adjustment_for_debt(debt_id: str) -> tuple[int | None, dict | 
     return None, None
 
 
-def upsert_overpaid_adjustment(original_debt: dict, overpaid_amount: float) -> dict:
+def upsert_overpaid_adjustment(original_debt: dict, overpaid_amount: float, debt_index: dict | None = None) -> dict:
     """Buat/update adjustment debt saat payment melebihi charge baru.
 
     Contoh:
@@ -1559,7 +1605,7 @@ def upsert_overpaid_adjustment(original_debt: dict, overpaid_amount: float) -> d
     source_marker = f"overpaid:{debt_id}"
     today = datetime.now().strftime("%Y-%m-%d")
     description = f"[OVERPAID_ADJUSTMENT] Kelebihan pembayaran dari {debt_id}"
-    row_index, existing = find_overpaid_adjustment_for_debt(debt_id)
+    row_index, existing = find_overpaid_adjustment_for_debt(debt_id, debt_index=debt_index)
 
     if existing and row_index:
         paid_on_adjustment = get_debt_paid_amount_from_state(existing)
@@ -1620,8 +1666,9 @@ def sync_debt_charges_from_transaction_edit(old_txn: dict, new_txn: dict) -> dic
     """
     old_txn = old_txn or {}
     new_txn = new_txn or {}
+    debt_index = build_debts_index(active_only=False)
     linked_debts = [
-        d for d in get_debts_linked_to_transaction_record(old_txn, active_only=False)
+        d for d in get_debts_linked_to_transaction_record(old_txn, active_only=False, debt_index=debt_index)
         if not is_voided_debt(d)
     ]
 
@@ -1686,7 +1733,7 @@ def sync_debt_charges_from_transaction_edit(old_txn: dict, new_txn: dict) -> dic
                 mutation_type="sync_charge_from_transaction",
             )
 
-            adjustment = upsert_overpaid_adjustment(debt, overpaid_amount)
+            adjustment = upsert_overpaid_adjustment(debt, overpaid_amount, debt_index=debt_index)
             if overpaid_amount > 0:
                 overpaid_items.append({
                     "source_debt_id": debt_id,

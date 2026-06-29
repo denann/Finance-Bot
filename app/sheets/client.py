@@ -10,6 +10,7 @@ SCOPES = [
 
 _client = None
 _spreadsheet = None
+_worksheets = {}
 
 
 def get_spreadsheet():
@@ -31,9 +32,24 @@ def get_spreadsheet():
 
 
 def get_sheet(sheet_name: str):
-    """Ambil worksheet berdasarkan nama tab."""
-    spreadsheet = get_spreadsheet()
-    return spreadsheet.worksheet(sheet_name)
+    """Ambil worksheet berdasarkan nama tab.
+
+    Worksheet object di-cache supaya setiap append/update tidak memanggil
+    lookup worksheet berulang. Ini penting untuk mengurangi read request
+    Google Sheets, terutama pada flow debt/split bill yang menulis beberapa
+    sheet sekaligus.
+    """
+    global _worksheets
+
+    clean_name = str(sheet_name or "").strip()
+    if not clean_name:
+        raise ValueError("sheet_name kosong")
+
+    if clean_name not in _worksheets:
+        spreadsheet = get_spreadsheet()
+        _worksheets[clean_name] = spreadsheet.worksheet(clean_name)
+
+    return _worksheets[clean_name]
 
 
 def append_row(sheet_name: str, row: list):
