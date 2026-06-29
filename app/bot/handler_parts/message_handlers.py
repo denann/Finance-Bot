@@ -30,6 +30,7 @@ from app.bot.handler_parts.transaction_flow import (
     build_preview,
     build_split_bill_prompt_from_parsed,
     debt_uses_cashflow,
+    enrich_ditalangin_split_bill_if_any,
     edit_or_continue_keyboard,
     handle_pending_missing_amount,
     handle_pending_preview_edit,
@@ -74,6 +75,13 @@ async def debt_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if not debt_parsed:
         return False
+
+    # Penting untuk single input: parse_mixed_item() sudah melakukan enrichment,
+    # tetapi single debt flow sebelumnya belum. Tanpa ini, input PTPT seperti:
+    # "ditalangin Alpat beli minyak 46k dibagi 4 sama Alpat Opik Sapto"
+    # hanya membuat payable 46k ke Alpat dan gagal membuat receivable share
+    # 11.5k ke Alpat/Opik/Sapto.
+    debt_parsed = enrich_ditalangin_split_bill_if_any(debt_parsed, text)
 
     person = debt_parsed.get("person_name")
     intent = debt_parsed.get("intent")

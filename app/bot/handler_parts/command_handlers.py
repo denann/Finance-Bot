@@ -22,7 +22,6 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `Budi minjem 300k`\n"
         "• `saya talangin Sapto beli nasi kuning 12k`\n"
         "• `saya ditalangin Alpat beli nasi uduk 10k`\n"
-        "• `ditalangin Alpat beli minyak 46k dibagi 4 sama Alpat Opik Sapto`\n"
         "• `nasi goreng 30k bagi 3 sama Akmal Sapto`\n\n"
 
         "📊 *Laporan & koreksi data*\n"
@@ -107,8 +106,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`saya ditalangin Alpat beli nasi uduk 10k` — utang Anda ke Alpat tanpa cashflow rekening\n"
         "`saya nitip Sapto beli nasi kuning 12k` — sama seperti ditalangin\n"
         "`ditalangin nasi uduk sama Alpat 10k kemarin` — Alpat menalangi Anda\n"
-        "`ditalangin Alpat beli minyak 46k dibagi 4 sama Alpat Opik Sapto` — PTPT: Anda hutang full Rp46.000 ke Alpat, lalu Alpat/Opik/Sapto masing-masing hutang share Rp11.500 ke Anda\n"
-        "`ditalangin minyak sama Alpat 46k/4 sama Sapto Alpat Opik` — format singkat PTPT dengan hasil yang sama\n\n"
+        "`ditalangin Alpat beli minyak 46k dibagi 4 sama Alpat Opik Sapto` — PTPT: Anda hutang full 46k ke Alpat, lalu Alpat/Opik/Sapto masing-masing hutang share ke Anda\n\n"
 
         "*8. Split Bill*\n"
         "`Ayam dcelup 26k bagi 2 sama Sapto`\n"
