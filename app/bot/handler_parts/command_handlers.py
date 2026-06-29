@@ -105,7 +105,8 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`saya talangin Sapto beli nasi kuning 12k` — uang Anda keluar, jadi piutang Sapto\n"
         "`saya ditalangin Alpat beli nasi uduk 10k` — utang Anda ke Alpat tanpa cashflow rekening\n"
         "`saya nitip Sapto beli nasi kuning 12k` — sama seperti ditalangin\n"
-        "`ditalangin nasi uduk sama Alpat 10k kemarin` — Alpat menalangi Anda\n\n"
+        "`ditalangin nasi uduk sama Alpat 10k kemarin` — Alpat menalangi Anda\n"
+        "`ditalangin Alpat beli minyak 46k dibagi 4 sama Alpat Opik Sapto` — expense dan utang Anda hanya bagian Anda\n\n"
 
         "*8. Split Bill*\n"
         "`Ayam dcelup 26k bagi 2 sama Sapto`\n"
@@ -130,7 +131,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/debt_edit 1 nominal 100k` — edit nominal rincian\n"
         "`/debt_edit 1 nama Budi` — edit nama orang\n"
         "`/debt_edit 1 tipe piutang` — ubah arah debt\n"
-        "Detail `/hutang nama` dikelompokkan per tanggal dibuat, menampilkan tanggal dan debt ID full.\n\n"
+        "Detail `/hutang nama` dikelompokkan per tanggal dibuat, menampilkan debt ID full, dan tidak auto-settle tanpa perintah Anda.\n\n"
 
         "*C. Laporan, Budget, Koreksi Data*\n\n"
         "*11. Laporan*\n"
@@ -1967,13 +1968,10 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # /hutang <nama> = detail rincian per orang
     if person_query:
-        # Auto-netting ringan: jika orang yang sama punya utang dan piutang
-        # aktif yang saling menutup, settle keduanya tanpa cashflow. Ini bukan
-        # /debt_void, jadi transaksi sumber tidak di-rollback ke gross.
-        netting_result = settle_opposite_debts_by_person(
-            person_query,
-            note=f"Auto-netting saat /hutang {person_query}",
-        )
+        # Jangan auto-settle saat membuka detail. /hutang <nama> hanya membaca
+        # posisi aktif; settlement/offset harus eksplisit dari user agar rincian
+        # utang dan piutang tetap bisa diaudit di akhir bulan.
+        netting_result = {"success": False, "offset_amount": 0}
         detail = get_debt_person_detail(person_query, include_settled=True)
         active_details = sorted(
             detail.get("active_details") or [],
@@ -2114,8 +2112,8 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(f"\n{net_label}: *{format_rupiah(abs(net))}*")
     lines.append(
         "\nContoh pembayaran/pengurangan:\n"
-        "`Sapto bayar 5k` — mengurangi piutang Sapto, setelah hutang/piutang berlawanan di-netting otomatis\n"
-        "`bayar hutang Sapto 10k` — mengurangi utang Anda, setelah hutang/piutang berlawanan di-netting otomatis\n"
+        "`Sapto bayar 5k` — mengurangi piutang Sapto secara eksplisit\n"
+        "`bayar hutang Sapto 10k` — mengurangi utang Anda secara eksplisit\n"
         "`potong hutang Sapto 500k` — kompensasi tanpa rekening/manual offset\n"
         "`potong piutang Akmal 20k buat badminton` — kompensasi tanpa rekening\n"
         "`/debt_void 1` — hanya untuk input salah; boleh rollback transaksi sumber ke gross"

@@ -442,6 +442,7 @@ def parse_mixed_item(line: str) -> dict:
     """
     debt_parsed = parse_debt_input(line)
     if debt_parsed:
+        debt_parsed = enrich_ditalangin_split_bill_if_any(debt_parsed, line)
         return {
             "kind": "debt",
             "parsed": debt_parsed,
@@ -1794,6 +1795,85 @@ def is_ditalangin_expense_without_balance(debt_parsed: dict) -> bool:
     )
 
 
+def normalize_slash_split_syntax(raw: str) -> str:
+    """Ubah shorthand 46k/4 menjadi 46k dibagi 4 agar parser split bill lama bisa menangkapnya."""
+    text = str(raw or "")
+    return re.sub(
+        r"(\d+[\d.,]*\s*(?:rb|ribu|k|jt|juta)?)\s*/\s*(\d+)",
+        r"\1 dibagi \2",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
+def enrich_ditalangin_split_bill_if_any(debt_parsed: dict, raw: str | None = None) -> dict:
+    """
+    Support kasus PTPT: user ditalangin orang lain, tetapi itemnya tetap
+    menjadi pengeluaran terpusat user dan dibagi lagi ke penghuni/teman.
+
+    Contoh:
+    ditalangin Alpat beli minyak 46k dibagi 4 sama Alpat Opik Sapto
+
+    Secara personal finance user:
+    - transaksi expense tetap gross Rp46k agar pengeluaran rumah tercatat penuh
+    - user punya utang payable full Rp46k ke Alpat sebagai pihak yang menalangi
+    - teman yang disebut di split bill tetap menjadi receivable ke user masing-masing Rp11,5k
+      termasuk Alpat jika namanya ada di daftar share
+    - net expense report menjadi Rp46k - total piutang share teman
+    """
+    if not isinstance(debt_parsed, dict) or not is_ditalangin_expense_without_balance(debt_parsed):
+        return debt_parsed
+
+    raw_text = str(raw or debt_parsed.get("raw_input") or "")
+    if not raw_text:
+        return debt_parsed
+
+    amount = float(debt_parsed.get("amount") or 0)
+    if amount <= 0:
+        return debt_parsed
+
+    item_desc = _fronting_expense_description(debt_parsed)
+    temp_parsed = {
+        "type": "expense",
+        "amount": amount,
+        "category": _fronting_expense_category(debt_parsed),
+        "subject": item_desc,
+        "description": item_desc,
+    }
+
+    split_bill = detect_split_bill(temp_parsed, normalize_slash_split_syntax(raw_text))
+    if not split_bill:
+        return debt_parsed
+
+    user_share = float(split_bill.get("user_share_amount", 0) or 0)
+    total_amount = float(split_bill.get("total_amount", amount) or amount)
+    participants = int(split_bill.get("participants", 0) or 0)
+
+    if user_share <= 0 and participants > 0:
+        user_share = total_amount / participants
+    if user_share <= 0:
+        return debt_parsed
+
+    person_shares = split_bill.get("person_shares") or {}
+    total_receivable = float(split_bill.get("total_receivable", 0) or 0)
+
+    updated = dict(debt_parsed)
+    # Jangan ubah amount menjadi bagian user. Untuk PTPT, user tetap punya
+    # payable full ke orang yang menalangi, sementara split bill dibuat sebagai
+    # receivable terpisah ke daftar teman.
+    updated["amount"] = total_amount
+    updated["fronted_split_bill"] = split_bill
+    updated["fronted_gross_amount"] = total_amount
+    updated["fronted_user_share"] = user_share
+    updated["fronted_total_receivable"] = total_receivable
+    updated["fronted_participants"] = participants
+    updated["fronted_split_people"] = split_bill.get("person_names") or []
+    updated["fronted_person_shares"] = person_shares
+    updated["expense_description"] = temp_parsed.get("description") or item_desc
+    updated["description"] = f"Ditalangin {updated.get('person_name')}: {temp_parsed.get('description') or item_desc}"
+    return updated
+
+
 def build_debt_cashflow_transaction(
     debt_parsed: dict,
     account: str,
@@ -1822,7 +1902,14 @@ def build_debt_cashflow_transaction(
         # Jadi transaksi harus muncul di /harian, /mingguan, /bulanan, /budget,
         # namun tetap tidak mengubah saldo rekening.
         if is_ditalangin_expense_without_balance(debt_parsed):
-            item_desc = _fronting_expense_description(debt_parsed)
+            item_desc = str(debt_parsed.get("expense_description") or "").strip() or _fronting_expense_description(debt_parsed)
+            catatan_parts = [str(raw or "").strip(), "ditalangin/tanpa update saldo rekening"]
+            if debt_parsed.get("fronted_split_bill"):
+                catatan_parts.append(
+                    f"gross dibayarkan orang lain {format_rupiah(debt_parsed.get('fronted_gross_amount', amount))}; "
+                    f"bagian user {format_rupiah(debt_parsed.get('fronted_user_share', amount))}; "
+                    f"piutang teman {format_rupiah(debt_parsed.get('fronted_total_receivable', 0))}"
+                )
             return {
                 "type": "expense",
                 "amount": amount,
@@ -1831,7 +1918,7 @@ def build_debt_cashflow_transaction(
                 "to_account": None,
                 "subject": item_desc,
                 "description": item_desc,
-                "catatan": (str(raw or "").strip() + " | ditalangin/tanpa update saldo rekening").strip(" |"),
+                "catatan": " | ".join([p for p in catatan_parts if p]).strip(" |"),
                 "tipe_pengeluaran": "",
                 "date": transaction_date,
                 "hutang_id": hutang_id,
@@ -1996,11 +2083,26 @@ def build_debt_only_confirm_preview(debt_parsed: dict) -> str:
     if intent == "add_payable":
         if is_ditalangin_expense_without_balance(debt_parsed):
             title = "🟠 *Ditalangin / Pengeluaran Ditanggung Dulu*"
-            debt_effect = f"Anda punya utang ke {md_safe(person)}."
-            transaction_effect = (
-                "Dicatat sebagai *pengeluaran* di sheet transactions agar masuk /harian, /mingguan, /bulanan, dan /budget.\n"
-                "Saldo rekening *tidak berubah* karena uang belum keluar dari rekening Anda."
-            )
+            if debt_parsed.get("fronted_split_bill"):
+                split_people = debt_parsed.get("fronted_split_people") or []
+                people_text = ", ".join(str(x) for x in split_people if str(x).strip()) or "-"
+                debt_effect = (
+                    f"Anda punya utang ke {md_safe(person)} sebesar *gross yang ditalangi*: "
+                    f"{format_rupiah(debt_parsed.get('fronted_gross_amount', amount))}.\n"
+                    f"Bagian Anda dalam PTPT: {format_rupiah(debt_parsed.get('fronted_user_share', 0))}."
+                )
+                transaction_effect = (
+                    "Dicatat sebagai *pengeluaran gross* di sheet transactions agar PTPT bulanan tetap penuh.\n"
+                    f"Piutang share dibuat ke: {md_safe(people_text)} dengan total "
+                    f"{format_rupiah(debt_parsed.get('fronted_total_receivable', 0))}.\n"
+                    "Saldo rekening *tidak berubah* karena uang belum keluar dari rekening Anda."
+                )
+            else:
+                debt_effect = f"Anda punya utang ke {md_safe(person)}."
+                transaction_effect = (
+                    "Dicatat sebagai *pengeluaran* di sheet transactions agar masuk /harian, /mingguan, /bulanan, dan /budget.\n"
+                    "Saldo rekening *tidak berubah* karena uang belum keluar dari rekening Anda."
+                )
         else:
             title = "🟠 *Utang Tanpa Cashflow*"
             debt_effect = f"Anda punya utang ke {md_safe(person)}."

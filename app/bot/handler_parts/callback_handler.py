@@ -57,6 +57,120 @@ def mark_debt_as_historical(debt_parsed: dict) -> dict:
     return debt_parsed
 
 
+def _split_debt_id_text(value) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        raw_items = value
+    else:
+        raw_items = str(value).split(",")
+    seen = set()
+    result = []
+    for item in raw_items:
+        debt_id = str(item or "").strip()
+        if debt_id and debt_id not in seen:
+            result.append(debt_id)
+            seen.add(debt_id)
+    return result
+
+
+def _merge_debt_ids(*values) -> str:
+    merged = []
+    seen = set()
+    for value in values:
+        for debt_id in _split_debt_id_text(value):
+            if debt_id not in seen:
+                merged.append(debt_id)
+                seen.add(debt_id)
+    return ", ".join(merged)
+
+
+def create_fronted_split_receivable_debts(debt_parsed: dict) -> dict:
+    """
+    Untuk kasus PTPT: user ditalangin full oleh seseorang, tetapi itemnya
+    dibagi lagi. Main debt tetap payable full ke penalang; helper ini membuat
+    receivable share ke daftar teman yang disebut pada split bill.
+    """
+    if not debt_parsed or debt_parsed.get("intent") != "add_payable":
+        return {"created": [], "failed": []}
+
+    split_bill = debt_parsed.get("fronted_split_bill") or {}
+    if not split_bill:
+        return {"created": [], "failed": []}
+
+    person_shares = split_bill.get("person_shares") or debt_parsed.get("fronted_person_shares") or {}
+    if not person_shares:
+        return {"created": [], "failed": []}
+
+    payer = str(debt_parsed.get("person_name") or "").strip()
+    item_desc = str(debt_parsed.get("expense_description") or debt_parsed.get("description") or "Ditalangin").strip()
+    description = f"Split bill ditalangin {payer}: {item_desc}" if payer else f"Split bill ditalangin: {item_desc}"
+
+    created = []
+    failed = []
+    for person, share in person_shares.items():
+        person_name = str(person or "").strip()
+        try:
+            amount = float(share or 0)
+        except Exception:
+            amount = 0.0
+        if not person_name or amount <= 0:
+            continue
+
+        result = add_debt(
+            "receivable",
+            person_name,
+            amount,
+            description,
+            cashflow_mode="debt_only",
+            fronting_mode="ditalangin_split_share",
+        )
+        if result and result.get("success"):
+            created.append({
+                "person_name": result.get("person_name", person_name),
+                "amount": amount,
+                "debt_id": result.get("debt_id"),
+            })
+        else:
+            failed.append({
+                "person_name": person_name,
+                "amount": amount,
+                "message": result.get("message") if result else "Unknown error",
+            })
+
+    return {"created": created, "failed": failed}
+
+
+def attach_fronted_split_debt_relations(debt_parsed: dict, debt_result: dict, split_result: dict) -> dict:
+    primary_id = debt_result.get("debt_id") if debt_result else ""
+    receivable_ids = [x.get("debt_id") for x in (split_result or {}).get("created", []) if x.get("debt_id")]
+    debt_parsed["hutang_id"] = _merge_debt_ids(debt_parsed.get("hutang_id"), primary_id, receivable_ids)
+    if receivable_ids and primary_id:
+        debt_parsed["tipe_hutang"] = "utang,piutang"
+    elif primary_id and (debt_result or {}).get("type") == "payable":
+        debt_parsed["tipe_hutang"] = "utang"
+    elif primary_id and (debt_result or {}).get("type") == "receivable":
+        debt_parsed["tipe_hutang"] = "piutang"
+    return debt_parsed
+
+
+def append_fronted_split_result_lines(lines: list[str], split_result: dict, *, indent: str = "") -> None:
+    created = (split_result or {}).get("created", [])
+    failed = (split_result or {}).get("failed", [])
+    if created:
+        total = sum(float(x.get("amount", 0) or 0) for x in created)
+        detail = ", ".join(
+            f"{x.get('person_name')}: {format_rupiah(x.get('amount', 0))}"
+            for x in created
+        )
+        lines.append(f"{indent}🤝 Piutang PTPT dibuat: *{format_rupiah(total)}* ({md_safe(detail)})")
+    for item in failed:
+        lines.append(
+            f"{indent}⚠️ Piutang PTPT gagal untuk {md_safe(item.get('person_name'))}: "
+            f"{md_safe(item.get('message'))}"
+        )
+
+
 
 def build_edit_txn_preview_text_for_callback(preview: dict, split_parsed: dict | None = None) -> str:
     """Preview edit transaksi untuk flow split bill di callback_handler."""
@@ -368,8 +482,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 and parse_sheet_number(d.get("remaining_amount", 0)) > 0
                 for d in debts
             )
-            # Kalau ada dua arah debt, jangan target 1 debt langsung. Biarkan
-            # add_payment_by_person melakukan auto-netting dulu.
+            # Kalau ada dua arah debt, jangan target 1 debt langsung.
+            # Payment tetap dialokasikan global per orang sesuai arah input;
+            # settlement/offset lawan arah harus eksplisit dari user.
             debt_parsed["target_debt_id"] = target_debts[0].get("id") if len(target_debts) == 1 and not has_opposite_debt else ""
             debt_parsed["debt_type_for_payment"] = debt_type_for_payment
             debt_parsed["target_debt_type"] = debt_type_for_payment
@@ -1180,6 +1295,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for account, balance in new_balances.items():
                     lines.append(f"• {account}: *{format_rupiah(balance)}*")
 
+            if result.get("linked_debts_voided"):
+                lines.append("\n🔗 *Debt terkait ikut di-void karena transaksi sumber dihapus:*")
+                for debt_id in result.get("linked_debts_voided") or []:
+                    lines.append(f"• `{md_code_text(debt_id)}`")
+
             if result.get("blocked"):
                 lines.append("\n🚫 *Diblok karena debt cashflow:*")
                 for txn in result["blocked"]:
@@ -1374,9 +1494,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data.pop("pending_debt", None)
                 return
 
-            if debt_result.get("debt_id"):
+            fronted_split_result = create_fronted_split_receivable_debts(debt_parsed)
+            attach_fronted_split_debt_relations(debt_parsed, debt_result, fronted_split_result)
+
+            if not debt_parsed.get("hutang_id") and debt_result.get("debt_id"):
                 debt_parsed["hutang_id"] = debt_result.get("debt_id")
-            if debt_result.get("type"):
+            if not debt_parsed.get("tipe_hutang") and debt_result.get("type"):
                 if debt_result.get("type") == "offset":
                     debt_parsed["tipe_hutang"] = "offset"
                 else:
@@ -1407,6 +1530,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     direction = "🔴 Utang Anda" if debt_result.get("type") == "payable" else "🟢 Piutang Anda"
                     lines.append(f"{direction} dengan *{debt_result.get('person_name', person)}*")
                     lines.append(f"💰 Saldo: *{format_rupiah(debt_result.get('remaining', 0))}*")
+                append_fronted_split_result_lines(lines, fronted_split_result)
 
             elif intent == "add_payment":
                 if debt_result.get("is_settled"):
@@ -1517,9 +1641,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     })
                     continue
 
-                if debt_result.get("debt_id"):
+                fronted_split_result = create_fronted_split_receivable_debts(parsed)
+                attach_fronted_split_debt_relations(parsed, debt_result, fronted_split_result)
+
+                if not parsed.get("hutang_id") and debt_result.get("debt_id"):
                     parsed["hutang_id"] = debt_result.get("debt_id")
-                if debt_result.get("type"):
+                if not parsed.get("tipe_hutang") and debt_result.get("type"):
                     if debt_result.get("type") == "offset":
                         parsed["tipe_hutang"] = "offset"
                     else:
@@ -1527,6 +1654,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 debt_success_count += 1
                 result_lines.append(f"{i}. ✅ Debt *{person}* diproses")
+                append_fronted_split_result_lines(result_lines, fronted_split_result, indent="   ")
 
                 debt_txn = build_debt_cashflow_transaction(
                     parsed,
@@ -1673,9 +1801,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     })
                     continue
 
-                if debt_result.get("debt_id"):
+                fronted_split_result = create_fronted_split_receivable_debts(parsed)
+                attach_fronted_split_debt_relations(parsed, debt_result, fronted_split_result)
+
+                if not parsed.get("hutang_id") and debt_result.get("debt_id"):
                     parsed["hutang_id"] = debt_result.get("debt_id")
-                if debt_result.get("type"):
+                if not parsed.get("tipe_hutang") and debt_result.get("type"):
                     if debt_result.get("type") == "offset":
                         parsed["tipe_hutang"] = "offset"
                     else:
@@ -1696,6 +1827,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             f"{i}. {direction} dengan *{debt_result['person_name']}*\n"
                             f"   💰 Saldo: *{format_rupiah(debt_result['remaining'])}*"
                         )
+                    append_fronted_split_result_lines(result_lines, fronted_split_result, indent="   ")
 
                     debt_txn = build_debt_cashflow_transaction(
                         parsed,

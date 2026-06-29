@@ -612,32 +612,23 @@ def add_payment_by_person(
             return {
                 "success": False,
                 "message": (
-                    f"Saldo utang dan piutang dengan {person_name} sama besar. "
-                    "Jalankan /hutang nama untuk auto-netting, atau pakai input spesifik."
+                    f"Ada utang dan piutang aktif dengan {person_name}. "
+                    "Pakai input yang lebih spesifik: `Sapto bayar hutang 50k` untuk piutang, "
+                    "atau `bayar hutang Sapto 50k` untuk utang Anda. "
+                    "Kalau ingin saling menghapuskan, gunakan offset/settle manual."
                 ),
                 "remaining": total_payable_before + total_receivable_before,
                 "is_settled": False,
                 "allocations": [],
             }
 
-    # Netting dulu sebelum pembayaran cashflow. Ini tidak mengubah rekening dan
-    # tidak menghapus transaksi sumber. Berbeda total dari /debt_void.
+    # Jangan auto-netting. Payment/settlement harus eksplisit dari user.
+    # Kalau seseorang punya dua arah debt sekaligus, pembayaran tetap dialokasikan
+    # ke arah yang dimaksud oleh input. Untuk kompensasi silang, gunakan flow
+    # offset/settle manual, bukan otomatis saat input pembayaran atau /hutang.
     netting_result = None
-    if total_payable_before > 0 and total_receivable_before > 0:
-        netting_result = settle_opposite_debts_by_person(
-            person_name,
-            note=note or "Auto-netting sebelum pembayaran debt",
-        )
-        if not netting_result.get("success"):
-            return {
-                "success": False,
-                "message": "Gagal auto-netting sebelum pembayaran: " + netting_result.get("message", ""),
-                "remaining": total_payable_before + total_receivable_before,
-                "is_settled": False,
-                "allocations": [],
-            }
 
-    debts = get_debt_by_person(person_name)
+    debts = debts_before
     target_debts = [
         d for d in debts
         if str(d.get("type", "")).strip() == target_debt_type
@@ -1057,27 +1048,10 @@ def get_debt_person_summary() -> dict:
     tetapi tampilan utama /hutang menggabungkan semua baris per person_name dan
     menampilkan net per orang.
     """
-    # Bersihkan dulu debt yang saling menutup antar arah untuk orang yang sama.
-    # Ini membuat /hutang utama konsisten dengan /hutang <nama>: tidak ada lagi
-    # status "netral tapi masih aktif" hanya karena payable dan receivable sama besar.
-    initial_rows = [d for d in get_debts_with_row_index(active_only=True) if not is_voided_debt(d)]
-    totals_by_person: dict[str, dict] = {}
-    for debt in initial_rows:
-        person = normalize_debt_person_group_name(debt.get("person_name", ""))
-        debt_type = str(debt.get("type", "")).strip()
-        remaining = parse_sheet_number(debt.get("remaining_amount", 0))
-        if not person or debt_type not in {"payable", "receivable"} or remaining <= 0:
-            continue
-        item = totals_by_person.setdefault(person, {"payable": 0.0, "receivable": 0.0})
-        item[debt_type] += remaining
-
-    did_auto_settle = False
-    for person, totals in totals_by_person.items():
-        if totals.get("payable", 0) > 0 and totals.get("receivable", 0) > 0:
-            result = settle_opposite_debts_by_person(person, note="Auto-netting saat /hutang")
-            did_auto_settle = did_auto_settle or (result.get("success") and float(result.get("offset_amount", 0) or 0) > 0)
-
-    source_rows = get_debts_with_row_index(active_only=True) if did_auto_settle else initial_rows
+    # Jangan auto-settle saat /hutang. Hutang dan piutang berlawanan arah tetap
+    # ditampilkan sebagai rincian aktif sampai user memilih settlement/offset
+    # secara eksplisit. Ringkasan boleh menampilkan net, tetapi tidak mengubah sheet.
+    source_rows = [d for d in get_debts_with_row_index(active_only=True) if not is_voided_debt(d)]
 
     groups: dict[str, dict] = {}
 
