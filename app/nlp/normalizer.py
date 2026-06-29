@@ -198,6 +198,14 @@ def apply_split_operation(text: str, base_amount: int) -> int:
     if re.search(rf"\b{friend_marker}\s+[a-zA-ZÀ-ÿ\s]{{1,60}}\s+{split_word}\s*(?:jadi\s*)?\d+\b", text_lower):
         return base_amount
 
+    # Shorthand split bill: "46k/4 sama sapto alpat opik".
+    # Ini harus dibaca sebagai gross 46k yang dibagi 4, bukan nominal 11.5k.
+    # Kalau tidak ada nama/marker teman, "46k/4" tetap boleh dianggap hasil bagi.
+    if re.search(rf"/\s*\d+\s+(?:orang\s+)?{friend_marker}\b", text_lower):
+        return base_amount
+    if re.search(r"/\s*\d+\s+[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s,;&]{1,80}", text_lower):
+        return base_amount
+
     # Pola: "dibagi N", "di bagi N", "di-bagi N", "bagi N", "split N", "/ N"
     split_patterns = [
         rf"{split_word}\s*(?:jadi\s*)?(\d+)",

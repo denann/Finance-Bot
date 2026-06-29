@@ -300,6 +300,38 @@ def parse_debt_input(text: str) -> dict | None:
                 "skip_account": True,
             }
 
+    # ── Ditalangin orang dulu: "ditalangin Alpat beli minyak 46k ..." ──
+    # Rule ini harus berada sebelum "item oleh orang". Kalau tidak, input seperti
+    # "ditalangin Alpat beli minyak 46k dibagi 4 sama Alpat Opik Sapto" bisa salah
+    # dibaca sebagai item="Alpat beli minyak ..." dan person="Alpat Opik Sapto".
+    ditalangin_person_first_match = re.search(
+        r"\b(?:saya|aku|gw|gue)?\s*"
+        r"(?:nitip|ditalangin|ditalangi|dibayarin|duluin)\s+"
+        r"(?:sama|ke)?\s*(?:si\s+)?"
+        r"(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)"
+        r"(?=\s+(?:beli|beliin|belikan|bayar|buat|untuk)\b)",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if ditalangin_person_first_match:
+        person = re.sub(
+            r"\s+",
+            " ",
+            ditalangin_person_first_match.group("person"),
+        ).strip().title()
+        if person and person.lower() not in {"saya", "aku", "gw", "gue"}:
+            item_desc = clean_fronting_description(person, "ditalangin")
+            return {
+                "intent": "add_payable",
+                "person_name": person,
+                "amount": amount,
+                "description": f"Ditalangin {person}: {item_desc}",
+                "date": detect_date(text),
+                "raw_input": text,
+                "cashflow_mode": "debt_only",
+                "fronting_mode": "ditalangin",
+            }
+
     # ── Ditalangin item oleh orang: "ditalangin nasi uduk sama Alpat 10k" ──
     # Artinya orang tersebut membayar dulu untuk user. Ini debt-only, bukan cashflow.
     ditalangin_item_by_person_match = re.search(

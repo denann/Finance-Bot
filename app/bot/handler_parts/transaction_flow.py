@@ -1306,12 +1306,16 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     if not parsed or parsed.get("type") != "expense":
         return None
 
-    original_total = extract_split_bill_total_amount(raw)
+    normalized_raw = normalize_slash_split_syntax(str(raw or ""))
+    original_total = extract_split_bill_total_amount(normalized_raw)
     amount = float(original_total or parsed.get("amount", 0) or 0)
     if amount <= 0:
         return None
 
-    text = str(raw or "")
+    # Normalisasi shorthand "46k/4 sama Sapto" agar dianggap sama dengan
+    # "46k dibagi 4 sama Sapto". Tanpa ini parser bisa membaca amount sebagai
+    # 11.5k dan split bill tidak terdeteksi.
+    text = normalize_slash_split_syntax(str(raw or ""))
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
     name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s,;&:%./]{0,140}"
@@ -1751,24 +1755,33 @@ def append_saved_summary_lines(lines: list[str], items: list[dict], title: str =
         lines.append(f"🔄 Transfer  : *{format_rupiah(summary['transfer'])}*")
     lines.append(f"📌 Net       : *{format_rupiah(summary['net'])}*")
 
+def _clean_fronting_item_text(text: str, person: str = "") -> str:
+    """Bersihkan nama item ditalangin dari nominal, nama penalang, dan frasa split."""
+    item = str(text or "").strip()
+    if person:
+        item = re.sub(rf"\b(?:sama|oleh|ke|dari)?\s*(?:si\s+)?{re.escape(person)}\b", " ", item, flags=re.IGNORECASE)
+    item = re.sub(r"\b(?:tanggal|tgl|kemarin|hari\s+ini|besok|bulan\s+depan|minggu\s+depan)\b.*$", " ", item, flags=re.IGNORECASE)
+    item = re.sub(r"\b(?:rp|idr)?\s*\d+[\d.,]*\s*(?:rb|ribu|k|jt|juta)?(?:\s*/\s*\d+)?\b", " ", item, flags=re.IGNORECASE)
+    item = strip_split_bill_phrase(item)
+    item = re.sub(r"\s+", " ", item).strip(" .,-:")
+    return item.title() if item else ""
+
+
 def _fronting_expense_description(debt_parsed: dict) -> str:
     """Ambil nama item untuk ditalangin agar report tidak tampil sebagai label debt."""
     description = str(debt_parsed.get("description") or "").strip()
+    person = str(debt_parsed.get("person_name") or "").strip()
+
     if ":" in description:
-        item = description.split(":", 1)[1].strip()
+        item = _clean_fronting_item_text(description.split(":", 1)[1].strip(), person)
         if item:
             return item
 
     raw = str(debt_parsed.get("raw_input") or "").strip()
-    person = str(debt_parsed.get("person_name") or "").strip()
 
     item = re.sub(r"\b(?:saya|aku|gw|gue)?\s*(?:nitip|ditalangin|ditalangi|dibayarin|duluin)\b", " ", raw, flags=re.IGNORECASE)
-    if person:
-        item = re.sub(rf"\b(?:sama|oleh|ke|dari)?\s*(?:si\s+)?{re.escape(person)}\b", " ", item, flags=re.IGNORECASE)
-    item = re.sub(r"\b(?:tanggal|tgl|kemarin|hari\s+ini|besok|bulan\s+depan|minggu\s+depan)\b.*$", " ", item, flags=re.IGNORECASE)
-    item = re.sub(r"\b(?:rp|idr)?\s*\d+[\d.,]*\s*(?:rb|ribu|k|jt|juta)?\b", " ", item, flags=re.IGNORECASE)
-    item = re.sub(r"\s+", " ", item).strip(" .,-:")
-    return item.title() if item else (description or "Ditalangin")
+    item = _clean_fronting_item_text(item, person)
+    return item if item else (description or "Ditalangin")
 
 
 def _fronting_expense_category(debt_parsed: dict) -> str:
