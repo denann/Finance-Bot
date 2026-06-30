@@ -13,6 +13,7 @@ from app.config import (
     SHEET_TRANSACTIONS,
 )
 from app.sheets.client import get_all_records
+from app.services.report_service import enrich_transactions_with_debt_info
 
 DEBT_CASHFLOW_CATEGORIES = {
     "Piutang Diberikan",
@@ -34,15 +35,20 @@ FINANCE_QUESTION_KEYWORDS = [
 
 AVAILABLE_COMMANDS_FOR_AI = [
     "/saldo",
+    "/rekening",
     "/harian",
     "/mingguan",
     "/bulanan",
     "/cari",
     "/last",
     "/transaksi",
+    "/edit_txn",
+    "/delete_txn",
     "/budget",
     "/pending",
     "/hutang",
+    "/debt_edit",
+    "/debt_void",
     "/insight",
     "/ask",
     "/audit",
@@ -214,9 +220,42 @@ def get_month_transactions(month: str) -> list[dict]:
     return filter_records_by_period(records, date_from, date_to)
 
 
+def enrich_finance_transactions(records: list[dict]) -> list[dict]:
+    """Attach debt metadata so AI finance sees expense as Net, not Gross.
+
+    Split bill/piutang membuat cash keluar secara gross, tetapi beban pribadi user
+    adalah gross dikurangi piutang yang dibuat dari transaksi itu. Konteks AI
+    sengaja memakai net supaya audit, anomali, budget, dan coach tidak
+    membesar-besarkan pengeluaran user.
+    """
+    records = records or []
+    if any(
+        str((r or {}).get("type", "")).strip().lower() == "expense"
+        and "net_expense_after_receivable" in (r or {})
+        for r in records
+    ):
+        return records
+    return enrich_transactions_with_debt_info(records)
+
+
+def get_effective_expense_amount(record: dict) -> float:
+    """Nominal expense untuk analisis AI = net setelah piutang split bill."""
+    amount = safe_float((record or {}).get("amount"))
+    if str((record or {}).get("type", "")).strip().lower() != "expense":
+        return amount
+
+    if "net_expense_after_receivable" in (record or {}):
+        return max(safe_float((record or {}).get("net_expense_after_receivable")), 0.0)
+
+    receivable = safe_float(
+        (record or {}).get("debt_receivable_original", (record or {}).get("debt_receivable_remaining", 0))
+    )
+    return max(amount - receivable, 0.0)
+
+
 def summarize_transactions(records: list[dict]) -> dict:
     total_income = 0.0
-    total_expense = 0.0
+    total_expense = 0.0  # Net expense setelah piutang split bill.
     total_transfer = 0.0
     expense_by_category = defaultdict(float)
     income_by_category = defaultdict(float)
@@ -225,9 +264,12 @@ def summarize_transactions(records: list[dict]) -> dict:
     cash_out_by_account = defaultdict(float)
     cash_in_by_account = defaultdict(float)
 
+    records = enrich_finance_transactions(records)
+
     for r in records:
         txn_type = str(r.get("type", "")).strip().lower()
         amount = safe_float(r.get("amount"))
+        effective_amount = get_effective_expense_amount(r)
         category = str(r.get("category") or "Uncategorized").strip() or "Uncategorized"
         account = str(r.get("account") or "-").strip() or "-"
         to_account = str(r.get("to_account") or "").strip()
@@ -238,10 +280,12 @@ def summarize_transactions(records: list[dict]) -> dict:
             income_by_account[account] += amount
             cash_in_by_account[account] += amount
         elif txn_type == "expense":
-            total_expense += amount
-            expense_by_category[category] += amount
-            expense_by_account[account] += amount
-            cash_out_by_account[account] += amount
+            # Untuk AI finance, expense selalu memakai beban bersih pribadi,
+            # bukan cashflow gross yang sudah ditagihkan sebagai piutang.
+            total_expense += effective_amount
+            expense_by_category[category] += effective_amount
+            expense_by_account[account] += effective_amount
+            cash_out_by_account[account] += effective_amount
         elif txn_type == "transfer":
             total_transfer += amount
             cash_out_by_account[account] += amount
@@ -252,10 +296,12 @@ def summarize_transactions(records: list[dict]) -> dict:
         return [
             {"name": k, "amount": v}
             for k, v in sorted(d.items(), key=lambda x: x[1], reverse=True)
+            if abs(v) > 0.0001
         ]
 
     return {
         "count": len(records),
+        "amount_basis": "expense_amount_is_net_after_receivable",
         "total_income": total_income,
         "total_expense": total_expense,
         "total_transfer": total_transfer,
@@ -281,10 +327,11 @@ def add_contribution(items: list[dict], total: float, limit: int = 8) -> list[di
 
 
 def compact_transaction(r: dict) -> dict:
-    return {
+    amount = get_effective_expense_amount(r)
+    item = {
         "date": r.get("date", ""),
         "type": r.get("type", ""),
-        "amount": safe_float(r.get("amount")),
+        "amount": amount,
         "category": r.get("category", ""),
         "account": r.get("account", ""),
         "to_account": r.get("to_account", ""),
@@ -293,18 +340,25 @@ def compact_transaction(r: dict) -> dict:
         "catatan": r.get("catatan", ""),
         "id": r.get("id", ""),
     }
+    if str(r.get("type", "")).strip().lower() == "expense":
+        item["amount_basis"] = "net_after_receivable"
+    return item
 
 
 def get_top_transactions(records: list[dict], txn_type: str | None = "expense", limit: int = 8) -> list[dict]:
+    records = enrich_finance_transactions(records)
     candidates = []
     for r in records:
         if txn_type and str(r.get("type", "")).strip().lower() != txn_type:
             continue
-        amount = safe_float(r.get("amount"))
+        amount = get_effective_expense_amount(r) if str(r.get("type", "")).strip().lower() == "expense" else safe_float(r.get("amount"))
         if amount <= 0:
             continue
         candidates.append(r)
-    candidates.sort(key=lambda x: safe_float(x.get("amount")), reverse=True)
+    candidates.sort(
+        key=lambda x: get_effective_expense_amount(x) if str(x.get("type", "")).strip().lower() == "expense" else safe_float(x.get("amount")),
+        reverse=True,
+    )
     return [compact_transaction(r) for r in candidates[:limit]]
 
 
@@ -317,11 +371,11 @@ def get_budget_status(month: str, transactions: list[dict]) -> list[dict]:
         return []
 
     expense_by_category = defaultdict(float)
-    for r in transactions:
+    for r in enrich_finance_transactions(transactions):
         if str(r.get("type", "")).strip().lower() != "expense":
             continue
         category = str(r.get("category") or "Uncategorized").strip()
-        expense_by_category[category.lower()] += safe_float(r.get("amount"))
+        expense_by_category[category.lower()] += get_effective_expense_amount(r)
 
     result = []
     for b in budgets:
@@ -423,8 +477,9 @@ def get_net_worth_compact() -> dict:
 
 
 def detect_anomalies(records: list[dict], month_summary: dict | None = None) -> list[dict]:
+    records = enrich_finance_transactions(records)
     expenses = [r for r in records if str(r.get("type", "")).strip().lower() == "expense"]
-    amounts = [safe_float(r.get("amount")) for r in expenses if safe_float(r.get("amount")) > 0]
+    amounts = [get_effective_expense_amount(r) for r in expenses if get_effective_expense_amount(r) > 0]
     anomalies = []
 
     if amounts:
@@ -432,14 +487,15 @@ def detect_anomalies(records: list[dict], month_summary: dict | None = None) -> 
         avg = mean(amounts)
         threshold = max(200_000, med * 3, avg * 2)
         for r in expenses:
-            amount = safe_float(r.get("amount"))
+            amount = get_effective_expense_amount(r)
             if amount >= threshold:
                 anomalies.append({
                     "type": "large_expense",
                     "severity": "warning",
-                    "message": "Nominal pengeluaran jauh lebih besar dari transaksi biasa.",
+                    "message": "Nominal pengeluaran net jauh lebih besar dari transaksi biasa.",
                     "transaction": compact_transaction(r),
                     "threshold": threshold,
+                    "amount_basis": "net_after_receivable",
                 })
 
     # Potential duplicates: same date + amount + normalized description.
@@ -448,7 +504,7 @@ def detect_anomalies(records: list[dict], month_summary: dict | None = None) -> 
         key = (
             str(r.get("date", "")),
             str(r.get("type", "")),
-            int(safe_float(r.get("amount"))),
+            int(get_effective_expense_amount(r) if str(r.get("type", "")).strip().lower() == "expense" else safe_float(r.get("amount"))),
             normalize_text(str(r.get("description", "")))[:40],
         )
         if key[2] > 0 and key[3]:
@@ -607,6 +663,7 @@ def extract_keywords(question: str) -> list[str]:
 def search_relevant_transactions(question: str, date_from: str | None = None, date_to: str | None = None, limit: int = 12) -> list[dict]:
     records = get_all_records(SHEET_TRANSACTIONS)
     records = filter_records_by_period(records, date_from, date_to) if (date_from or date_to) else records
+    records = enrich_finance_transactions(records)
     keywords = extract_keywords(question)
     if not keywords:
         return []
@@ -621,7 +678,8 @@ def search_relevant_transactions(question: str, date_from: str | None = None, da
             if kw and kw in haystack:
                 score += 2 if len(kw) > 4 else 1
         if score:
-            scored.append((score, str(r.get("date", "")), safe_float(r.get("amount")), r))
+            scored_amount = get_effective_expense_amount(r) if str(r.get("type", "")).strip().lower() == "expense" else safe_float(r.get("amount"))
+            scored.append((score, str(r.get("date", "")), scored_amount, r))
 
     scored.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
     return [compact_transaction(r) for _, _, _, r in scored[:limit]]
@@ -701,9 +759,23 @@ def should_handle_finance_question(text: str) -> bool:
     raw = str(text or "").strip().lower()
     if not raw:
         return False
-    # Jangan ganggu input transaksi/aset yang punya nominal,
-    # kecuali kalimatnya jelas berupa pertanyaan coach/budget/target.
+    # Jangan ganggu input transaksi/debt yang punya nominal.
+    # Bug yang dicegah: "ditalangin X bayar tabungan Y 100k" mengandung kata
+    # "tabungan", tapi itu tetap input debt, bukan pertanyaan RAG/coach.
     has_amount = bool(re.search(r"\b\d+(?:[.,]\d+)?\s*(rb|ribu|k|jt|juta)?\b", raw))
+    transaction_or_debt_markers = [
+        "ditalangin", "ditalangi", "dibayarin", "duluin", "nitip",
+        "talangin", "talangi", "nalangin", "ngetalangin",
+        "minjem", "pinjem", "pinjam", "hutang", "utang", "piutang",
+        "beli", "bayar", "byr", "jajan", "makan", "minum",
+        "transfer", "topup", "top up", "isi", "ngisi",
+        "gaji", "dapat", "dapet", "terima", "masuk", "keluar",
+    ]
+    if has_amount and any(k in raw for k in transaction_or_debt_markers):
+        return False
+
+    # Kalau ada nominal tapi bukan transaksi/debt, finance question tetap boleh
+    # hanya jika kalimatnya jelas minta saran/target/budget.
     if has_amount and not any(k in raw for k in ["nabung", "tabung", "target", "budget", "saran", "coach", "hemat"]):
         return False
     # Jangan ganggu command-like single token pendek.

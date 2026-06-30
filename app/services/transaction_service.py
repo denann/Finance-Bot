@@ -11,11 +11,9 @@ from app.sheets.client import (
     delete_rows,
     find_row_index,
     get_all_records,
-    get_all_values,
+    get_sheet,
     update_cell,
     update_row,
-    update_range,
-    rollback_current_sheets_transaction,
 )
 
 EXPORT_TRANSACTION_COLUMNS = [
@@ -638,34 +636,40 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
         }
 
     new_balance = None
+    new_balance_account = None
 
     try:
         balance_result = apply_account_deltas(deltas)
 
-        account = parsed.get("to_account") or parsed.get("account")
-        if account:
+        if parsed.get("type") == "transfer":
+            new_balance_account = parsed.get("to_account") or parsed.get("account")
+        else:
+            new_balance_account = parsed.get("account") or parsed.get("to_account")
+
+        if new_balance_account:
             for name, balance in balance_result.get("new_balances", {}).items():
-                if str(name).lower() == str(account).lower():
+                if str(name).lower() == str(new_balance_account).lower():
                     new_balance = balance
+                    new_balance_account = name
                     break
 
         if balance_result.get("failed_accounts"):
-            rollback_current_sheets_transaction()
             return {
-                "success": False,
-                "transaction_id": None,
+                "success": True,
+                "transaction_id": txn_id,
                 "message": (
-                    "Transaksi gagal disimpan penuh karena saldo rekening berikut gagal diupdate: "
+                    "⚠️ Transaksi tersimpan, tapi saldo rekening berikut gagal diupdate: "
                     + ", ".join(balance_result["failed_accounts"])
                 ),
-                "new_balance": None,
+                "new_balance": new_balance,
+                "new_balance_account": new_balance_account,
             }
 
     except Exception as e:
         return {
-            "success": False,
-            "transaction_id": None,
-            "message": f"Transaksi gagal disimpan penuh dan perubahan sebelumnya sudah dibatalkan: {str(e)}",
+            "success": True,
+            "transaction_id": txn_id,
+            "message": f"⚠️ Transaksi tersimpan, tapi saldo gagal diupdate: {str(e)}",
             "new_balance": None,
         }
 
@@ -674,6 +678,7 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
         "transaction_id": txn_id,
         "message": "ok",
         "new_balance": new_balance,
+        "new_balance_account": new_balance_account,
     }
 
 
@@ -774,7 +779,6 @@ def save_transactions_batch(parsed_items: list[dict]) -> dict:
         balance_result = apply_account_deltas(deltas)
 
         if balance_result.get("failed_accounts"):
-            rollback_current_sheets_transaction()
             failed_items.append({
                 "raw": "update saldo",
                 "message": (
@@ -794,16 +798,16 @@ def save_transactions_batch(parsed_items: list[dict]) -> dict:
 
     except Exception as e:
         return {
-            "success": False,
-            "message": f"Batch transaksi gagal disimpan penuh dan perubahan sebelumnya sudah dibatalkan: {str(e)}",
-            "success_count": 0,
+            "success": True,
+            "message": f"⚠️ Transaksi tersimpan, tapi saldo gagal diupdate: {str(e)}",
+            "success_count": len(valid_items),
             "failed_items": failed_items + [
                 {
                     "raw": "update saldo",
                     "message": str(e),
                 }
             ],
-            "saved_ids": [],
+            "saved_ids": saved_ids,
             "new_balances": {},
         }
 
@@ -865,7 +869,8 @@ def sort_transactions_sheet_by_date(desc: bool = True) -> dict:
     - Kalau sorting gagal, caller tidak boleh dianggap gagal simpan transaksi.
     """
     try:
-        values = get_all_values(SHEET_TRANSACTIONS)
+        sheet = get_sheet(SHEET_TRANSACTIONS)
+        values = sheet.get_all_values()
 
         if len(values) <= 2:
             return {"success": True, "message": "Tidak cukup row untuk sort."}
@@ -888,7 +893,7 @@ def sort_transactions_sheet_by_date(desc: bool = True) -> dict:
 
         sorted_rows = [item[2] for item in normalized_rows]
         end_col = chr(ord("A") + col_count - 1)
-        update_range(SHEET_TRANSACTIONS, f"A2:{end_col}{len(sorted_rows) + 1}", sorted_rows)
+        sheet.update(f"A2:{end_col}{len(sorted_rows) + 1}", sorted_rows)
 
         return {"success": True, "message": "transactions sorted by date"}
 
@@ -1182,7 +1187,6 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
     try:
         balance_result = apply_account_deltas(reverse_deltas)
         if balance_result.get("failed_accounts"):
-            rollback_current_sheets_transaction()
             return {
                 "success": False,
                 "message": "Rekening tidak ditemukan: " + ", ".join(balance_result["failed_accounts"]),
@@ -1218,7 +1222,6 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
             if category in {"Pembayaran Piutang", "Bayar Utang"}:
                 reverse_result = reverse_debt_payment_transaction(txn)
                 if not reverse_result.get("success"):
-                    rollback_current_sheets_transaction()
                     return {
                         "success": False,
                         "message": reverse_result.get("message", "Gagal membalik pembayaran debt terkait transaksi."),
@@ -1236,7 +1239,6 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
 
             linked_result = void_debts_for_transaction(txn_id, linked_ids)
             if not linked_result.get("success"):
-                rollback_current_sheets_transaction()
                 return {
                     "success": False,
                     "message": linked_result.get("message", "Gagal void debt terkait transaksi."),
@@ -1248,10 +1250,9 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
                 }
             linked_debt_voided_ids.extend(linked_result.get("voided_ids", []))
     except Exception as e:
-        rollback_current_sheets_transaction()
         return {
             "success": False,
-            "message": f"Gagal sync debt terkait transaksi dan perubahan sudah dibatalkan: {str(e)}",
+            "message": f"Gagal sync debt terkait transaksi: {str(e)}",
             "deleted_count": 0,
             "deleted_ids": [],
             "blocked": blocked,
@@ -1269,12 +1270,11 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
         delete_rows(SHEET_TRANSACTIONS, row_indices)
 
     except Exception as e:
-        rollback_current_sheets_transaction()
         return {
             "success": False,
             "message": (
-                "Gagal menghapus row transaksi. Perubahan sebelumnya sudah dibatalkan. "
-                f"Error: {str(e)}"
+                "Saldo sudah sempat direverse, tapi row transaksi gagal dihapus. "
+                f"Cek manual di sheet. Error: {str(e)}"
             ),
             "deleted_count": 0,
             "deleted_ids": [],
@@ -1331,7 +1331,6 @@ def delete_transactions_by_refs(
     try:
         balance_result = apply_account_deltas(reverse_deltas)
         if balance_result.get("failed_accounts"):
-            rollback_current_sheets_transaction()
             return {
                 "success": False,
                 "message": "Rekening tidak ditemukan: " + ", ".join(balance_result["failed_accounts"]),
@@ -1367,7 +1366,6 @@ def delete_transactions_by_refs(
             if category in {"Pembayaran Piutang", "Bayar Utang"}:
                 reverse_result = reverse_debt_payment_transaction(txn)
                 if not reverse_result.get("success"):
-                    rollback_current_sheets_transaction()
                     return {
                         "success": False,
                         "message": reverse_result.get("message", "Gagal membalik pembayaran debt terkait transaksi."),
@@ -1386,7 +1384,6 @@ def delete_transactions_by_refs(
 
             linked_result = void_debts_for_transaction(txn_id, linked_ids)
             if not linked_result.get("success"):
-                rollback_current_sheets_transaction()
                 return {
                     "success": False,
                     "message": linked_result.get("message", "Gagal void debt terkait transaksi."),
@@ -1399,10 +1396,9 @@ def delete_transactions_by_refs(
                 }
             linked_debt_voided_ids.extend(linked_result.get("voided_ids", []))
     except Exception as e:
-        rollback_current_sheets_transaction()
         return {
             "success": False,
-            "message": f"Gagal sync debt terkait transaksi dan perubahan sudah dibatalkan: {str(e)}",
+            "message": f"Gagal sync debt terkait transaksi: {str(e)}",
             "deleted_count": 0,
             "deleted_ids": [],
             "blocked": blocked,
@@ -1421,12 +1417,11 @@ def delete_transactions_by_refs(
         delete_rows(SHEET_TRANSACTIONS, delete_row_indices)
 
     except Exception as e:
-        rollback_current_sheets_transaction()
         return {
             "success": False,
             "message": (
-                "Gagal menghapus row transaksi. Perubahan sebelumnya sudah dibatalkan. "
-                f"Error: {str(e)}"
+                "Saldo sudah sempat direverse, tapi row transaksi gagal dihapus. "
+                f"Cek manual di sheet. Error: {str(e)}"
             ),
             "deleted_count": 0,
             "deleted_ids": [],
@@ -1856,7 +1851,6 @@ def edit_debt_payment_transaction_amount(preview: dict) -> dict:
         from app.services.debt_service import reverse_debt_payment_transaction, add_payment_by_person
         reverse_result = reverse_debt_payment_transaction(old_txn)
         if not reverse_result.get("success"):
-            rollback_current_sheets_transaction()
             return {"success": False, "message": reverse_result.get("message", "Gagal reverse payment lama.")}
 
         payment_result = add_payment_by_person(
@@ -1867,20 +1861,16 @@ def edit_debt_payment_transaction_amount(preview: dict) -> dict:
             overpayment_policy="opposite_debt",
         )
         if not payment_result.get("success"):
-            rollback_current_sheets_transaction()
             return {"success": False, "message": payment_result.get("message", "Gagal alokasi payment baru.")}
     except Exception as e:
-        rollback_current_sheets_transaction()
-        return {"success": False, "message": f"Gagal sync debt payment dan perubahan sebelumnya sudah dibatalkan: {str(e)}"}
+        return {"success": False, "message": f"Gagal sync debt payment: {str(e)}"}
 
     try:
         balance_result = apply_account_deltas(net_deltas)
         if balance_result.get("failed_accounts"):
-            rollback_current_sheets_transaction()
             return {"success": False, "message": "Rekening tidak ditemukan: " + ", ".join(balance_result["failed_accounts"])}
     except Exception as e:
-        rollback_current_sheets_transaction()
-        return {"success": False, "message": f"Gagal update saldo dan perubahan sebelumnya sudah dibatalkan: {str(e)}"}
+        return {"success": False, "message": f"Gagal update saldo: {str(e)}"}
 
     try:
         target_row_index = int(old_txn.get("_row_index"))
@@ -1898,11 +1888,10 @@ def edit_debt_payment_transaction_amount(preview: dict) -> dict:
         update_row(SHEET_TRANSACTIONS, target_row_index, build_transaction_row_from_record(new_txn))
         sort_transactions_sheet_by_date(desc=True)
     except Exception as e:
-        rollback_current_sheets_transaction()
         return {
             "success": False,
-            "message": "Update row transaksi gagal. Perubahan saldo/debt sebelumnya sudah dibatalkan. Error: " + str(e),
-            "new_balances": {},
+            "message": "Saldo/debt sudah sempat berubah, tapi update row transaksi gagal. Cek manual. Error: " + str(e),
+            "new_balances": balance_result.get("new_balances", {}),
         }
 
     return {
@@ -1946,7 +1935,6 @@ def edit_transaction_by_ref(
     try:
         balance_result = apply_account_deltas(net_deltas)
         if balance_result.get("failed_accounts"):
-            rollback_current_sheets_transaction()
             return {
                 "success": False,
                 "message": "Rekening tidak ditemukan: " + ", ".join(balance_result["failed_accounts"]),
@@ -1976,12 +1964,11 @@ def edit_transaction_by_ref(
         sort_transactions_sheet_by_date(desc=True)
 
     except Exception as e:
-        rollback_current_sheets_transaction()
         return {
             "success": False,
             "message": (
-                "Gagal update row transaksi. Perubahan sebelumnya sudah dibatalkan. "
-                f"Error: {str(e)}"
+                "Saldo sudah sempat berubah, tapi update row transaksi gagal. "
+                f"Cek manual di sheet. Error: {str(e)}"
             ),
             "new_balances": balance_result.get("new_balances", {}),
         }
@@ -1993,7 +1980,6 @@ def edit_transaction_by_ref(
 
             debt_sync_result = sync_debt_charges_from_transaction_edit(old_txn, new_txn)
         except Exception as e:
-            rollback_current_sheets_transaction()
             debt_sync_result = {
                 "success": False,
                 "message": str(e),
@@ -2001,22 +1987,9 @@ def edit_transaction_by_ref(
                 "overpaid": [],
             }
 
-    if not debt_sync_result.get("success"):
-        rollback_current_sheets_transaction()
-        return {
-            "success": False,
-            "message": "Gagal sync debt setelah edit transaksi. Perubahan sebelumnya sudah dibatalkan: "
-                       + str(debt_sync_result.get("message") or "-"),
-            "old_txn": old_txn,
-            "new_txn": new_txn,
-            "net_deltas": net_deltas,
-            "new_balances": {},
-            "debt_sync": debt_sync_result,
-        }
-
     return {
         "success": True,
-        "message": "ok",
+        "message": "ok" if debt_sync_result.get("success") else "Transaksi diedit, tapi sync debt perlu dicek: " + str(debt_sync_result.get("message") or "-"),
         "old_txn": old_txn,
         "new_txn": new_txn,
         "net_deltas": net_deltas,
