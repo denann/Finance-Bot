@@ -146,12 +146,22 @@ Command utama:
 ```text
 /hutang
 /hutang Sapto
+/ringkasan_hutang Sapto
 /debt_void 1
 /debt_void Sapto 1
 /debt_edit 1 nominal 100k
 /debt_settle Sapto 1-17
 /debt_settle Sapto 1-17 amount=337063 account=DANA
 ```
+
+
+Shareable debt summary:
+
+- `/ringkasan_hutang Sapto` membuat rekap hutang-piutang yang siap dikirim ke teman.
+- Output tidak menampilkan debt ID, command internal, progress teknis, atau metadata sheet.
+- Rincian dipisah per tanggal dan per arah: `Sapto ke Denan` dan `Denan ke Sapto`.
+- Subtotal dan total akhir tetap ditampilkan agar teman bisa cek nominal final dengan cepat.
+- Deskripsi debt lama yang bocor seperti `Minyak Dibagi Opik Sapto` atau `Galon Sapto Opik` dibersihkan sebisa mungkin di output shareable.
 
 Selected debt settlement:
 

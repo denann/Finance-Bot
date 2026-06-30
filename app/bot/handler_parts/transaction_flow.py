@@ -1038,6 +1038,15 @@ def strip_split_bill_phrase(text: str) -> str:
         clean,
         flags=re.IGNORECASE,
     )
+    # Fallback setelah split valid: kalau parser sebelumnya sudah membuang angka
+    # pembagi, sisa deskripsi bisa tinggal "Minyak Dibagi" atau
+    # "Minyak Dibagi Opik Sapto". Semua frasa split harus dibuang dari item.
+    clean = re.sub(
+        rf"\b{split_word}\b.*$",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
     clean = re.sub(r"\s+", " ", clean).strip(" .,-")
     return clean or str(text or "").strip()
 
@@ -1763,6 +1772,11 @@ def _clean_fronting_item_text(text: str, person: str = "") -> str:
     item = re.sub(r"\b(?:tanggal|tgl|kemarin|hari\s+ini|besok|bulan\s+depan|minggu\s+depan)\b.*$", " ", item, flags=re.IGNORECASE)
     item = re.sub(r"\b(?:rp|idr)?\s*\d+[\d.,]*\s*(?:rb|ribu|k|jt|juta)?(?:\s*/\s*\d+)?\b", " ", item, flags=re.IGNORECASE)
     item = strip_split_bill_phrase(item)
+    # Fallback keras untuk ditalangin+PTPT: jangan simpan sisa "Dibagi"
+    # sebagai subject/description transaksi. Contoh yang harus jadi "Minyak":
+    # "Minyak Dibagi", "Minyak Dibagi Opik Sapto", "Minyak Dibagi Sama Opik Sapto".
+    item = re.sub(r"\b(?:di\s*-?\s*bagi|dibagi|bagi|split|share|patungan)\b.*$", " ", item, flags=re.IGNORECASE)
+    item = re.sub(r"^\s*(?:beli|bayar|byr|jajan|makan|minum)\b", " ", item, flags=re.IGNORECASE)
     item = re.sub(r"\s+", " ", item).strip(" .,-:")
     return item.title() if item else ""
 

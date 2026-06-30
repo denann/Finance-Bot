@@ -2445,6 +2445,216 @@ def build_selected_debt_settle_transaction(payload: dict, result: dict) -> dict:
         "parsed_by": "debt_settle",
     }
 
+
+# ── Shareable Debt Summary ───────────────────────────────────────────────────
+
+def _collect_known_debt_person_names() -> list[str]:
+    """Ambil daftar nama orang dari ringkasan debt untuk membersihkan item lama.
+
+    Ini membantu kasus data lama seperti "Galon Sapto Opik" atau
+    "Tissue Alpat Sapto" agar output shareable cukup menampilkan itemnya.
+    """
+    names = []
+    try:
+        summary = get_debt_person_summary() or {}
+        for key in ("payables", "receivables", "balanced"):
+            for item in summary.get(key) or []:
+                name = str(item.get("person_name") or "").strip()
+                if name and name not in names:
+                    names.append(name)
+    except Exception:
+        pass
+    return names
+
+
+def _strip_trailing_known_names_for_summary(text: str, known_names: list[str]) -> str:
+    clean = str(text or "").strip(" .,-")
+    if not clean or not known_names:
+        return clean
+
+    ordered = sorted(
+        [str(name or "").strip() for name in known_names if str(name or "").strip()],
+        key=len,
+        reverse=True,
+    )
+
+    changed = True
+    while changed and clean:
+        changed = False
+        new_clean = re.sub(r"\b(?:sama|ama|dengan|bareng|dan)\s*$", "", clean, flags=re.IGNORECASE).strip(" .,-")
+        if new_clean != clean:
+            clean = new_clean
+            changed = True
+
+        for name in ordered:
+            pattern = rf"(?:^|[\s,;&]+){re.escape(name)}\s*$"
+            new_clean = re.sub(pattern, "", clean, flags=re.IGNORECASE).strip(" .,-")
+            if new_clean != clean:
+                clean = new_clean
+                changed = True
+                break
+
+    return clean
+
+
+def _clean_debt_description_for_share(desc: str, person: str, known_names: list[str] | None = None) -> str:
+    """Bersihkan deskripsi debt agar layak dikirim ke teman.
+
+    Output shareable tidak perlu prefix teknis seperti "Split bill:" atau
+    "Ditalangin Sapto:" dan tidak perlu sisa daftar nama split bill.
+    """
+    raw = str(desc or "").strip()
+    if not raw:
+        return "-"
+
+    person_text = str(person or "").strip()
+    known_names = known_names or []
+
+    # Data lama kadang tersimpan: "Ditalangin Nasi Kuning: Ke Sapto".
+    # Untuk format ini, item ada sebelum titik dua.
+    if person_text:
+        m = re.match(rf"^\s*Ditalangin\s+(.+?)\s*:\s*(?:ke|kepada)\s+{re.escape(person_text)}\s*$", raw, flags=re.IGNORECASE)
+        if m:
+            raw = m.group(1).strip()
+        else:
+            m = re.match(rf"^\s*Ditalangin\s+{re.escape(person_text)}\s*:\s*(.+?)\s*$", raw, flags=re.IGNORECASE)
+            if m:
+                raw = m.group(1).strip()
+
+    # Prefix umum dari debt rows.
+    raw = re.sub(r"^\s*Split\s*bill(?:\s+ditalangin\s+[^:]+)?\s*:\s*", "", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"^\s*Ditalangin\s+[^:]+\s*:\s*", "", raw, flags=re.IGNORECASE)
+
+    # Buang sisa frasa split yang bocor ke subject/description.
+    raw = re.sub(r"\b(?:di\s*-?\s*bagi|dibagi|bagi|split|share|patungan)\b.*$", "", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"\b(?:ke|kepada)\s+" + re.escape(person_text) + r"\s*$", "", raw, flags=re.IGNORECASE) if person_text else raw
+    raw = _strip_trailing_known_names_for_summary(raw, known_names + ([person_text] if person_text else []))
+
+    raw = re.sub(r"\s+", " ", raw).strip(" .,-:")
+    return raw or str(desc or "-").strip() or "-"
+
+
+def _format_shareable_date_heading(date_value) -> str:
+    label = format_indonesian_date_group_label(date_value)
+    return label.rstrip(":")
+
+
+def _group_debts_for_shareable_summary(debts: list[dict], person: str, known_names: list[str]) -> list[str]:
+    if not debts:
+        return ["Tidak ada rincian aktif."]
+
+    lines = []
+    current_date = None
+    item_no = 1
+    for debt in sorted(debts or [], key=debt_detail_sort_key_for_display, reverse=True):
+        created_date = format_debt_created_date_for_display(debt)
+        if created_date != current_date:
+            if lines:
+                lines.append("")
+            lines.append(f"*{md_safe(_format_shareable_date_heading(created_date))}*")
+            current_date = created_date
+
+        desc = _clean_debt_description_for_share(debt.get("description"), person, known_names)
+        amount = parse_sheet_number(debt.get("remaining_amount", 0))
+        lines.append(f"{item_no}. {md_safe(desc)} - *{format_rupiah(amount)}*")
+        item_no += 1
+
+    return lines
+
+
+def build_shareable_debt_summary_text(person_query: str) -> str:
+    detail = get_debt_person_detail(person_query, include_settled=True)
+    person = detail.get("person_name") or str(person_query or "").strip().title()
+    active_details = detail.get("active_details") or []
+
+    if not active_details:
+        return f"✅ Tidak ada hutang-piutang aktif dengan *{md_safe(person)}*."
+
+    receivable_details = [
+        d for d in active_details
+        if str(d.get("type") or "").strip().lower() == "receivable"
+        and parse_sheet_number(d.get("remaining_amount", 0)) > 0
+    ]
+    payable_details = [
+        d for d in active_details
+        if str(d.get("type") or "").strip().lower() == "payable"
+        and parse_sheet_number(d.get("remaining_amount", 0)) > 0
+    ]
+
+    total_receivable = sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in receivable_details)
+    total_payable = sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in payable_details)
+    net = total_receivable - total_payable
+
+    known_names = _collect_known_debt_person_names()
+
+    lines = [
+        f"📌 *Rekap Hutang-Piutang Denan & {md_safe(person)}*",
+        "",
+        f"🟢 {md_safe(person)} ke Denan: *{format_rupiah(total_receivable)}*",
+        f"🔴 Denan ke {md_safe(person)}: *{format_rupiah(total_payable)}*",
+        "",
+        "💰 *Total akhir:*",
+    ]
+
+    if net > 0:
+        lines.append(f"{md_safe(person)} bayar ke Denan *{format_rupiah(net)}*")
+    elif net < 0:
+        lines.append(f"Denan bayar ke {md_safe(person)} *{format_rupiah(abs(net))}*")
+    else:
+        lines.append("Sudah impas / netral")
+
+    lines.extend([
+        "",
+        "",
+        f"*Rincian {md_safe(person)} ke Denan:*",
+        "",
+    ])
+    lines.extend(_group_debts_for_shareable_summary(receivable_details, person, known_names))
+    lines.extend([
+        "",
+        f"📊 *Subtotal {md_safe(person)} ke Denan: {format_rupiah(total_receivable)}*",
+        "",
+        "",
+        f"*Rincian Denan ke {md_safe(person)}:*",
+        "",
+    ])
+    lines.extend(_group_debts_for_shareable_summary(payable_details, person, known_names))
+    lines.extend([
+        "",
+        f"📊 *Subtotal Denan ke {md_safe(person)}: {format_rupiah(total_payable)}*",
+        "",
+        "",
+        "🎯 *Jadi total akhirnya:*",
+    ])
+
+    if net > 0:
+        lines.append(f"✅ {md_safe(person)} bayar ke Denan *{format_rupiah(net)}*")
+    elif net < 0:
+        lines.append(f"✅ Denan bayar ke {md_safe(person)} *{format_rupiah(abs(net))}*")
+    else:
+        lines.append("✅ Sudah impas / netral")
+
+    return "\n".join(lines)
+
+
+async def ringkasan_hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    person_query = " ".join(getattr(context, "args", []) or []).strip()
+    if not person_query:
+        await update.message.reply_text(
+            "Format: `/ringkasan_hutang Nama`\nContoh: `/ringkasan_hutang Sapto`",
+            parse_mode="Markdown",
+        )
+        return
+
+    await update.message.reply_text(
+        build_shareable_debt_summary_text(person_query),
+        parse_mode="Markdown",
+    )
+
 async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)

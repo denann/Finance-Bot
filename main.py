@@ -53,6 +53,7 @@ from app.bot.handlers import (
     recurring_off_handler,
     recurring_run_handler,
     rekening_handler,
+    ringkasan_hutang_handler,
     saldo_handler,
     scheduled_export_transactions,
     set_budget_handler,
@@ -120,6 +121,7 @@ telegram_app.add_handler(MessageHandler(filters.Regex(r"(?i)^(pending|rencana)\b
 
 # ── Debt Commands ─────────────────────────────────────────────────────────────
 telegram_app.add_handler(CommandHandler("hutang", hutang_handler))
+telegram_app.add_handler(CommandHandler("ringkasan_hutang", ringkasan_hutang_handler))
 telegram_app.add_handler(CommandHandler("debt_void", debt_void_handler))
 telegram_app.add_handler(CommandHandler("debt_edit", debt_edit_handler))
 telegram_app.add_handler(CommandHandler("debt_settle", debt_settle_handler))

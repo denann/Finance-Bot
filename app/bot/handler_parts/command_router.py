@@ -161,6 +161,10 @@ KNOWN_COMMANDS = {
         "description": "Lihat utang/piutang aktif.",
         "destructive": False,
     },
+    "ringkasan_hutang": {
+        "description": "Buat rekap hutang-piutang shareable tanpa ID/command internal.",
+        "destructive": False,
+    },
     "cari": {
         "description": "Cari transaksi berdasarkan keyword.",
         "destructive": False,
@@ -258,6 +262,8 @@ COMMAND_ALIASES = {
     # hutang
     "utang": "hutang",
     "hutang": "hutang",
+    "ringkasan_hutang": "ringkasan_hutang",
+    "rekap_hutang": "ringkasan_hutang",
     "void_hutang": "debt_void",
     "void_utang": "debt_void",
     "void_piutang": "debt_void",
