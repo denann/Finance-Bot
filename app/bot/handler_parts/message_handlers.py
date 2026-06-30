@@ -79,9 +79,9 @@ async def debt_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Penting untuk single input: parse_mixed_item() sudah melakukan enrichment,
     # tetapi single debt flow sebelumnya belum. Tanpa ini, input PTPT seperti:
-    # "ditalangin Alpat beli minyak 46k dibagi 4 sama Alpat Opik Sapto"
-    # hanya membuat payable 46k ke Alpat dan gagal membuat receivable share
-    # 11.5k ke Alpat/Opik/Sapto.
+    # "ditalangin Bagas beli minyak 46k dibagi 4 sama Bagas Fajar Raka"
+    # hanya membuat payable 46k ke Bagas dan gagal membuat receivable share
+    # 11.5k ke Bagas/Fajar/Raka.
     debt_parsed = enrich_ditalangin_split_bill_if_any(debt_parsed, text)
 
     person = debt_parsed.get("person_name")
@@ -990,7 +990,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ── Natural selected debt settlement ─────────────────────────────────────
-    # Contoh: "Sapto bayar hutang 337063 untuk debt 1-17".
+    # Contoh: "Raka bayar hutang 337063 untuk debt 1-17".
     # Harus jalan sebelum debt parser biasa supaya tidak dialokasikan global.
     selected_debt_settle_handled = await handle_natural_debt_settle(update, context, user_text)
     if selected_debt_settle_handled:
@@ -1086,7 +1086,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             preview = build_mixed_preview(mixed_items)
 
             # Split bill harus diputuskan dulu sebelum pilih rekening/confirm.
-            # Kalau tidak, input bulk seperti "22k dibagi 2 sama Sapto"
+            # Kalau tidak, input bulk seperti "22k dibagi 2 sama Raka"
             # terlihat seperti transaksi biasa Rp22.000 dan tidak langsung
             # menanyakan apakah bagian teman sudah dibayar.
             if mixed_split_bill_needs_decision(mixed_items):
@@ -1106,7 +1106,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     # Single income yang kurang nominal.
-    # Contoh: "Transfer dari Sapto tgl 6" -> tanya nominal dulu,
+    # Contoh: "Transfer dari Raka tgl 6" -> tanya nominal dulu,
     # bukan gagal parse dan bukan debt/payment.
     missing_amount_income = parse_income_missing_amount(user_text)
     if missing_amount_income:
@@ -1203,86 +1203,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def build_transactions_full_text(transactions: list[dict], title: str, account_filter: str | None = None) -> str:
-    transactions = enrich_transactions_with_debt_info(transactions or [])
-    lines = [f"🧾 *{md_safe(title)}*\n"]
-    append_net_gross_note(lines, transactions)
-
-    total_income = 0.0
-    total_expense = 0.0
-    total_net_expense = 0.0
-    total_transfer = 0.0
-    total_transfer_in = 0.0
-    total_transfer_out = 0.0
-    account_key = str(account_filter or "").strip().lower()
-
-    current_date_group = None
-    for i, txn in enumerate(transactions, 1):
-        txn_type = str(txn.get("type", "")).strip().lower()
-        amount = _safe_float_for_display(txn.get("amount", 0))
-        source_account = str(txn.get("account", "") or "").strip()
-        target_account = str(txn.get("to_account", "") or "").strip()
-        source_match = bool(account_key and source_account.lower() == account_key)
-        target_match = bool(account_key and target_account.lower() == account_key)
-
-        if account_key:
-            if txn_type == "income" and source_match:
-                total_income += amount
-            elif txn_type == "expense" and source_match:
-                total_expense += amount
-                total_net_expense += get_net_expense_after_receivable(txn)
-            elif txn_type == "transfer":
-                if source_match:
-                    total_transfer_out += amount
-                if target_match:
-                    total_transfer_in += amount
-                if source_match or target_match:
-                    total_transfer += amount
-        else:
-            if txn_type == "income":
-                total_income += amount
-            elif txn_type == "expense":
-                total_expense += amount
-                total_net_expense += get_net_expense_after_receivable(txn)
-            elif txn_type == "transfer":
-                total_transfer += amount
-
-        date_group = str(txn.get("date", "") or "Tanpa tanggal").strip() or "Tanpa tanggal"
-        if date_group != current_date_group:
-            lines.append(f"\n*{md_safe(format_indonesian_date_group_label(date_group))}*")
-            current_date_group = date_group
-
-        lines.extend(build_transaction_display_lines(txn, index=i, include_date=False, include_id=True))
-
-    if account_key:
-        net = total_income + total_transfer_in - total_expense - total_transfer_out
-        expense_text = format_expense_net_gross(total_net_expense, total_expense)
-        lines.append(
-            "\n*Ringkasan Rekening:*\n"
-            f"✅ Income          : *{format_rupiah(total_income)}*\n"
-            f"❌ Expense         : *{expense_text}*\n"
-            f"🔁 Transfer Masuk  : *{format_rupiah(total_transfer_in)}*\n"
-            f"🔁 Transfer Keluar : *{format_rupiah(total_transfer_out)}*\n"
-            f"📊 Net Rekening    : *{format_rupiah(net)}*\n"
-            f"📝 Total           : *{len(transactions)} transaksi*"
-        )
-    else:
-        net = total_income - total_expense
-        expense_text = format_expense_net_gross(total_net_expense, total_expense)
-        lines.append(
-            "\n*Ringkasan:*\n"
-            f"✅ Income   : *{format_rupiah(total_income)}*\n"
-            f"❌ Expense  : *{expense_text}*\n"
-            f"🔄 Transfer : *{format_rupiah(total_transfer)}*\n"
-            f"📊 Net      : *{format_rupiah(net)}*\n"
-            f"📝 Total    : *{len(transactions)} transaksi*"
-        )
-
-    lines.append(
-        "\nNomor di atas bisa dipakai untuk koreksi setelah command ini:\n"
-        "`/delete_txn 1` atau `/edit_txn 1 amount=15000`"
-    )
-
-    return "\n".join(lines)
+    return build_transactions_full_text_shared(transactions, title, account_filter)
 
 def build_transaction_filter_title(base_title: str, category_filter: str | None = None, account_filter: str | None = None) -> str:
     suffix = []
@@ -1721,13 +1642,13 @@ def parse_edit_debt_payment_conversion_args(args: list[str]) -> dict | None:
     """Parse /edit_txn untuk mengubah transaksi biasa menjadi pembayaran debt.
 
     Format yang didukung:
-    - /edit_txn 2 bayar_hutang Sapto
-    - /edit_txn 2 pembayaran_hutang Sapto
-    - /edit_txn 2 bayar hutang Sapto
-    - /edit_txn 2 bayar_piutang Sapto
-    - /edit_txn 2 pembayaran_piutang Sapto
-    - /edit_txn 2 debt=payable person=Sapto
-    - /edit_txn 2 debt=receivable person=Sapto amount=100k
+    - /edit_txn 2 bayar_hutang Raka
+    - /edit_txn 2 pembayaran_hutang Raka
+    - /edit_txn 2 bayar hutang Raka
+    - /edit_txn 2 bayar_piutang Raka
+    - /edit_txn 2 pembayaran_piutang Raka
+    - /edit_txn 2 debt=payable person=Raka
+    - /edit_txn 2 debt=receivable person=Raka amount=100k
 
     target_type:
     - payable    => Anda membayar utang ke orang tersebut, cashflow expense.
@@ -1832,7 +1753,7 @@ def parse_edit_debt_payment_conversion_args(args: list[str]) -> dict | None:
     if not target_type:
         raise ValueError("Tipe pembayaran debt belum jelas. Gunakan bayar_hutang atau bayar_piutang.")
     if not person:
-        raise ValueError("Nama orang belum jelas. Contoh: /edit_txn 2 bayar_hutang Sapto")
+        raise ValueError("Nama orang belum jelas. Contoh: /edit_txn 2 bayar_hutang Raka")
 
     extra_updates = parse_edit_updates(field_tokens) if field_tokens else {}
 
@@ -2273,9 +2194,9 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"❌ {str(e)}\n\n"
             "Contoh konversi pembayaran debt:\n"
-            "`/edit_txn 2 bayar_hutang Sapto`\n"
-            "`/edit_txn 2 bayar_piutang Sapto`\n"
-            "`/edit_txn 2 debt=payable person=Sapto`",
+            "`/edit_txn 2 bayar_hutang Raka`\n"
+            "`/edit_txn 2 bayar_piutang Raka`\n"
+            "`/edit_txn 2 debt=payable person=Raka`",
             parse_mode="Markdown",
         )
         return

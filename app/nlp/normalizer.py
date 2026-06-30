@@ -158,8 +158,8 @@ def apply_split_operation(text: str, base_amount: int) -> int:
 
     # Jangan bagi amount utama untuk split bill dengan teman.
     # Contoh:
-    # - "Tissue 10k bagi 4 sama opik alpat sapto"
-    # - "Nasi kuning 22k dibagi 2 sama sapto"
+    # - "Tissue 10k bagi 4 sama fajar bagas raka"
+    # - "Nasi kuning 22k dibagi 2 sama raka"
     # amount transaksi utama harus tetap total asli; piutang dihitung di handlers.py.
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
@@ -169,7 +169,7 @@ def apply_split_operation(text: str, base_amount: int) -> int:
     if re.search(rf"\b{friend_marker}\s+[a-zA-ZÀ-ÿ\s]{{1,60}}\s+{split_word}\s*(?:jadi\s*)?\d+\b", text_lower):
         return base_amount
 
-    # Shorthand split bill: "46k/4 sama sapto alpat opik".
+    # Shorthand split bill: "46k/4 sama raka bagas fajar".
     # Ini harus dibaca sebagai gross 46k yang dibagi 4, bukan nominal 11.5k.
     # Kalau tidak ada nama/marker teman, "46k/4" tetap boleh dianggap hasil bagi.
     if re.search(rf"/\s*\d+\s+(?:orang\s+)?{friend_marker}\b", text_lower):

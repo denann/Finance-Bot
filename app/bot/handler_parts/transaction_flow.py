@@ -107,8 +107,8 @@ def split_user_inputs(text: str) -> list[str]:
     )
 
     # Tidak lagi memecah sebelum starter tanpa nominal di depannya.
-    # Versi lama memecah "saya talangin Sapto beli nasi 12k" menjadi
-    # "saya talangin Sapto" + "beli nasi 12k" karena kata "beli" dianggap
+    # Versi lama memecah "saya talangin Raka beli nasi 12k" menjadi
+    # "saya talangin Raka" + "beli nasi 12k" karena kata "beli" dianggap
     # starter baru. Sekarang pemecahan otomatis cukup mengandalkan separator
     # eksplisit atau pola nominal-sebelum-starter di atas.
 
@@ -247,8 +247,8 @@ def parse_income_missing_amount(line: str) -> dict | None:
     """Deteksi income masuk dari orang yang belum punya nominal.
 
     Contoh yang harus ditanya nominalnya:
-    - Transfer dari Sapto tgl 6
-    - Transaksi dari Annisa
+    - Transfer dari Raka tgl 6
+    - Transaksi dari Maya
 
     Ini sengaja tidak dianggap debt/payment. Debt hanya dari keyword utang/piutang/minjem
     atau split bill eksplisit.
@@ -628,7 +628,7 @@ def build_preview_edit_help(scope: str = "single") -> str:
         "`nominal 25000`\n"
         "`kategori Food & Beverage`\n"
         "`deskripsi Kopi susu`\n"
-        "`subjek Annisa`\n"
+        "`subjek Maya`\n"
         "`tipe income` atau `tipe expense`\n"
         "`tanggal 2026-06-12`\n"
         "`rekening BCA`\n\n"
@@ -1013,7 +1013,7 @@ def strip_split_bill_phrase(text: str) -> str:
     # Dipanggil setelah split bill terdeteksi, jadi aman membersihkan frasa
     # "bagi/dibagi ... sama ..." dari description. Description dari parser
     # sering sudah kehilangan angka pembagi, misalnya:
-    # "Nasi Kuning Dibagi Sama Sapto".
+    # "Nasi Kuning Dibagi Sama Raka".
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
     name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s,;&:%./]{0,140}"
@@ -1031,7 +1031,7 @@ def strip_split_bill_phrase(text: str) -> str:
         flags=re.IGNORECASE,
     )
     # Support input tanpa marker "sama":
-    # "Nasi kuning 22k dibagi 2 sapto".
+    # "Nasi kuning 22k dibagi 2 raka".
     clean = re.sub(
         rf"\b{split_word}\s*(?:jadi\s*)?\d+\s*(?:orang\s+)?{name_chunk}",
         " ",
@@ -1040,7 +1040,7 @@ def strip_split_bill_phrase(text: str) -> str:
     )
     # Fallback setelah split valid: kalau parser sebelumnya sudah membuang angka
     # pembagi, sisa deskripsi bisa tinggal "Minyak Dibagi" atau
-    # "Minyak Dibagi Opik Sapto". Semua frasa split harus dibuang dari item.
+    # "Minyak Dibagi Fajar Raka". Semua frasa split harus dibuang dari item.
     clean = re.sub(
         rf"\b{split_word}\b.*$",
         " ",
@@ -1055,8 +1055,8 @@ def strip_trailing_split_person_names(text: str, person_names: list[str]) -> str
     """Buang rangkaian nama teman split bill yang bocor di akhir deskripsi/subject.
 
     Parser regex bisa lebih dulu menghapus token nominal dan "dibagi 4",
-    sehingga input seperti "beli galon 24k dibagi 4 sapto opik alpat"
-    sementara menjadi "Galon Sapto Opik Alpat". Setelah split bill valid,
+    sehingga input seperti "beli galon 24k dibagi 4 raka fajar bagas"
+    sementara menjadi "Galon Raka Fajar Bagas". Setelah split bill valid,
     nama-nama itu harus hanya hidup di split_bill.person_names, bukan di item.
     """
     clean = str(text or "").strip(" .,-")
@@ -1097,12 +1097,12 @@ def split_split_bill_person_names(name_text: str) -> list[str]:
     Ambil daftar nama teman dari frasa split bill.
 
     Contoh:
-    - "Sapto" -> ["Sapto"]
-    - "opik alpat sapto" -> ["Opik", "Alpat", "Sapto"]
-    - "opik, alpat, dan sapto" -> ["Opik", "Alpat", "Sapto"]
+    - "Raka" -> ["Raka"]
+    - "fajar bagas raka" -> ["Fajar", "Bagas", "Raka"]
+    - "fajar, bagas, dan raka" -> ["Fajar", "Bagas", "Raka"]
 
     Catatan: untuk mode tanpa pemisah koma/dan, nama diasumsikan satu kata per orang.
-    Ini sesuai gaya input user seperti: "bagi 4 sama opik alpat sapto".
+    Ini sesuai gaya input user seperti: "bagi 4 sama fajar bagas raka".
     """
     clean = str(name_text or "").strip()
 
@@ -1183,11 +1183,11 @@ def parse_split_bill_people_and_shares(name_text: str, total_amount: float, part
     Parse nama teman split bill plus custom share opsional.
 
     Support:
-    - sapto opik alpat                         -> equal share
-    - sapto:100% opik:80% alpat:100%          -> persen dari share normal
-    - sapto 100% opik 80% alpat 100%          -> titik dua opsional
-    - sapto:125k opik:100k alpat:125k         -> nominal langsung
-    - sapto 125k opik 100k alpat 125k         -> titik dua opsional
+    - raka fajar bagas                         -> equal share
+    - raka:100% fajar:80% bagas:100%          -> persen dari share normal
+    - raka 100% fajar 80% bagas 100%          -> titik dua opsional
+    - raka:125k fajar:100k bagas:125k         -> nominal langsung
+    - raka 125k fajar 100k bagas 125k         -> titik dua opsional
     """
     base_share = float(total_amount or 0) / int(participants or 1)
     clean = strip_split_bill_name_tail(name_text)
@@ -1304,8 +1304,8 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     Deteksi input split bill sederhana.
 
     Contoh:
-    - Ayam dcelup 26k bagi 2 sama Sapto
-    - Tissue 10k bagi 4 sama opik alpat sapto
+    - Ayam dcelup 26k bagi 2 sama Raka
+    - Tissue 10k bagi 4 sama fajar bagas raka
 
     Desain cashflow:
     - Transaksi utama tetap disimpan sebesar total yang kamu bayarkan.
@@ -1321,19 +1321,19 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     if amount <= 0:
         return None
 
-    # Normalisasi shorthand "46k/4 sama Sapto" agar dianggap sama dengan
-    # "46k dibagi 4 sama Sapto". Tanpa ini parser bisa membaca amount sebagai
+    # Normalisasi shorthand "46k/4 sama Raka" agar dianggap sama dengan
+    # "46k dibagi 4 sama Raka". Tanpa ini parser bisa membaca amount sebagai
     # 11.5k dan split bill tidak terdeteksi.
     text = normalize_slash_split_syntax(str(raw or ""))
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
     name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s,;&:%./]{0,140}"
     patterns = [
-        # "dibagi 2 sama sapto"
+        # "dibagi 2 sama raka"
         rf"\b{split_word}\s*(?:jadi\s*)?(\d+)\s*(?:orang)?\s+{friend_marker}\s+({name_chunk})",
-        # "sama sapto dibagi 2"
+        # "sama raka dibagi 2"
         rf"\b{friend_marker}\s+({name_chunk})\s+{split_word}\s*(?:jadi\s*)?(\d+)",
-        # "dibagi 2 sapto" tanpa marker sama/dengan.
+        # "dibagi 2 raka" tanpa marker sama/dengan.
         # Nama harus diawali huruf, jadi "dibagi 2 11-05-2026" tidak match.
         rf"\b{split_word}\s*(?:jadi\s*)?(\d+)\s*(?:orang)?\s+({name_chunk})",
     ]
@@ -1390,7 +1390,7 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     clean_desc = strip_split_bill_phrase(desc)
     # Kalau parser regex sudah menghapus frasa "dibagi 2" lebih dulu, rangkaian
     # nama teman bisa tersisa di akhir description, misalnya:
-    # "Galon Sapto Opik Alpat". Setelah split_bill valid, semua nama teman
+    # "Galon Raka Fajar Bagas". Setelah split_bill valid, semua nama teman
     # harus hanya masuk field split_bill, bukan description/subject transaksi.
     clean_desc = strip_trailing_split_person_names(clean_desc, person_names)
     parsed["description"] = clean_desc
@@ -1401,7 +1401,7 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
         clean_subject = strip_trailing_split_person_names(clean_subject, person_names)
         # Subject biasanya mengikuti description. Kalau masih mengandung kata split,
         # atau nama teman tersisa di ujung, pakai versi bersih agar output/sheet
-        # tidak menjadi "Nasi Kuning Sapto" / "Galon Sapto Opik".
+        # tidak menjadi "Nasi Kuning Raka" / "Galon Raka Fajar".
         if clean_subject != subject or re.search(split_word, subject, flags=re.IGNORECASE):
             parsed["subject"] = clean_subject or clean_desc
 
@@ -1774,7 +1774,7 @@ def _clean_fronting_item_text(text: str, person: str = "") -> str:
     item = strip_split_bill_phrase(item)
     # Fallback keras untuk ditalangin+PTPT: jangan simpan sisa "Dibagi"
     # sebagai subject/description transaksi. Contoh yang harus jadi "Minyak":
-    # "Minyak Dibagi", "Minyak Dibagi Opik Sapto", "Minyak Dibagi Sama Opik Sapto".
+    # "Minyak Dibagi", "Minyak Dibagi Fajar Raka", "Minyak Dibagi Sama Fajar Raka".
     item = re.sub(r"\b(?:di\s*-?\s*bagi|dibagi|bagi|split|share|patungan)\b.*$", " ", item, flags=re.IGNORECASE)
     item = re.sub(r"^\s*(?:beli|bayar|byr|jajan|makan|minum)\b", " ", item, flags=re.IGNORECASE)
     item = re.sub(r"\s+", " ", item).strip(" .,-:")
@@ -1839,13 +1839,13 @@ def enrich_ditalangin_split_bill_if_any(debt_parsed: dict, raw: str | None = Non
     menjadi pengeluaran terpusat user dan dibagi lagi ke penghuni/teman.
 
     Contoh:
-    ditalangin Alpat beli minyak 46k dibagi 4 sama Alpat Opik Sapto
+    ditalangin Bagas beli minyak 46k dibagi 4 sama Bagas Fajar Raka
 
     Secara personal finance user:
     - transaksi expense tetap gross Rp46k agar pengeluaran rumah tercatat penuh
-    - user punya utang payable full Rp46k ke Alpat sebagai pihak yang menalangi
+    - user punya utang payable full Rp46k ke Bagas sebagai pihak yang menalangi
     - teman yang disebut di split bill tetap menjadi receivable ke user masing-masing Rp11,5k
-      termasuk Alpat jika namanya ada di daftar share
+      termasuk Bagas jika namanya ada di daftar share
     - net expense report menjadi Rp46k - total piutang share teman
     """
     if not isinstance(debt_parsed, dict) or not is_ditalangin_expense_without_balance(debt_parsed):

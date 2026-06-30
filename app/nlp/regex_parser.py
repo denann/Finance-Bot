@@ -216,7 +216,7 @@ def parse_debt_input(text: str) -> dict | None:
         desc_lower = desc.lower()
         person_pattern = re.escape(str(person or "").lower())
 
-        # Hapus pembuka seperti "saya nitip sapto beli ..." agar deskripsi
+        # Hapus pembuka seperti "saya nitip raka beli ..." agar deskripsi
         # debt lebih enak dibaca. Kalau gagal bersih, tetap fallback ke desc asli.
         desc_lower = re.sub(r"^\s*(?:saya|aku|gw|gue)\s+", "", desc_lower)
         if mode == "ditalangin":
@@ -244,9 +244,9 @@ def parse_debt_input(text: str) -> dict | None:
     # ── Debt offset / kompensasi tanpa rekening ─────────────────────────────
     # Dipakai saat hutang baru ingin langsung dipotong dari piutang aktif orang yang sama.
     # Contoh:
-    # - potong piutang Akmal 20k buat badminton
-    # - kompensasi piutang Akmal 20k karena badminton
-    # - saya berutang ke Akmal 20k potong dari piutang buat badminton
+    # - potong piutang Dimas 20k buat badminton
+    # - kompensasi piutang Dimas 20k karena badminton
+    # - saya berutang ke Dimas 20k potong dari piutang buat badminton
     # Efeknya bukan cashflow rekening, tetapi tetap dibuat row di transactions sebagai fact table.
     offset_self_context = False
     offset_match = re.search(
@@ -273,8 +273,8 @@ def parse_debt_input(text: str) -> dict | None:
         target_word = str(offset_match.group("target") or "piutang").strip().lower()
         # target_debt_type adalah debt aktif yang akan dikurangi.
         # target=piutang berarti kurangi receivable.
-        # Untuk input natural "potong hutang Sapto", hutang dipahami sebagai
-        # hutang Sapto ke user, jadi tetap mengurangi receivable.
+        # Untuk input natural "potong hutang Raka", hutang dipahami sebagai
+        # hutang Raka ke user, jadi tetap mengurangi receivable.
         # Kalau konteksnya eksplisit "saya berutang ke X ... potong utang", baru payable.
         if target_word == "piutang":
             target_debt_type = "receivable"
@@ -300,10 +300,10 @@ def parse_debt_input(text: str) -> dict | None:
                 "skip_account": True,
             }
 
-    # ── Ditalangin orang dulu: "ditalangin Alpat beli minyak 46k ..." ──
+    # ── Ditalangin orang dulu: "ditalangin Bagas beli minyak 46k ..." ──
     # Rule ini harus berada sebelum "item oleh orang". Kalau tidak, input seperti
-    # "ditalangin Alpat beli minyak 46k dibagi 4 sama Alpat Opik Sapto" bisa salah
-    # dibaca sebagai item="Alpat beli minyak ..." dan person="Alpat Opik Sapto".
+    # "ditalangin Bagas beli minyak 46k dibagi 4 sama Bagas Fajar Raka" bisa salah
+    # dibaca sebagai item="Bagas beli minyak ..." dan person="Bagas Fajar Raka".
     ditalangin_person_first_match = re.search(
         r"\b(?:saya|aku|gw|gue)?\s*"
         r"(?:nitip|ditalangin|ditalangi|dibayarin|duluin)\s+"
@@ -332,7 +332,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "fronting_mode": "ditalangin",
             }
 
-    # ── Ditalangin item oleh orang: "ditalangin nasi uduk sama Alpat 10k" ──
+    # ── Ditalangin item oleh orang: "ditalangin nasi uduk sama Bagas 10k" ──
     # Artinya orang tersebut membayar dulu untuk user. Ini debt-only, bukan cashflow.
     ditalangin_item_by_person_match = re.search(
         r"\b(?:saya|aku|gw|gue)?\s*"
@@ -368,8 +368,8 @@ def parse_debt_input(text: str) -> dict | None:
                 "fronting_mode": "ditalangin",
             }
 
-    # ── Talangan tanpa cashflow: "saya nitip Sapto beli nasi kuning 12k" ──
-    # Artinya Sapto membayar dulu untuk user. Belum ada uang masuk/keluar dari
+    # ── Talangan tanpa cashflow: "saya nitip Raka beli nasi kuning 12k" ──
+    # Artinya Raka membayar dulu untuk user. Belum ada uang masuk/keluar dari
     # rekening user, jadi hanya dicatat sebagai utang (payable), bukan income.
     ditalangin_match = re.search(
         r"\b(?:saya|aku|gw|gue)?\s*(?:nitip|ditalangin|ditalangi|dibayarin|duluin)\s+"
@@ -393,8 +393,8 @@ def parse_debt_input(text: str) -> dict | None:
                 "fronting_mode": "ditalangin",
             }
 
-    # ── Talangin orang: "saya talangin Sapto beli nasi 12k" ───────────────
-    # Ini berarti user keluar uang sekarang, lalu Sapto punya piutang ke user.
+    # ── Talangin orang: "saya talangin Raka beli nasi 12k" ───────────────
+    # Ini berarti user keluar uang sekarang, lalu Raka punya piutang ke user.
     # Tetap minta rekening karena cashflow benar-benar terjadi.
     talangin_match = re.search(
         r"\b(?:saya|aku|gw|gue)?\s*(?:ngetalangin|nalangin|talangin|talangi)\s+"
@@ -418,7 +418,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "fronting_mode": "talangin",
             }
 
-    # ── Orang membayari user: "Sapto beliin saya nasi 12k" ────────────────
+    # ── Orang membayari user: "Raka beliin saya nasi 12k" ────────────────
     person_paid_for_me_match = re.search(
         r"^\s*([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)\s+"
         r"(?:ngetalangin|nalangin|talangin|talangi|beliin|belikan|bayarin|membayari)\s+"
@@ -441,8 +441,8 @@ def parse_debt_input(text: str) -> dict | None:
                 "fronting_mode": "ditalangin",
             }
 
-    # ── Receivable explicit: "Sapto hutang ke saya 50k" ─────────────────────
-    # Artinya Sapto punya hutang ke user, bukan user hutang ke "Saya".
+    # ── Receivable explicit: "Raka hutang ke saya 50k" ─────────────────────
+    # Artinya Raka punya hutang ke user, bukan user hutang ke "Saya".
     receivable_to_me_match = re.search(
         r"^\s*([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)\s+(?:hutang|utang)\s+ke\s+(?:saya|aku|gw|gue)\b",
         text_lower,
@@ -460,8 +460,8 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # ── Receivable explicit: "piutang ke Akmal 31100" ─────────────────────
-    # Artinya Akmal punya utang ke user / user punya piutang ke Akmal.
+    # ── Receivable explicit: "piutang ke Dimas 31100" ─────────────────────
+    # Artinya Dimas punya utang ke user / user punya piutang ke Dimas.
     explicit_piutang_match = re.search(
         r"\bpiutang\s+(?:ke|sama|dari)?\s*"
         r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr))",
@@ -519,7 +519,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # ── Short form "Akmal berutang 31100" => receivable ──────────────────────
+    # ── Short form "Dimas berutang 31100" => receivable ──────────────────────
     # Kalau subjeknya orang lain, diasumsikan dia berutang ke user.
     short_other_receivable_match = re.search(
         r"\b(?!saya\b|aku\b|gue\b|gw\b|gua\b)"
@@ -540,12 +540,12 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # Catatan: frasa seperti "transfer/transaksi dari Annisa 55k"
+    # Catatan: frasa seperti "transfer/transaksi dari Maya 55k"
     # sekarang diperlakukan sebagai income biasa di detect_type(),
     # dan bukan transfer antar rekening. Namun pola "Nama bayar 5k" adalah
     # pembayaran piutang natural, karena subjeknya orang yang membayar ke user.
 
-    # ── Payment natural: "Sapto bayar 5k" / "Sapto bayar hutang 500k" ───────
+    # ── Payment natural: "Raka bayar 5k" / "Raka bayar hutang 500k" ───────
     person_pays_match = re.search(
         r"^\s*(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)\s+"
         r"(?:bayar|byr|melunasi|lunasin|lunasi|nyicil|cicil|transfer\s+balik|kembaliin|balikin|dibalikin)\b"
@@ -570,7 +570,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "target_debt_type": "receivable",
             }
 
-    # ── Payment self: "saya bayar hutang Sapto 10k" ─────────────────────────
+    # ── Payment self: "saya bayar hutang Raka 10k" ─────────────────────────
     self_pays_match = re.search(
         r"^\s*(?:saya|aku|gw|gue|gua)\s+"
         r"(?:bayar|byr|melunasi|lunasin|lunasi|nyicil|cicil)\s+"
@@ -610,9 +610,9 @@ def parse_debt_input(text: str) -> dict | None:
                 "target_debt_type": "auto",
             }
 
-    # ── Payable natural: "minjem uang Annisa 220k" ───────────────────────────
-    # Dalam bahasa natural user, pola ini berarti: Anda meminjam uang milik Annisa
-    # sehingga Anda punya UTANG ke Annisa. Ini harus dicek sebelum keyword umum
+    # ── Payable natural: "minjem uang Maya 220k" ───────────────────────────
+    # Dalam bahasa natural user, pola ini berarti: Anda meminjam uang milik Maya
+    # sehingga Anda punya UTANG ke Maya. Ini harus dicek sebelum keyword umum
     # "minjem/pinjem/pinjam" yang dipakai untuk pola "Budi minjem 300k".
     natural_borrow_match = re.search(
         r"\b(?:minjem|pinjem|pinjam)\b\s+(?:uang|duit|dana)?\s*(?:ke|sama|dari)?\s*([a-zA-Z][a-zA-Z\s]{0,40}?)(?=\s*\d|\s*(?:rp|idr))",
@@ -674,7 +674,7 @@ def detect_type(text: str) -> str | None:
     text_lower = normalize_text(text)
 
     # Income dari orang/non-rekening.
-    # Contoh: "Transaksi dari Annisa 55k", "transfer dari Alpat 50k",
+    # Contoh: "Transaksi dari Maya 55k", "transfer dari Bagas 50k",
     # "kiriman dari Unknown 55k" harus jadi income biasa, bukan debt payment
     # dan bukan transfer antar rekening.
     incoming_from_person_match = re.search(
@@ -699,7 +699,7 @@ def detect_type(text: str) -> str | None:
                     return "transfer"
 
     # Pola pemasukan natural yang sebelumnya sering gagal:
-    # "uang ptpt bulanan dari opik 200k"
+    # "uang ptpt bulanan dari fajar 200k"
     # "uang ptpt bulanan masuk dari alfath 91.457k"
     if re.search(r"\buang\b.*\b(dari|masuk)\b", text_lower):
         return "income"
@@ -766,7 +766,7 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
     "top up gopay via bri 50k" -> BRI ke GoPay.
     "ngisi gopay bri 50k" -> BRI ke GoPay.
     "top up gopay 50k" -> source belum diketahui, target GoPay.
-    "transfer dari alpat 50k ke BRI" bukan transfer antar-rekening dan harus
+    "transfer dari bagas 50k ke BRI" bukan transfer antar-rekening dan harus
     sudah diklasifikasikan sebagai income di detect_type().
     """
     text_lower = normalize_text(text)
@@ -1180,7 +1180,7 @@ def detect_date(text: str) -> str:
 def extract_description(text: str, amount=None) -> str:
     clean = str(text or "").strip()
 
-    # Bantu kasus typo tanpa spasi: "Sapto241.457k" -> "Sapto 241.457k".
+    # Bantu kasus typo tanpa spasi: "Raka241.457k" -> "Raka 241.457k".
     clean = re.sub(r"(?<=[A-Za-zÀ-ÖØ-öø-ÿ])(?=\d)", " ", clean)
 
     # 1. Hapus semua informasi waktu agar tidak masuk description.
@@ -1218,7 +1218,7 @@ def extract_description(text: str, amount=None) -> str:
 
     # Kalau split tanpa nama teman, bersihkan kata operasinya dari deskripsi.
     # Contoh: "Bakso 43k dibagi 2" -> "Bakso", bukan "Bakso Dibagi".
-    # Untuk split dengan teman, frasa "dibagi ... sama Sapto" sengaja dibiarkan dulu
+    # Untuk split dengan teman, frasa "dibagi ... sama Raka" sengaja dibiarkan dulu
     # agar handlers.py bisa membersihkan nama teman setelah split bill terdeteksi.
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|split|share|patungan)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
@@ -1233,7 +1233,7 @@ def extract_description(text: str, amount=None) -> str:
 
     # 4. Hapus kata kerja transaksi umum di awal.
     # Jangan hapus kata "transfer" kalau transfernya ke orang/non-rekening,
-    # supaya deskripsi tetap "Transfer Ke Annisa", bukan cuma "Ke Annisa".
+    # supaya deskripsi tetap "Transfer Ke Maya", bukan cuma "Ke Maya".
     account_pattern = r"(?:cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank)"
     person_transfer = re.match(rf"^\s*transfer\s+ke\s+(?!{account_pattern}\b)", clean, flags=re.IGNORECASE)
 
@@ -1258,7 +1258,7 @@ def extract_description(text: str, amount=None) -> str:
     )
 
     # Hapus sisa prefix "dari" untuk income dari orang.
-    # Contoh: "Transaksi dari Annisa 55k" -> "Annisa".
+    # Contoh: "Transaksi dari Maya 55k" -> "Maya".
     clean = re.sub(r"^\s*dari\s+", " ", clean, flags=re.IGNORECASE)
 
     # 6. Rapikan spasi.
@@ -1312,8 +1312,8 @@ def extract_note(text: str) -> str:
     """
     Ambil catatan tambahan.
     Contoh:
-    - "beli nasi padang 20 k catatan dibagi 2 sama sapto"
-      -> "Sama Sapto"
+    - "beli nasi padang 20 k catatan dibagi 2 sama raka"
+      -> "Sama Raka"
     - "beli obat 45k buat demam"
       -> "Demam"
     - "bayar kos 1.5jt catatan kos bulan Juni"
@@ -1347,7 +1347,7 @@ def extract_note(text: str) -> str:
     )
 
     # Kalau catatan berisi pola split, bersihkan jadi konteks orangnya saja
-    # "dibagi 2 sama sapto" -> "sama sapto"
+    # "dibagi 2 sama raka" -> "sama raka"
     note = re.sub(r"\b(di\s*-?\s*bagi|dibagi|bagi|split|share|patungan)\s*(?:jadi\s*)?\d+\b", "", note)
 
     # Buang sisa angka orang

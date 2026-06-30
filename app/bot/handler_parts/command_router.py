@@ -118,7 +118,7 @@ KNOWN_COMMANDS = {
         "destructive": False,
     },
     "rekening": {
-        "description": "Lihat ringkasan rekening tertentu dan transaksinya.",
+        "description": "Lihat transaksi lengkap rekening tertentu.",
         "destructive": False,
     },
     "harian": {
@@ -174,7 +174,7 @@ KNOWN_COMMANDS = {
         "destructive": False,
     },
     "transaksi": {
-        "description": "Lihat transaksi full untuk hari/minggu/bulan tertentu.",
+        "description": "Lihat transaksi lengkap untuk hari/minggu/bulan/rekening tertentu.",
         "destructive": False,
     },
     "delete_txn": {

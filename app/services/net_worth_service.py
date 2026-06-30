@@ -8,7 +8,7 @@ from app.config import (
     SHEET_NET_WORTH_SNAPSHOTS,
 )
 
-from app.sheets.client import append_row, get_all_records, get_sheet
+from app.sheets.client import append_row, get_all_records, update_cell
 from app.services.transaction_service import get_all_accounts
 
 
@@ -55,6 +55,11 @@ NET_WORTH_SNAPSHOT_COLUMNS = [
     "net_worth",
     "created_at",
 ]
+
+LIABILITY_FEATURE_REMOVED_MESSAGE = (
+    "Fitur liabilities sudah tidak aktif. "
+    "Kewajiban antar orang dikelola lewat /hutang, sedangkan net worth hanya memakai saldo rekening + aset aktif."
+)
 
 
 def now_str() -> str:
@@ -379,31 +384,8 @@ def add_liability(
     category: str = "Other Liability",
     description: str = "",
 ) -> dict:
-    current_balance = safe_float(current_balance)
-
-    if current_balance <= 0:
-        raise ValueError("Nominal liabilitas harus lebih dari 0.")
-
-    created_at = now_str()
-
-    liability = {
-        "id": generate_id("liab"),
-        "name": str(name or "").strip(),
-        "category": str(category or "Other Liability").strip(),
-        "current_balance": current_balance,
-        "description": str(description or "").strip(),
-        "is_active": "TRUE",
-        "created_at": created_at,
-        "updated_at": created_at,
-    }
-
-    if not liability["name"]:
-        raise ValueError("Nama liabilitas wajib diisi.")
-
-    append_row(SHEET_LIABILITIES, build_liability_row(liability))
-
-    return liability
-
+    """Deprecated: liabilities tidak lagi dipakai dalam konsep net worth bot."""
+    raise NotImplementedError(LIABILITY_FEATURE_REMOVED_MESSAGE)
 
 def refresh_gold_assets(records: list[dict]) -> list[dict]:
     """Deprecated auto-refresh hook.
@@ -428,13 +410,8 @@ def get_assets(active_only: bool = True, refresh_gold: bool = True) -> list[dict
 
 
 def get_liabilities(active_only: bool = True) -> list[dict]:
-    records = get_all_records(SHEET_LIABILITIES)
-
-    if not active_only:
-        return records
-
-    return [r for r in records if is_active_record(r)]
-
+    """Deprecated: liabilities sudah tidak menjadi sheet aktif."""
+    return []
 
 def get_record_by_id(sheet_name: str, record_id: str) -> dict | None:
     records = get_all_records(sheet_name)
@@ -467,14 +444,12 @@ def update_record_cells(
     if not row_index:
         return False
 
-    sheet = get_sheet(sheet_name)
-
     for field, value in updates.items():
         if field not in columns:
             continue
 
         col_index = columns.index(field) + 1
-        sheet.update_cell(row_index, col_index, value)
+        update_cell(sheet_name, row_index, col_index, value)
 
     return True
 
@@ -666,58 +641,14 @@ def update_asset(asset_id: str, updates: dict) -> dict:
 
 
 def update_liability(liability_id: str, updates: dict) -> dict:
-    liability = get_record_by_id(SHEET_LIABILITIES, liability_id)
-
-    if not liability:
-        return {
-            "success": False,
-            "before": {},
-            "after": {},
-            "updates": {},
-            "message": "Liability tidak ditemukan.",
-        }
-
-    normalized_updates = {}
-
-    for raw_field, raw_value in updates.items():
-        field = normalize_liability_update_field(raw_field)
-
-        if not field:
-            raise ValueError(f"Field `{raw_field}` tidak dikenali.")
-
-        if field in ["id", "created_at", "updated_at"]:
-            raise ValueError(f"Field `{field}` tidak boleh diedit.")
-
-        normalized_updates[field] = normalize_common_update_value(field, raw_value)
-
-    normalized_updates["updated_at"] = now_str()
-
-    success = update_record_cells(
-        SHEET_LIABILITIES,
-        LIABILITY_COLUMNS,
-        liability_id,
-        normalized_updates,
-    )
-
-    if not success:
-        return {
-            "success": False,
-            "before": liability,
-            "after": {},
-            "updates": normalized_updates,
-            "message": "Gagal update liability.",
-        }
-
-    updated_liability = get_record_by_id(SHEET_LIABILITIES, liability_id) or {}
-
+    """Deprecated: liabilities tidak lagi dipakai dalam konsep net worth bot."""
     return {
-        "success": True,
-        "before": liability,
-        "after": updated_liability,
-        "updates": normalized_updates,
-        "message": "Liability berhasil diupdate.",
+        "success": False,
+        "before": {},
+        "after": {},
+        "updates": {},
+        "message": LIABILITY_FEATURE_REMOVED_MESSAGE,
     }
-
 
 def deactivate_asset(asset_id: str) -> bool:
     return update_record_cells(
@@ -732,16 +663,8 @@ def deactivate_asset(asset_id: str) -> bool:
 
 
 def deactivate_liability(liability_id: str) -> bool:
-    return update_record_cells(
-        SHEET_LIABILITIES,
-        LIABILITY_COLUMNS,
-        liability_id,
-        {
-            "is_active": "FALSE",
-            "updated_at": now_str(),
-        },
-    )
-
+    """Deprecated: liabilities tidak lagi dipakai dalam konsep net worth bot."""
+    return False
 
 def calculate_net_worth() -> dict:
     accounts = get_all_accounts()

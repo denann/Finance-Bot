@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, date
 
 from app.config import SHEET_RECURRING_RULES, SHEET_RECURRING_LOGS
-from app.sheets.client import append_row, get_all_records, get_sheet
+from app.sheets.client import append_row, get_all_records, update_cell, rollback_current_sheets_transaction, sheets_transaction
 from app.services.transaction_service import save_transaction
 
 
@@ -272,14 +272,12 @@ def update_recurring_rule_cells(rule_id: str, updates: dict) -> bool:
     if not row_index:
         return False
 
-    sheet = get_sheet(SHEET_RECURRING_RULES)
-
     for field, value in updates.items():
         if field not in RECURRING_RULE_COLUMNS:
             continue
 
         col_index = RECURRING_RULE_COLUMNS.index(field) + 1
-        sheet.update_cell(row_index, col_index, value)
+        update_cell(SHEET_RECURRING_RULES, row_index, col_index, value)
 
     return True
 
@@ -597,13 +595,7 @@ def mark_recurring_rule_paid(rule_id: str, run_date: date | None = None) -> dict
             "rule": rule,
         }
     except Exception as e:
-        log_recurring_run(
-            rule_id=rule_id,
-            transaction_id="",
-            run_date=run_date_str,
-            status="failed",
-            message=str(e),
-        )
+        rollback_current_sheets_transaction()
         return {
             "success": False,
             "message": str(e),
@@ -668,22 +660,19 @@ def process_due_recurring_rules(target_date: date | None = None) -> dict:
             )
 
         except Exception as e:
+            rollback_current_sheets_transaction()
             message = str(e)
 
-            log_recurring_run(
-                rule_id=rule_id,
-                transaction_id="",
-                run_date=run_date,
-                status="failed",
-                message=message,
-            )
-
+            # Karena operasi recurring dibuat all-or-nothing, success yang sudah
+            # sempat tercatat di memory tidak boleh ditampilkan sebagai sukses.
+            results["success"] = []
             results["failed"].append(
                 {
                     "rule": rule,
                     "message": message,
                 }
             )
+            break
 
     return results
 

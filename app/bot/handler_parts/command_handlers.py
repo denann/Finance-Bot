@@ -20,9 +20,9 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         "🤝 *Utang, piutang, split bill*\n"
         "• `Budi minjem 300k`\n"
-        "• `saya talangin Sapto beli nasi kuning 12k`\n"
-        "• `saya ditalangin Alpat beli nasi uduk 10k`\n"
-        "• `nasi goreng 30k bagi 3 sama Akmal Sapto`\n\n"
+        "• `saya talangin Raka beli nasi kuning 12k`\n"
+        "• `saya ditalangin Bagas beli nasi uduk 10k`\n"
+        "• `nasi goreng 30k bagi 3 sama Dimas Raka`\n\n"
 
         "📊 *Laporan & koreksi data*\n"
         "`/saldo`, `/rekening`, `/harian`, `/mingguan`, `/bulanan`, `/last`, `/cari`\n"
@@ -78,7 +78,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Contoh:\n"
         "`beli kopi 10k`\n"
         "`beli nasi 20k`\n"
-        "`Akmal bayar hutang 20k kemarin`\n\n"
+        "`Dimas bayar hutang 20k kemarin`\n\n"
         "Contoh satu baris:\n"
         "`beli kopi 10k; beli nasi 20k; Budi minjem 50k`\n"
         "`beli kopi 10k minjem Joko 50k`\n\n"
@@ -87,64 +87,64 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Kalau transaksi sudah berlalu dan Anda tidak mau mengubah saldo rekening, pilih tombol:\n"
         "`Sudah berlalu / jangan ubah saldo`\n"
         "Contoh:\n"
-        "`Beli tissue 10k dibagi 4 sama Sapto Opik Alpat`\n"
+        "`Beli tissue 10k dibagi 4 sama Raka Fajar Bagas`\n"
         "Debt/split bill tetap tercatat, tapi saldo rekening tidak berubah.\n\n"
 
         "*B. Utang, Piutang, Split Bill*\n\n"
         "*6. Utang/Piutang Biasa*\n"
         "`hutang ke Budi 500rb` — Anda punya utang ke Budi\n"
-        "`minjem uang Annisa 220k` — Anda punya utang ke Annisa\n"
+        "`minjem uang Maya 220k` — Anda punya utang ke Maya\n"
         "`Budi minjem 300rb` — Budi punya utang ke Anda / piutang Anda\n"
-        "`piutang ke Akmal 31100` — Akmal punya utang ke Anda\n"
-        "`saya berutang ke Akmal 20k` — Anda punya utang ke Akmal\n"
-        "`Akmal berutang 50k` — piutang Anda ke Akmal\n"
+        "`piutang ke Dimas 31100` — Dimas punya utang ke Anda\n"
+        "`saya berutang ke Dimas 20k` — Anda punya utang ke Dimas\n"
+        "`Dimas berutang 50k` — piutang Anda ke Dimas\n"
         "`Budi bayar 100rb` — pembayaran piutang dari Budi\n"
         "`bayar hutang Budi 100rb` — pembayaran utang Anda ke Budi\n\n"
 
         "*7. Talangin / Ditalangin*\n"
-        "`saya talangin Sapto beli nasi kuning 12k` — uang Anda keluar, jadi piutang Sapto\n"
-        "`saya ditalangin Alpat beli nasi uduk 10k` — utang Anda ke Alpat tanpa cashflow rekening\n"
-        "`saya nitip Sapto beli nasi kuning 12k` — sama seperti ditalangin\n"
-        "`ditalangin nasi uduk sama Alpat 10k kemarin` — Alpat menalangi Anda\n"
-        "`ditalangin Alpat beli minyak 46k dibagi 4 sama Alpat Opik Sapto` — PTPT: Anda hutang full 46k ke Alpat, lalu Alpat/Opik/Sapto masing-masing hutang share ke Anda\n\n"
+        "`saya talangin Raka beli nasi kuning 12k` — uang Anda keluar, jadi piutang Raka\n"
+        "`saya ditalangin Bagas beli nasi uduk 10k` — utang Anda ke Bagas tanpa cashflow rekening\n"
+        "`saya nitip Raka beli nasi kuning 12k` — sama seperti ditalangin\n"
+        "`ditalangin nasi uduk sama Bagas 10k kemarin` — Bagas menalangi Anda\n"
+        "`ditalangin Bagas beli minyak 46k dibagi 4 sama Bagas Fajar Raka` — PTPT: Anda hutang full 46k ke Bagas, lalu Bagas/Fajar/Raka masing-masing hutang share ke Anda\n\n"
 
         "*8. Split Bill*\n"
-        "`Ayam dcelup 26k bagi 2 sama Sapto`\n"
-        "`Beli tissue 10k dibagi 4 sama Sapto Opik Alpat`\n"
-        "`Beli token 500k dibagi 4 sama Sapto:100% Opik:80% Alpat:100%`\n"
-        "`Beli token 500k dibagi 4 sama Sapto 125k Opik 100k Alpat 125k`\n"
+        "`Ayam dcelup 26k bagi 2 sama Raka`\n"
+        "`Beli tissue 10k dibagi 4 sama Raka Fajar Bagas`\n"
+        "`Beli token 500k dibagi 4 sama Raka:100% Fajar:80% Bagas:100%`\n"
+        "`Beli token 500k dibagi 4 sama Raka 125k Fajar 100k Bagas 125k`\n"
         "Tanda `:` opsional. Kalau belum dibayar, bagian teman masuk piutang.\n\n"
 
         "*9. Kompensasi / Potong Silang Hutang-Piutang*\n"
         "Dipakai kalau tidak ada uang keluar/masuk rekening, tapi saldo hutang-piutang berubah.\n"
-        "`potong piutang Akmal 20k buat badminton`\n"
-        "`kompensasi piutang Akmal 20k karena badminton`\n"
-        "`saya berutang ke Akmal 20k potong dari piutang`\n"
+        "`potong piutang Dimas 20k buat badminton`\n"
+        "`kompensasi piutang Dimas 20k karena badminton`\n"
+        "`saya berutang ke Dimas 20k potong dari piutang`\n"
         "Tetap masuk sheet `transactions` sebagai fact table, tapi saldo rekening tidak berubah.\n\n"
 
         "*10. Kelola Debt*\n"
         "`/hutang` — ringkasan utang/piutang aktif per orang\n"
-        "`/hutang Annisa` — detail rincian aktif Annisa + debt ID\n"
+        "`/hutang Maya` — detail rincian aktif Maya + debt ID\n"
         "`/debt_void 1` — batalkan rincian dari detail terakhir\n"
-        "`/debt_void Annisa` — batalkan semua debt aktif Annisa setelah konfirmasi\n"
-        "`/debt_void Annisa 1` — batalkan rincian nomor 1 milik Annisa\n"
+        "`/debt_void Maya` — batalkan semua debt aktif Maya setelah konfirmasi\n"
+        "`/debt_void Maya 1` — batalkan rincian nomor 1 milik Maya\n"
         "`/debt_edit 1 nominal 100k` — edit nominal rincian\n"
         "`/debt_edit 1 nama Budi` — edit nama orang\n"
         "`/debt_edit 1 tipe piutang` — ubah arah debt\n"
-        "`/debt_settle Sapto 1-17` — hitung total/net debt nomor 1-17 dari output terakhir `/hutang Sapto`\n"
-        "`/debt_settle Sapto 1-17 amount=337063 account=DANA` — settle hanya nomor 1-17, debt lain tidak disentuh\n"
-        "`Sapto bayar hutang 337063 untuk debt 1-17` — versi natural dari settle debt terpilih\n"
-        "Nomor `1-17` wajib berasal dari detail terakhir `/hutang nama`. Jika terakhir buka `/hutang Alpat`, bot akan menolak settle untuk Sapto.\n"
+        "`/debt_settle Raka 1-17` — hitung total/net debt nomor 1-17 dari output terakhir `/hutang Raka`\n"
+        "`/debt_settle Raka 1-17 amount=337063 account=DANA` — settle hanya nomor 1-17, debt lain tidak disentuh\n"
+        "`Raka bayar hutang 337063 untuk debt 1-17` — versi natural dari settle debt terpilih\n"
+        "Nomor `1-17` wajib berasal dari detail terakhir `/hutang nama`. Jika terakhir buka `/hutang Bagas`, bot akan menolak settle untuk Raka.\n"
         "Jika amount lebih besar dari net debt terpilih, bot memberi warning dan pilihan: anggap bonus/lunas atau catat sebagai hutang lawan arah.\n"
-        "Pembayaran global seperti `Sapto bayar hutang 373063` juga dicek terhadap posisi net: piutang - utang Anda. Jadi overpaid tidak lagi dihitung dari satu arah saja.\n"
+        "Pembayaran global seperti `Raka bayar hutang 373063` juga dicek terhadap posisi net: piutang - utang Anda. Jadi overpaid tidak lagi dihitung dari satu arah saja.\n"
         "Detail `/hutang nama` dikelompokkan per tanggal dibuat, menampilkan debt ID full, dan tidak auto-settle tanpa perintah Anda.\n\n"
 
         "*C. Laporan, Budget, Koreksi Data*\n\n"
         "*11. Laporan*\n"
         "`/saldo` — saldo semua rekening\n"
-        "`/rekening Cash` — ringkasan rekening Cash bulan ini\n"
-        "`/rekening Cash 2026-06` — ringkasan rekening bulan tertentu\n"
-        "`/rekening Cash all` — ringkasan seluruh histori rekening\n"
+        "`/rekening Cash` — list transaksi lengkap rekening Cash bulan ini\n"
+        "`/rekening Cash 2026-06` — list transaksi lengkap rekening bulan tertentu\n"
+        "`/rekening Cash all` — seluruh transaksi rekening Cash\n"
         "`/harian` — ringkasan hari ini\n"
         "`/harian 2026-06-01` — ringkasan tanggal tertentu\n"
         "`/harian Food & Beverage` — list transaksi kategori hari ini\n"
@@ -183,9 +183,9 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Bulk edit juga bisa dengan paste beberapa baris `/edit_txn` sekaligus setelah `/last`, `/transaksi`, atau `/cari`. Bot akan kasih preview Simpan/Batal.\n"
         "`/edit_txn 1 category=\"Household & Supplies\" desc=\"Galon\"`\n"
         "`/edit_txn 2 category=\"Food & Beverage\"`\n"
-        "`/edit_txn txn_id amount=500k dibagi 4 sama Sapto:125k Alpat:125k Opik:100k`\n"
-        "`/edit_txn 2 bayar_hutang Sapto` — ubah transaksi jadi pembayaran utang ke Sapto\n"
-        "`/edit_txn 2 bayar_piutang Sapto` — ubah transaksi jadi pembayaran piutang dari Sapto\n"
+        "`/edit_txn txn_id amount=500k dibagi 4 sama Raka:125k Bagas:125k Fajar:100k`\n"
+        "`/edit_txn 2 bayar_hutang Raka` — ubah transaksi jadi pembayaran utang ke Raka\n"
+        "`/edit_txn 2 bayar_piutang Raka` — ubah transaksi jadi pembayaran piutang dari Raka\n"
         "Jika transaksi punya `hutang_id`, `/delete_txn` akan mencoba void debt terkait otomatis.\n\n"
 
         "*13. Pending Expense / Rencana Pengeluaran*\n"
@@ -675,9 +675,9 @@ async def saldo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def rekening_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /rekening
-    /rekening Cash
-    /rekening Cash 2026-06
-    /rekening Cash all
+    /rekening Cash        -> full ledger rekening bulan ini
+    /rekening Cash 2026-06 -> full ledger rekening bulan tertentu
+    /rekening Cash all     -> full ledger semua histori rekening
     """
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -723,14 +723,32 @@ async def rekening_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reply_long_markdown(update, "\n".join(lines))
         return
 
-    lines = [f"🏦 *Ringkasan Rekening*\n_{md_safe(period_label)}_\n"]
-    append_net_gross_note(lines, report.get("transactions"))
-    append_account_report_lines(lines, report)
-    category_compare_label = "bulan lalu" if report.get("period_type") != "all" else None
-    append_report_category_breakdown_lines(lines, report, category_compare_label)
-    append_recent_account_transaction_lines(lines, report)
+    transactions = sorted(
+        report.get("transactions", []) or [],
+        key=lambda x: (str(x.get("date", "")), int(x.get("_row_index", 0) or 0)),
+        reverse=True,
+    )
 
-    await reply_long_markdown(update, "\n".join(lines))
+    last_map = {}
+    for i, txn in enumerate(transactions, 1):
+        if txn.get("_row_index"):
+            last_map[str(i)] = {
+                "id": str(txn.get("id", "")),
+                "row_index": int(txn.get("_row_index")),
+            }
+    context.user_data["last_txn_map"] = last_map
+
+    title = f"Transaksi Rekening {account} — {period_label}"
+    await reply_long_markdown(
+        update,
+        build_transactions_full_text_shared(
+            transactions,
+            title,
+            account,
+            current_balance=report.get("account_balance"),
+        ),
+    )
+
 
 
 async def harian_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1412,9 +1430,9 @@ def extract_split_bill_total_amount(raw_text: str) -> float | None:
     Ambil nominal asli dari input split bill.
 
     Contoh:
-    - Tissue 10k bagi 4 sama opik alpat sapto -> 10000
-    - Ayam 26k dibagi 2 sama sapto -> 26000
-    - Ayam 26k sama sapto dibagi 2 -> 26000
+    - Tissue 10k bagi 4 sama fajar bagas raka -> 10000
+    - Ayam 26k dibagi 2 sama raka -> 26000
+    - Ayam 26k sama raka dibagi 2 -> 26000
     """
     text = str(raw_text or "").strip()
     amount_token = r"(?P<amount>\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta|m)?)"
@@ -1422,9 +1440,9 @@ def extract_split_bill_total_amount(raw_text: str) -> float | None:
     friend_marker = r"(?:sama|ama|dengan|bareng)"
 
     patterns = [
-        # 22k dibagi 2 sama sapto
+        # 22k dibagi 2 sama raka
         rf"{amount_token}\s+{split_word}\s*(?:jadi\s*)?\d+",
-        # 22k sama sapto dibagi 2
+        # 22k sama raka dibagi 2
         rf"{amount_token}\s+{friend_marker}\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{{0,80}}\s+{split_word}\s*(?:jadi\s*)?\d+",
     ]
 
@@ -1583,9 +1601,9 @@ def parse_debt_void_args(args: list[str]) -> dict:
     Support:
     - /debt_void 1
     - /debt_void debt_xxx
-    - /debt_void Annisa
-    - /debt_void Annisa 1
-    - /debt_void Cash Annisa 1
+    - /debt_void Maya
+    - /debt_void Maya 1
+    - /debt_void Cash Maya 1
     """
     args = [str(a or "").strip() for a in (args or []) if str(a or "").strip()]
     if not args:
@@ -1735,10 +1753,10 @@ async def debt_void_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "❌ Masukkan nomor debt, debt ID, atau nama orang.\n\n"
             "Contoh:\n"
-            "`/hutang Annisa`\n"
+            "`/hutang Maya`\n"
             "`/debt_void 1` — void nomor dari detail terakhir\n"
-            "`/debt_void Annisa` — void semua debt aktif Annisa\n"
-            "`/debt_void Annisa 1` — void rincian nomor 1 milik Annisa\n"
+            "`/debt_void Maya` — void semua debt aktif Maya\n"
+            "`/debt_void Maya 1` — void rincian nomor 1 milik Maya\n"
             "`/debt_void debt_20260610_123456_xxx`",
             parse_mode="Markdown",
         )
@@ -1817,7 +1835,7 @@ def parse_debt_edit_args(args: list[str]) -> tuple[str | None, dict, str | None]
             "Format edit debt belum lengkap.\n\n"
             "Contoh:\n"
             "`/debt_edit 5 nominal 100k`\n"
-            "`/debt_edit 5 nama Akmal`\n"
+            "`/debt_edit 5 nama Dimas`\n"
             "`/debt_edit 5 tipe piutang`\n"
             "`/debt_edit 5 deskripsi Split bill wifi`\n"
             "`/debt_edit 5 jatuh_tempo 2026-06-30`"
@@ -2008,7 +2026,7 @@ def parse_debt_number_selection(selection: str) -> list[str]:
 
 
 def parse_debt_settle_command_args(args: list[str]) -> dict:
-    """Parse /debt_settle Sapto 1-17 amount=337063 account=DANA."""
+    """Parse /debt_settle Raka 1-17 amount=337063 account=DANA."""
     args = [str(a or "").strip() for a in (args or []) if str(a or "").strip()]
     result = {"person_name": "", "selection": "", "numbers": [], "amount": None, "account": "", "error": ""}
     if len(args) < 2:
@@ -2052,7 +2070,7 @@ def parse_debt_settle_command_args(args: list[str]) -> dict:
     person_parts = positional[:selection_idx]
     selection = " ".join(positional[selection_idx:]).strip()
     if not person_parts or not selection:
-        result["error"] = "Nama atau nomor debt belum lengkap. Contoh: `/debt_settle Sapto 1-17 amount=337063 account=DANA`."
+        result["error"] = "Nama atau nomor debt belum lengkap. Contoh: `/debt_settle Raka 1-17 amount=337063 account=DANA`."
         return result
 
     amount = None
@@ -2078,7 +2096,7 @@ def parse_debt_settle_command_args(args: list[str]) -> dict:
 
 
 def parse_natural_debt_settle_text(text: str) -> dict | None:
-    """Parse natural: Sapto bayar hutang 337063 untuk debt 1-17."""
+    """Parse natural: Raka bayar hutang 337063 untuk debt 1-17."""
     raw = str(text or "").strip()
     if not raw:
         return None
@@ -2451,8 +2469,8 @@ def build_selected_debt_settle_transaction(payload: dict, result: dict) -> dict:
 def _collect_known_debt_person_names() -> list[str]:
     """Ambil daftar nama orang dari ringkasan debt untuk membersihkan item lama.
 
-    Ini membantu kasus data lama seperti "Galon Sapto Opik" atau
-    "Tissue Alpat Sapto" agar output shareable cukup menampilkan itemnya.
+    Ini membantu kasus data lama seperti "Galon Raka Fajar" atau
+    "Tissue Bagas Raka" agar output shareable cukup menampilkan itemnya.
     """
     names = []
     try:
@@ -2501,7 +2519,7 @@ def _clean_debt_description_for_share(desc: str, person: str, known_names: list[
     """Bersihkan deskripsi debt agar layak dikirim ke teman.
 
     Output shareable tidak perlu prefix teknis seperti "Split bill:" atau
-    "Ditalangin Sapto:" dan tidak perlu sisa daftar nama split bill.
+    "Ditalangin Raka:" dan tidak perlu sisa daftar nama split bill.
     """
     raw = str(desc or "").strip()
     if not raw:
@@ -2510,7 +2528,7 @@ def _clean_debt_description_for_share(desc: str, person: str, known_names: list[
     person_text = str(person or "").strip()
     known_names = known_names or []
 
-    # Data lama kadang tersimpan: "Ditalangin Nasi Kuning: Ke Sapto".
+    # Data lama kadang tersimpan: "Ditalangin Nasi Kuning: Ke Raka".
     # Untuk format ini, item ada sebelum titik dua.
     if person_text:
         m = re.match(rf"^\s*Ditalangin\s+(.+?)\s*:\s*(?:ke|kepada)\s+{re.escape(person_text)}\s*$", raw, flags=re.IGNORECASE)
@@ -2645,7 +2663,7 @@ async def ringkasan_hutang_handler(update: Update, context: ContextTypes.DEFAULT
     person_query = " ".join(getattr(context, "args", []) or []).strip()
     if not person_query:
         await update.message.reply_text(
-            "Format: `/ringkasan_hutang Nama`\nContoh: `/ringkasan_hutang Sapto`",
+            "Format: `/ringkasan_hutang Nama`\nContoh: `/ringkasan_hutang Raka`",
             parse_mode="Markdown",
         )
         return
@@ -2816,10 +2834,10 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(f"\n{net_label}: *{format_rupiah(abs(net))}*")
     lines.append(
         "\nContoh pembayaran/pengurangan:\n"
-        "`Sapto bayar 5k` — mengurangi piutang Sapto secara eksplisit\n"
-        "`bayar hutang Sapto 10k` — mengurangi utang Anda secara eksplisit\n"
-        "`potong hutang Sapto 500k` — kompensasi tanpa rekening/manual offset\n"
-        "`potong piutang Akmal 20k buat badminton` — kompensasi tanpa rekening\n"
+        "`Raka bayar 5k` — mengurangi piutang Raka secara eksplisit\n"
+        "`bayar hutang Raka 10k` — mengurangi utang Anda secara eksplisit\n"
+        "`potong hutang Raka 500k` — kompensasi tanpa rekening/manual offset\n"
+        "`potong piutang Dimas 20k buat badminton` — kompensasi tanpa rekening\n"
         "`/debt_void 1` — hanya untuk input salah; boleh rollback transaksi sumber ke gross"
     )
 

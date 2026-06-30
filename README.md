@@ -130,48 +130,48 @@ hutang ke Budi 300k
 Budi bayar 100k
 bayar hutang Budi 100k
 minjemin ke Dono 100k - 19k 15-05-2026
-saya nitip Sapto beli nasi kuning 12k
-saya talangin Sapto beli nasi kuning 12k
-Sapto bayar hutang 337063 untuk debt 1-17
+saya nitip Raka beli nasi kuning 12k
+saya talangin Raka beli nasi kuning 12k
+Raka bayar hutang 337063 untuk debt 1-17
 ```
 
 Mode talangan:
 
-- `saya nitip Sapto beli nasi kuning 12k` = Sapto membayar dulu untuk Anda. Bot mencatat **utang ke Sapto** tanpa cashflow, jadi tidak ada pemasukan palsu.
-- `saya talangin Sapto beli nasi kuning 12k` = Anda membayar dulu untuk Sapto. Bot mencatat **piutang Sapto** dan tetap menanyakan rekening karena ada cash out.
-- `ditalangin Alpat beli minyak 46k dibagi 4 sama Alpat Opik Sapto` = PTPT. Anda hutang full Rp46.000 ke Alpat, lalu Alpat/Opik/Sapto masing-masing punya hutang share Rp11.500 ke Anda.
+- `saya nitip Raka beli nasi kuning 12k` = Raka membayar dulu untuk Anda. Bot mencatat **utang ke Raka** tanpa cashflow, jadi tidak ada pemasukan palsu.
+- `saya talangin Raka beli nasi kuning 12k` = Anda membayar dulu untuk Raka. Bot mencatat **piutang Raka** dan tetap menanyakan rekening karena ada cash out.
+- `ditalangin Bagas beli minyak 46k dibagi 4 sama Bagas Fajar Raka` = PTPT. Anda hutang full Rp46.000 ke Bagas, lalu Bagas/Fajar/Raka masing-masing punya hutang share Rp11.500 ke Anda.
 
 Command utama:
 
 ```text
 /hutang
-/hutang Sapto
-/ringkasan_hutang Sapto
+/hutang Raka
+/ringkasan_hutang Raka
 /debt_void 1
-/debt_void Sapto 1
+/debt_void Raka 1
 /debt_edit 1 nominal 100k
-/debt_settle Sapto 1-17
-/debt_settle Sapto 1-17 amount=337063 account=DANA
+/debt_settle Raka 1-17
+/debt_settle Raka 1-17 amount=337063 account=DANA
 ```
 
 
 Shareable debt summary:
 
-- `/ringkasan_hutang Sapto` membuat rekap hutang-piutang yang siap dikirim ke teman.
+- `/ringkasan_hutang Raka` membuat rekap hutang-piutang yang siap dikirim ke teman.
 - Output tidak menampilkan debt ID, command internal, progress teknis, atau metadata sheet.
-- Rincian dipisah per tanggal dan per arah: `Sapto ke Denan` dan `Denan ke Sapto`.
+- Rincian dipisah per tanggal dan per arah: `Raka ke Denan` dan `Denan ke Raka`.
 - Subtotal dan total akhir tetap ditampilkan agar teman bisa cek nominal final dengan cepat.
-- Deskripsi debt lama yang bocor seperti `Minyak Dibagi Opik Sapto` atau `Galon Sapto Opik` dibersihkan sebisa mungkin di output shareable.
+- Deskripsi debt lama yang bocor seperti `Minyak Dibagi Fajar Raka` atau `Galon Raka Fajar` dibersihkan sebisa mungkin di output shareable.
 
 Selected debt settlement:
 
-- Jalankan `/hutang Sapto` dulu agar bot menyimpan mapping nomor debt terbaru.
-- `/debt_settle Sapto 1-17` menghitung total piutang, total utang, dan net untuk nomor 1 sampai 17 saja.
-- `/debt_settle Sapto 1-17 amount=337063 account=DANA` menyelesaikan hanya debt nomor 1 sampai 17. Debt lain di luar range, misalnya nomor 18, tidak disentuh.
-- Versi natural: `Sapto bayar hutang 337063 untuk debt 1-17`.
-- Nomor `1-17` wajib berasal dari output terakhir `/hutang Sapto`. Jika mapping terakhir berasal dari orang lain, bot akan menolak.
+- Jalankan `/hutang Raka` dulu agar bot menyimpan mapping nomor debt terbaru.
+- `/debt_settle Raka 1-17` menghitung total piutang, total utang, dan net untuk nomor 1 sampai 17 saja.
+- `/debt_settle Raka 1-17 amount=337063 account=DANA` menyelesaikan hanya debt nomor 1 sampai 17. Debt lain di luar range, misalnya nomor 18, tidak disentuh.
+- Versi natural: `Raka bayar hutang 337063 untuk debt 1-17`.
+- Nomor `1-17` wajib berasal dari output terakhir `/hutang Raka`. Jika mapping terakhir berasal dari orang lain, bot akan menolak.
 - Jika pembayaran lebih besar dari net debt terpilih, bot memberi warning dan pilihan: anggap lunas/bonus atau catat kelebihan sebagai hutang lawan arah.
-- Pembayaran global seperti `Sapto bayar hutang 373063` juga dicek terhadap posisi net orang tersebut, bukan hanya satu arah debt. Contoh: piutang Rp415.062,5 dan utang Anda Rp88.000 berarti saldo net yang perlu dibayar Sapto adalah Rp327.062,5; input Rp373.063 akan dianggap overpaid Rp46.000,5.
+- Pembayaran global seperti `Raka bayar hutang 373063` juga dicek terhadap posisi net orang tersebut, bukan hanya satu arah debt. Contoh: piutang Rp415.062,5 dan utang Anda Rp88.000 berarti saldo net yang perlu dibayar Raka adalah Rp327.062,5; input Rp373.063 akan dianggap overpaid Rp46.000,5.
 
 Catatan:
 
@@ -211,7 +211,18 @@ Piutang:
 
 ### 8. Reports & Transaction History
 
-Command ringkasan:
+Command saldo dan rekening:
+
+```text
+/saldo
+/rekening Cash
+/rekening Cash 2026-06
+/rekening Cash all
+```
+
+`/rekening <nama>` sekarang menjadi laporan utama rekening: outputnya berupa daftar transaksi lengkap seperti `/transaksi rekening <nama>`, ditambah saldo rekening saat ini dan ringkasan periode. Jadi untuk cek rekening tertentu, cukup gunakan `/rekening Cash`.
+
+Command ringkasan periode:
 
 ```text
 /harian
@@ -234,7 +245,10 @@ Command transaksi full:
 /transaksi hari 2026-06-11
 /transaksi minggu 2026-06-11
 /transaksi bulan 2026-06
+/transaksi rekening Cash
 ```
+
+`/transaksi rekening Cash` tetap didukung sebagai alternatif/backward compatible, tetapi `/rekening Cash` lebih direkomendasikan untuk laporan rekening karena lebih singkat dan juga menampilkan saldo saat ini.
 
 Command last:
 
@@ -249,7 +263,7 @@ Command last:
 
 Catatan:
 
-- `/last` dan `/transaksi` menyimpan mapping nomor transaksi ke `context.user_data`, sehingga bisa dilanjutkan dengan `/delete_txn` atau `/edit_txn`.
+- `/last`, `/transaksi`, dan `/rekening <nama>` menyimpan mapping nomor transaksi ke `context.user_data`, sehingga bisa dilanjutkan dengan `/delete_txn` atau `/edit_txn`.
 - Output panjang dipecah otomatis agar tidak terkena limit Telegram.
 
 ---
@@ -313,14 +327,13 @@ Sheet terkait:
 
 ---
 
-### 12. Assets, Liabilities & Net Worth
+### 12. Assets & Net Worth
 
 Command:
 
 ```text
 /networth
 /assets
-/liabilities
 /networth_snapshot
 /networth_history
 ```
@@ -379,7 +392,7 @@ Edit harga satuan:
 Formula net worth:
 
 ```text
-Net Worth = total saldo rekening + total aset aktif - total liabilitas aktif
+Net Worth = total saldo rekening + total aset aktif
 ```
 
 ---
@@ -484,9 +497,29 @@ monthly_summary
 recurring_rules
 recurring_logs
 assets
-liabilities
 net_worth_snapshots
 ```
+
+---
+
+## Atomic Google Sheets Write Safety
+
+Semua Telegram handler sekarang dibungkus dalam `sheets_transaction()`. Efeknya:
+
+- setiap write ke Google Sheets lewat `app/sheets/client.py` otomatis retry jika kena 429/quota/transient error;
+- setiap write sukses menyimpan rollback action;
+- jika write berikutnya gagal setelah retry, perubahan sebelumnya di operasi yang sama akan di-rollback;
+- operasi dianggap gagal total, bukan sukses sebagian.
+
+Contoh kasus yang ditangani:
+
+```text
+Raka bayar hutang 373.063k
+```
+
+Jika update debt sukses tetapi append transaksi atau update saldo kena quota 429, perubahan debt yang sudah sempat masuk akan dibatalkan.
+
+Catatan teknis: Google Sheets bukan database transactional, jadi rollback ini bersifat best-effort. Jika quota benar-benar habis, rollback juga bisa gagal; bot akan mengembalikan error yang meminta pengecekan manual.
 
 ---
 
@@ -606,56 +639,15 @@ Pastikan:
 
 Jika memakai LangChain Gemini, hindari dependency yang konflik. Gunakan versi di `requirements.txt` sebagai source of truth.
 
-## AI Command Tester / Local Parser QA
+## Local Debug / Parser QA
 
-Project ini punya tester lokal terpisah dari deployment:
-
-```bash
-python scripts/ai_command_tester.py --sample
-```
-
-Fungsi utamanya untuk mengecek apakah input natural language sudah diparse sesuai ekspektasi sebelum bot dideploy. Tester ini aman untuk dijalankan lokal karena tidak mengirim Telegram message dan tidak menulis ke Google Sheets.
-
-Contoh test satu input:
+Di zip ini script QA yang tersedia adalah:
 
 ```bash
-python scripts/ai_command_tester.py --input "Nasi kuning 22k dibagi 2 sama sapto 09-05-2026" --json
+python scripts/debug_check.py
 ```
 
-Contoh simulasi keputusan split bill:
-
-```bash
-python scripts/ai_command_tester.py --input "Nasi kuning 22k dibagi 2 sama sapto 09-05-2026" --decision unpaid --json
-python scripts/ai_command_tester.py --input "Nasi kuning 22k dibagi 2 sama sapto 09-05-2026" --decision paid --json
-```
-
-Contoh test input banyak baris dari file txt:
-
-```bash
-python scripts/ai_command_tester.py --input-file input_test.txt --decision unpaid --json
-```
-
-Contoh menjalankan test case JSON:
-
-```bash
-python scripts/ai_command_tester.py --file tests/command_cases.json
-```
-
-Kalau `GEMINI_API_KEY` tersedia dan dependency LangChain/Gemini sudah terinstall, tester bisa memberi diagnosis AI:
-
-```bash
-python scripts/ai_command_tester.py --file tests/command_cases.json --ai
-```
-
-Format test case ada di `tests/command_cases.json`. Field penting:
-
-- `input`: command yang mau dites.
-- `decision`: opsional, `paid` atau `unpaid` untuk simulasi split bill.
-- `expect.item_count`: jumlah item yang harus terdeteksi.
-- `expect.paths`: assertion ke output JSON, misalnya `items.0.parsed.amount`.
-- `expect.prompt_contains`: teks yang wajib muncul di prompt bot.
-
-Tester ini cocok dipakai setiap kali ada perubahan parser, flow split bill, intent lokal, kategori, rekening, hutang/piutang, atau batch input.
+Catatan: `scripts/ai_command_tester.py` dan `tests/command_cases.json` tidak ada di zip ini, jadi README tidak mengklaim tester tersebut sebagai fitur aktif.
 
 ## Debt Offset / Kompensasi Tanpa Rekening
 
@@ -664,13 +656,13 @@ Bot mendukung kompensasi hutang-piutang tanpa cashflow rekening, tetapi tetap me
 Contoh:
 
 ```text
-potong piutang Akmal 20k buat badminton
-saya berutang ke Akmal 20k potong dari piutang
+potong piutang Dimas 20k buat badminton
+saya berutang ke Dimas 20k potong dari piutang
 ```
 
 Efek:
 
-- Debt ledger Akmal berubah.
+- Debt ledger Dimas berubah.
 - Tidak ada rekening yang berubah.
 - Row `transactions` tetap dibuat dengan `type = debt_offset` dan `account = Debt Offset`.
 
@@ -679,3 +671,8 @@ Efek:
 Fitur `/ask`, pertanyaan finance natural, dan `/coach` sekarang memakai session history terbatas dari `context.user_data["finance_chat_history"]`. History ini membantu bot memahami pertanyaan lanjutan seperti "yang tadi" atau "yang food itu transaksi apa aja?" tanpa membuat sheet baru.
 
 Catatan: session history tidak persistent dan akan hilang jika bot restart/redeploy. Data angka utama tetap diambil dari Google Sheets, bukan dari chat history.
+
+
+## Fitur yang Belum Aktif
+
+Fitur laporan kuartalan dan tahunan belum tersedia. Bot hanya memberi pesan bahwa fitur tersebut belum didukung, bukan membuat laporan palsu.

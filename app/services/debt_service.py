@@ -5,6 +5,7 @@ from app.sheets.client import (
     get_all_records,
     update_cell,
     delete_rows,
+    rollback_current_sheets_transaction,
 )
 from app.config import SHEET_DEBTS, SHEET_DEBT_PAYMENTS
 
@@ -87,7 +88,7 @@ def normalize_debt_person_group_name(name: str) -> str:
     Normalisasi nama untuk tampilan agregat debt.
 
     Data lama kadang menyimpan account sebagai bagian dari nama, misalnya
-    "Cash Annisa". Untuk /hutang utama, itu harus digabung ke "Annisa"
+    "Cash Maya". Untuk /hutang utama, itu harus digabung ke "Maya"
     agar ringkasan tetap per orang, bukan per account+orang.
     """
     person = normalize_person_name(name)
@@ -619,8 +620,8 @@ def add_payment_by_person(
                 "success": False,
                 "message": (
                     f"Ada utang dan piutang aktif dengan {person_name}. "
-                    "Pakai input yang lebih spesifik: `Sapto bayar hutang 50k` untuk piutang, "
-                    "atau `bayar hutang Sapto 50k` untuk utang Anda."
+                    "Pakai input yang lebih spesifik: `Raka bayar hutang 50k` untuk piutang, "
+                    "atau `bayar hutang Raka 50k` untuk utang Anda."
                 ),
                 "remaining": total_payable_before + total_receivable_before,
                 "is_settled": False,
@@ -736,9 +737,10 @@ def add_payment_by_person(
             fronting_mode="overpayment_from_payment",
         )
         if not created.get("success"):
+            rollback_current_sheets_transaction()
             return {
                 "success": False,
-                "message": "Pembayaran utama berhasil, tapi gagal mencatat overpaid sebagai debt lawan arah: " + created.get("message", ""),
+                "message": "Pembayaran gagal disimpan penuh; perubahan sebelumnya sudah dibatalkan. Gagal mencatat overpaid sebagai debt lawan arah: " + created.get("message", ""),
                 "remaining": 0,
                 "is_settled": False,
                 "allocations": allocations,
@@ -865,10 +867,10 @@ def offset_debt_by_person(
     Kompensasi / potong silang hutang-piutang tanpa cashflow rekening.
 
     Contoh kasus:
-    - User punya piutang ke Akmal 50k.
-    - User ikut badminton dan berutang ke Akmal 20k.
-    - Input: "potong piutang Akmal 20k buat badminton".
-    - Efek: piutang receivable Akmal berkurang 20k, transactions tetap mencatat fact row type=debt_offset.
+    - User punya piutang ke Dimas 50k.
+    - User ikut badminton dan berutang ke Dimas 20k.
+    - Input: "potong piutang Dimas 20k buat badminton".
+    - Efek: piutang receivable Dimas berkurang 20k, transactions tetap mencatat fact row type=debt_offset.
 
     target_debt_type:
     - receivable: kurangi piutang aktif orang tsb; jika offset lebih besar, sisa jadi payable.
@@ -976,9 +978,10 @@ def offset_debt_by_person(
                 fronting_mode="offset_remainder",
             )
             if not created.get("success"):
+                rollback_current_sheets_transaction()
                 return {
                     "success": False,
-                    "message": "Offset sebagian berhasil, tapi gagal membuat sisa debt: " + created.get("message", ""),
+                    "message": "Offset gagal disimpan penuh; perubahan sebelumnya sudah dibatalkan. Gagal membuat sisa debt: " + created.get("message", ""),
                     "allocations": allocations,
                     "affected_debt_ids": affected_debt_ids,
                 }
@@ -1814,7 +1817,7 @@ def is_debt_without_initial_cashflow(debt: dict) -> bool:
     Deteksi debt yang memang dibuat tanpa transaksi cashflow awal.
 
     Contoh: split bill receivable, atau fitur talangan/ditalangin seperti
-    "saya nitip Sapto beli nasi 12k". Debt seperti ini aman di-void tanpa
+    "saya nitip Raka beli nasi 12k". Debt seperti ini aman di-void tanpa
     reverse saldo karena saldo rekening user memang belum pernah berubah.
     """
     debt_type = str(debt.get("type", "")).strip()
@@ -1974,9 +1977,9 @@ def upsert_overpaid_adjustment(original_debt: dict, overpaid_amount: float, debt
     """Buat/update adjustment debt saat payment melebihi charge baru.
 
     Contoh:
-    - Sapto awalnya hutang 125k dan sudah bayar 100k.
-    - Transaksi sumber diedit sehingga Sapto seharusnya cuma hutang 80k.
-    - Overpaid 20k menjadi payable: Anda hutang ke Sapto 20k.
+    - Raka awalnya hutang 125k dan sudah bayar 100k.
+    - Transaksi sumber diedit sehingga Raka seharusnya cuma hutang 80k.
+    - Overpaid 20k menjadi payable: Anda hutang ke Raka 20k.
 
     Adjustment ini tetap global per orang dan berbeda dari void.
     """
@@ -2379,8 +2382,8 @@ def resolve_person_debt_targets(person_name: str, detail_ref: str | None = None)
     Resolve target debt dari nama orang.
 
     Support:
-    - /debt_void Annisa      -> semua rincian aktif Annisa
-    - /debt_void Annisa 1    -> rincian nomor 1 dari /hutang Annisa
+    - /debt_void Maya      -> semua rincian aktif Maya
+    - /debt_void Maya 1    -> rincian nomor 1 dari /hutang Maya
 
     Nomor rincian mengikuti urutan active_details di get_debt_person_detail(),
     sama seperti output /hutang <nama>.
@@ -2424,7 +2427,7 @@ def resolve_person_debt_targets(person_name: str, detail_ref: str | None = None)
                 "scope": "person_detail",
             }
 
-        # Fallback: izinkan debt_id setelah nama, misalnya /debt_void Annisa debt_xxx
+        # Fallback: izinkan debt_id setelah nama, misalnya /debt_void Maya debt_xxx
         for debt in active_details:
             if str(debt.get("id", "")).strip() == clean_ref:
                 return {
@@ -2775,11 +2778,12 @@ def void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
             mutation_type="void",
         )
     except Exception as e:
+        rollback_current_sheets_transaction()
         return {
             "success": False,
             "message": (
-                "Saldo rekening sudah direverse, tapi debt gagal ditandai void. "
-                f"Cek manual di sheet. Error: {str(e)}"
+                "Debt void gagal disimpan penuh. Perubahan sebelumnya sudah dibatalkan. "
+                f"Error: {str(e)}"
             ),
             "debt": debt,
             "cashflow_txn": cashflow_txn,
@@ -2792,11 +2796,11 @@ def void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
             txn_row = int(cashflow_txn.get("_row_index"))
             delete_rows("transactions", [txn_row])
         except Exception as e:
+            rollback_current_sheets_transaction()
             return {
                 "success": False,
                 "message": (
-                    "Debt sudah ditandai void dan saldo sudah direverse, "
-                    "tapi cashflow transaksi gagal dihapus. Cek manual di sheet transactions. "
+                    "Debt void gagal menghapus cashflow. Perubahan sebelumnya sudah dibatalkan. "
                     f"Error: {str(e)}"
                 ),
                 "debt": debt,

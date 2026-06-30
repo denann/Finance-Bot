@@ -577,7 +577,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if err:
                 await safe_edit_message(query, 
                     f"⚠️ {md_safe(err)}\n\n"
-                    f"Contoh: `Sapto bayar 5k` untuk mengurangi piutang, atau `saya bayar hutang Sapto 5k` untuk mengurangi utang Anda.",
+                    f"Contoh: `Raka bayar 5k` untuk mengurangi piutang, atau `saya bayar hutang Raka 5k` untuk mengurangi utang Anda.",
                     parse_mode="Markdown",
                 )
                 context.user_data.pop("pending_debt", None)
@@ -1716,6 +1716,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             fronted_split_result = create_fronted_split_receivable_debts(debt_parsed)
+            if fronted_split_result.get("failed"):
+                rollback_current_sheets_transaction()
+                message = "; ".join(
+                    f"{item.get('person_name')}: {item.get('message')}"
+                    for item in fronted_split_result.get("failed", [])
+                )
+                await safe_edit_message(
+                    query,
+                    "❌ Gagal menyimpan debt split/talangan. Semua perubahan dari input ini sudah dibatalkan.\n"
+                    f"Detail: {message}",
+                )
+                context.user_data.pop("pending_debt", None)
+                context.user_data.pop("pending_debt_batch", None)
+                return
             attach_fronted_split_debt_relations(debt_parsed, debt_result, fronted_split_result)
 
             if intent == "add_payment":
@@ -1746,6 +1760,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             transaction_result = None
             if debt_txn.get("type") != "pending":
                 transaction_result = save_transaction(debt_txn, raw_input=raw)
+
+            if transaction_result and not transaction_result.get("success"):
+                rollback_current_sheets_transaction()
+                await safe_edit_message(
+                    query,
+                    "❌ Gagal menyimpan debt/cashflow. Semua perubahan dari input ini sudah dibatalkan.\n"
+                    f"Detail: {transaction_result.get('message')}",
+                )
+                context.user_data.pop("pending_debt", None)
+                context.user_data.pop("pending_debt_batch", None)
+                context.user_data.pop("pending_parsed", None)
+                context.user_data.pop("pending_raw", None)
+                context.user_data.pop("pending_batch", None)
+                return
 
             lines = ["✅ *Debt berhasil diproses!*\n"]
 
@@ -1801,7 +1829,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if transaction_result.get("new_balance") is not None:
                         lines.append(f"💳 Saldo {md_safe(account)}: *{format_rupiah(transaction_result['new_balance'])}*")
                 else:
-                    lines.append(f"\n⚠️ Debt tersimpan, tapi cashflow gagal: {md_safe(transaction_result.get('message'))}")
+                    # Sudah ditangani sebagai gagal total sebelum pesan sukses dibuat.
+                    pass
             elif not debt_uses_cashflow(debt_parsed):
                 lines.append("\n📝 Cashflow tidak dicatat karena ini mode talangan/ditalangin tanpa uang masuk/keluar dari rekening Anda.")
 
@@ -1885,6 +1914,21 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     continue
 
                 fronted_split_result = create_fronted_split_receivable_debts(parsed)
+                if fronted_split_result.get("failed"):
+                    rollback_current_sheets_transaction()
+                    failed_detail = "; ".join(
+                        f"{item.get('person_name')}: {item.get('message')}"
+                        for item in fronted_split_result.get("failed", [])
+                    )
+                    await safe_edit_message(
+                        query,
+                        "❌ Batch debt gagal disimpan penuh. Semua perubahan dari input ini sudah dibatalkan.\n"
+                        f"Detail split/talangan: {failed_detail}",
+                    )
+                    context.user_data.pop("pending_debt_batch", None)
+                    context.user_data.pop("pending_mixed", None)
+                    context.user_data.pop("pending_batch", None)
+                    return
                 attach_fronted_split_debt_relations(parsed, debt_result, fronted_split_result)
 
                 if not parsed.get("hutang_id") and debt_result.get("debt_id"):
@@ -1913,6 +1957,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             transaction_result = None
             if debt_transaction_items:
                 transaction_result = save_transactions_batch(debt_transaction_items)
+                if not transaction_result.get("success"):
+                    rollback_current_sheets_transaction()
+                    await safe_edit_message(
+                        query,
+                        "❌ Batch debt/cashflow gagal disimpan penuh. Semua perubahan dari input ini sudah dibatalkan.\n"
+                        f"Detail: {transaction_result.get('message')}",
+                    )
+                    context.user_data.pop("pending_debt_batch", None)
+                    return
 
             result_lines.append("")
             result_lines.append(f"💸 Debt diproses: *{debt_success_count} item*")
@@ -2045,6 +2098,21 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     continue
 
                 fronted_split_result = create_fronted_split_receivable_debts(parsed)
+                if fronted_split_result.get("failed"):
+                    rollback_current_sheets_transaction()
+                    failed_detail = "; ".join(
+                        f"{item.get('person_name')}: {item.get('message')}"
+                        for item in fronted_split_result.get("failed", [])
+                    )
+                    await safe_edit_message(
+                        query,
+                        "❌ Batch debt gagal disimpan penuh. Semua perubahan dari input ini sudah dibatalkan.\n"
+                        f"Detail split/talangan: {failed_detail}",
+                    )
+                    context.user_data.pop("pending_debt_batch", None)
+                    context.user_data.pop("pending_mixed", None)
+                    context.user_data.pop("pending_batch", None)
+                    return
                 attach_fronted_split_debt_relations(parsed, debt_result, fronted_split_result)
 
                 if not parsed.get("hutang_id") and debt_result.get("debt_id"):
@@ -2124,6 +2192,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             transaction_result = None
             if all_transaction_items:
                 transaction_result = save_transactions_batch(all_transaction_items)
+                if not transaction_result.get("success"):
+                    rollback_current_sheets_transaction()
+                    await safe_edit_message(
+                        query,
+                        "❌ Mixed input gagal disimpan penuh. Semua perubahan dari input ini sudah dibatalkan.\n"
+                        f"Detail: {transaction_result.get('message')}",
+                    )
+                    context.user_data.pop("pending_mixed", None)
+                    context.user_data.pop("pending_batch", None)
+                    context.user_data.pop("pending_debt", None)
+                    context.user_data.pop("pending_debt_batch", None)
+                    context.user_data.pop("pending_parsed", None)
+                    context.user_data.pop("pending_raw", None)
+                    return
 
             if transaction_result:
                 transaction_success_count = transaction_result.get("success_count", 0)
@@ -2154,15 +2236,21 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 tipe_hutang="piutang",
                             )
                             if not relation_result.get("success"):
-                                failed_items.append({
-                                    "raw": item.get("raw", "split bill"),
-                                    "message": f"Piutang dibuat, tapi relasi transaksi gagal: {relation_result.get('message')}",
-                                })
+                                rollback_current_sheets_transaction()
+                                await safe_edit_message(
+                                    query,
+                                    "❌ Gagal menyimpan relasi split bill. Semua perubahan dari input ini sudah dibatalkan.\n"
+                                    f"Detail: {relation_result.get('message')}",
+                                )
+                                return
                     elif debt_result:
-                        failed_items.append({
-                            "raw": item.get("raw", "split bill"),
-                            "message": debt_result.get("message", "Gagal membuat piutang split bill."),
-                        })
+                        rollback_current_sheets_transaction()
+                        await safe_edit_message(
+                            query,
+                            "❌ Gagal membuat piutang split bill. Semua perubahan dari input ini sudah dibatalkan.\n"
+                            f"Detail: {debt_result.get('message', 'Gagal membuat piutang split bill.')}",
+                        )
+                        return
 
                 if split_debt_lines:
                     result_lines.append("\n🤝 *Piutang split bill dibuat:*")
@@ -2213,6 +2301,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             result = save_transactions_batch(batch)
 
+            if not result.get("success"):
+                rollback_current_sheets_transaction()
+                await safe_edit_message(
+                    query,
+                    "❌ Batch transaksi gagal disimpan penuh. Semua perubahan dari input ini sudah dibatalkan.\n"
+                    f"Detail: {result.get('message')}",
+                )
+                context.user_data.pop("pending_batch", None)
+                context.user_data.pop("pending_parsed", None)
+                context.user_data.pop("pending_raw", None)
+                context.user_data.pop("pending_debt", None)
+                context.user_data.pop("pending_debt_batch", None)
+                return
+
             lines = [
                 "✅ *Batch selesai diproses!*",
                 f"📝 Berhasil: {result.get('success_count', 0)} transaksi",
@@ -2244,15 +2346,21 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             tipe_hutang="piutang",
                         )
                         if not relation_result.get("success"):
-                            result.setdefault("failed_items", []).append({
-                                "raw": item.get("raw", "split bill"),
-                                "message": f"Piutang dibuat, tapi relasi transaksi gagal: {relation_result.get('message')}",
-                            })
+                            rollback_current_sheets_transaction()
+                            await safe_edit_message(
+                                query,
+                                "❌ Gagal menyimpan relasi split bill. Semua perubahan dari input ini sudah dibatalkan.\n"
+                                f"Detail: {relation_result.get('message')}",
+                            )
+                            return
                 elif debt_result:
-                    result.setdefault("failed_items", []).append({
-                        "raw": item.get("raw", "split bill"),
-                        "message": debt_result.get("message", "Gagal membuat piutang split bill."),
-                    })
+                    rollback_current_sheets_transaction()
+                    await safe_edit_message(
+                        query,
+                        "❌ Gagal membuat piutang split bill. Semua perubahan dari input ini sudah dibatalkan.\n"
+                        f"Detail: {debt_result.get('message', 'Gagal membuat piutang split bill.')}",
+                    )
+                    return
 
             if split_debt_lines:
                 lines.append("\n🤝 *Piutang split bill dibuat:*")
@@ -2351,12 +2459,21 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         tipe_hutang="piutang",
                     )
                     if not relation_result.get("success"):
-                        split_info += (
-                            "\n⚠️ Piutang dibuat, tapi relasi transaksi gagal: "
-                            f"{relation_result.get('message')}"
+                        rollback_current_sheets_transaction()
+                        await safe_edit_message(
+                            query,
+                            "❌ Gagal menyimpan relasi split bill. Semua perubahan dari input ini sudah dibatalkan.\n"
+                            f"Detail: {relation_result.get('message')}",
                         )
+                        return
             elif split_debt:
-                split_info = f"\n\n⚠️ Gagal membuat piutang split bill: {split_debt.get('message')}"
+                rollback_current_sheets_transaction()
+                await safe_edit_message(
+                    query,
+                    "❌ Gagal membuat piutang split bill. Semua perubahan dari input ini sudah dibatalkan.\n"
+                    f"Detail: {split_debt.get('message')}",
+                )
+                return
 
             budget_info = ""
             if parsed.get("type") == "expense" and parsed.get("category"):

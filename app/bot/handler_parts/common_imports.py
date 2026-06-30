@@ -51,7 +51,7 @@ from app.bot.keyboards import (
 from app.nlp.regex_parser import parse_with_regex, parse_debt_input, detect_date, strip_date_phrases
 from app.nlp.gemini_parser import parse_with_pending_fallback
 from app.nlp.gemini_image_parser import parse_transactions_from_image
-from app.sheets.client import get_all_records, get_spreadsheet
+from app.sheets.client import get_all_records, get_spreadsheet, rollback_current_sheets_transaction
 from app.services.transaction_service import (
     save_transaction,
     save_transactions_batch,
@@ -349,7 +349,7 @@ def get_net_expense_after_receivable(txn: dict) -> float:
 
 
 def build_debt_parts_text(parts: list[dict]) -> str:
-    """Format: Rp8.000 (Sapto), Rp8.000 (Alpat)."""
+    """Format: Rp8.000 (Raka), Rp8.000 (Bagas)."""
     chunks = []
     for part in parts or []:
         person = md_safe((part or {}).get("person_name") or "Tanpa nama")
@@ -472,6 +472,105 @@ def build_transaction_display_lines(
             lines.append(f"   🔖 `{md_code_text(txn_id)}`")
 
     return lines
+
+
+def build_transactions_full_text_shared(
+    transactions: list[dict],
+    title: str,
+    account_filter: str | None = None,
+    *,
+    current_balance: float | None = None,
+) -> str:
+    """Render daftar transaksi lengkap + ringkasan periode.
+
+    Dipakai bersama oleh `/transaksi ...` dan `/rekening <nama>` agar
+    kedua command tidak punya format laporan rekening yang saling tabrakan.
+    """
+    transactions = enrich_transactions_with_debt_info(transactions or [])
+    lines = [f"🧾 *{md_safe(title)}*\n"]
+    append_net_gross_note(lines, transactions)
+
+    total_income = 0.0
+    total_expense = 0.0
+    total_net_expense = 0.0
+    total_transfer = 0.0
+    total_transfer_in = 0.0
+    total_transfer_out = 0.0
+    account_key = str(account_filter or "").strip().lower()
+
+    current_date_group = None
+    for i, txn in enumerate(transactions, 1):
+        txn_type = str(txn.get("type", "") or "").strip().lower()
+        amount = _safe_float_for_display(txn.get("amount", 0))
+        source_account = str(txn.get("account", "") or "").strip()
+        target_account = str(txn.get("to_account", "") or "").strip()
+        source_match = bool(account_key and source_account.lower() == account_key)
+        target_match = bool(account_key and target_account.lower() == account_key)
+
+        if account_key:
+            if txn_type == "income" and source_match:
+                total_income += amount
+            elif txn_type == "expense" and source_match:
+                total_expense += amount
+                total_net_expense += get_net_expense_after_receivable(txn)
+            elif txn_type == "transfer":
+                if source_match:
+                    total_transfer_out += amount
+                if target_match:
+                    total_transfer_in += amount
+                if source_match or target_match:
+                    total_transfer += amount
+        else:
+            if txn_type == "income":
+                total_income += amount
+            elif txn_type == "expense":
+                total_expense += amount
+                total_net_expense += get_net_expense_after_receivable(txn)
+            elif txn_type == "transfer":
+                total_transfer += amount
+
+        date_group = str(txn.get("date", "") or "Tanpa tanggal").strip() or "Tanpa tanggal"
+        if date_group != current_date_group:
+            lines.append(f"\n*{md_safe(format_indonesian_date_group_label(date_group))}*")
+            current_date_group = date_group
+
+        lines.extend(build_transaction_display_lines(txn, index=i, include_date=False, include_id=True))
+
+    if account_key:
+        net = total_income + total_transfer_in - total_expense - total_transfer_out
+        expense_text = format_expense_net_gross(total_net_expense, total_expense)
+        summary_lines = [
+            "\n*Ringkasan Rekening:*",
+        ]
+        if current_balance is not None:
+            summary_lines.append(f"💰 Saldo Saat Ini : *{format_rupiah(current_balance)}*")
+        summary_lines.extend([
+            f"✅ Income          : *{format_rupiah(total_income)}*",
+            f"❌ Expense         : *{expense_text}*",
+            f"🔁 Transfer Masuk  : *{format_rupiah(total_transfer_in)}*",
+            f"🔁 Transfer Keluar : *{format_rupiah(total_transfer_out)}*",
+            f"📊 Net Rekening    : *{format_rupiah(net)}*",
+            f"📝 Total           : *{len(transactions)} transaksi*",
+        ])
+        lines.append("\n".join(summary_lines))
+    else:
+        net = total_income - total_expense
+        expense_text = format_expense_net_gross(total_net_expense, total_expense)
+        lines.append(
+            "\n*Ringkasan:*\n"
+            f"✅ Income   : *{format_rupiah(total_income)}*\n"
+            f"❌ Expense  : *{expense_text}*\n"
+            f"🔄 Transfer : *{format_rupiah(total_transfer)}*\n"
+            f"📊 Net      : *{format_rupiah(net)}*\n"
+            f"📝 Total    : *{len(transactions)} transaksi*"
+        )
+
+    lines.append(
+        "\nNomor di atas bisa dipakai untuk koreksi setelah command ini:\n"
+        "`/delete_txn 1` atau `/edit_txn 1 amount=15000`"
+    )
+
+    return "\n".join(lines)
 
 
 def is_authorized(update: Update) -> bool:

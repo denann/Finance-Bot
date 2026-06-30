@@ -60,7 +60,7 @@ Aturan parsing:
 1. type harus salah satu dari: "expense", "income", "transfer".
 2. amount harus integer dalam Rupiah, bukan string.
 3. Jika ada pola split tanpa nama teman, misalnya "dibagi 2", "bagi 2", "split 2", amount boleh dibagi sesuai angka tersebut karena itu dianggap bagian user.
-4. Jika ada pola split bill dengan nama teman, misalnya "22k dibagi 2 sama Sapto", "22k bagi 2 sama Opik Alpat Sapto", amount harus tetap total tagihan asli, bukan dibagi. Status sudah dibayar/belum dibayar akan ditangani sistem setelah parsing.
+4. Jika ada pola split bill dengan nama teman, misalnya "22k dibagi 2 sama Raka", "22k bagi 2 sama Fajar Bagas Raka", amount harus tetap total tagihan asli, bukan dibagi. Status sudah dibayar/belum dibayar akan ditangani sistem setelah parsing.
 5. category harus dari daftar kategori valid.
 6. account adalah rekening asal, null jika tidak disebutkan.
 7. to_account hanya diisi jika type = "transfer", null jika bukan transfer.
@@ -74,11 +74,11 @@ Aturan parsing:
 9. description adalah ringkasan transaksi utama, maksimal 50 karakter.
    Jangan masukkan catatan, orang patungan, atau konteks tambahan ke description.
    Contoh:
-   - "beli nasi padang 20k catatan dibagi 2 sama Sapto" → description: "Nasi Padang"
+   - "beli nasi padang 20k catatan dibagi 2 sama Raka" → description: "Nasi Padang"
    - "beli obat 45k buat demam" → description: "Obat"
 10. catatan adalah detail tambahan jika ada.
    Contoh:
-   - "catatan dibagi 2 sama Sapto" → catatan: "Dibagi 2 sama Sapto"
+   - "catatan dibagi 2 sama Raka" → catatan: "Dibagi 2 sama Raka"
    - "buat demam" → catatan: "Demam"
    - Jika tidak ada, isi "".
 11. tipe_pengeluaran hanya diisi jika type = "expense". Jika type bukan expense, isi "".
