@@ -161,6 +161,7 @@ Selected debt settlement:
 - Versi natural: `Sapto bayar hutang 337063 untuk debt 1-17`.
 - Nomor `1-17` wajib berasal dari output terakhir `/hutang Sapto`. Jika mapping terakhir berasal dari orang lain, bot akan menolak.
 - Jika pembayaran lebih besar dari net debt terpilih, bot memberi warning dan pilihan: anggap lunas/bonus atau catat kelebihan sebagai hutang lawan arah.
+- Pembayaran global seperti `Sapto bayar hutang 373063` juga dicek terhadap posisi net orang tersebut, bukan hanya satu arah debt. Contoh: piutang Rp415.062,5 dan utang Anda Rp88.000 berarti saldo net yang perlu dibayar Sapto adalah Rp327.062,5; input Rp373.063 akan dianggap overpaid Rp46.000,5.
 
 Catatan:
 

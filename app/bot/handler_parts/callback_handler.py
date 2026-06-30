@@ -240,16 +240,19 @@ def build_overpayment_decision_text(parsed: dict, outcome: dict) -> str:
     person = parsed.get("person_name") or outcome.get("person_name") or "-"
     target_type = outcome.get("target_debt_type")
     target_label = "piutang" if target_type == "receivable" else "utang Anda"
+    opposite_label = "utang Anda" if target_type == "receivable" else "piutang"
     overpaid = float(outcome.get("overpayment", 0) or 0)
     lines = [
-        "⚠️ *Pembayaran melebihi saldo debt aktif*\n",
+        "⚠️ *Pembayaran melebihi saldo net debt aktif*\n",
         f"👤 Subjek: *{md_safe(person)}*",
         f"💰 Nominal input: *{format_rupiah(outcome.get('amount', 0))}*",
         f"📌 Sisa {target_label} sebelum bayar: *{format_rupiah(outcome.get('target_remaining_before', 0))}*",
+        f"📌 Sisa {opposite_label} sebelum bayar: *{format_rupiah(outcome.get('opposite_remaining_before', 0))}*",
+        f"📊 Saldo net yang perlu dibayar: *{format_rupiah(outcome.get('net_payment_capacity', 0))}*",
         f"➕ Kelebihan bayar: *{format_rupiah(overpaid)}*",
         "",
         "Pilih perlakuan untuk uang lebihnya:",
-        "1. *Anggap lunas/bonus* → debt ditutup, kelebihan tidak jadi hutang baru.",
+        "1. *Anggap lunas/bonus* → debt lama ditutup, kelebihan tidak jadi hutang baru.",
         "2. *Catat sebagai hutang saya* → kelebihan jadi utang Anda ke orang tersebut.",
     ]
     return "\n".join(lines)
@@ -1719,6 +1722,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 debt_parsed["debt_allocations"] = debt_result.get("allocations") or []
                 debt_parsed["overpayment"] = debt_result.get("overpayment") or 0
                 debt_parsed["overpayment_policy"] = debt_result.get("overpayment_policy") or debt_parsed.get("overpayment_policy") or ""
+                if debt_result.get("net_settlement"):
+                    debt_parsed["net_settlement"] = True
+                overpayment_created = debt_result.get("overpayment_created") or {}
+                if overpayment_created.get("debt_id"):
+                    debt_parsed["overpayment_debt_id"] = overpayment_created.get("debt_id")
                 if debt_result.get("affected_debt_ids"):
                     debt_parsed["hutang_id"] = ", ".join([x for x in debt_result.get("affected_debt_ids") or [] if x])
 

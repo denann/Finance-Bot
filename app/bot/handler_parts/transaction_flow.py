@@ -1898,11 +1898,15 @@ def _debt_payment_catatan(debt_parsed: dict, raw: str) -> str:
             alloc_parts.append(f"{debt_id}:{float(amount)}")
     if alloc_parts:
         parts.append("debt_allocations=" + ";".join(alloc_parts))
+    if debt_parsed.get("net_settlement"):
+        parts.append("net_settle=1")
     overpayment = float(debt_parsed.get("overpayment", 0) or 0)
     if overpayment > 0:
         parts.append(f"overpayment={overpayment}")
         if debt_parsed.get("overpayment_policy"):
             parts.append(f"overpayment_policy={debt_parsed.get('overpayment_policy')}")
+        if debt_parsed.get("overpayment_debt_id"):
+            parts.append(f"overpayment_debt_id={debt_parsed.get('overpayment_debt_id')}")
     return " | ".join([p for p in parts if p]).strip(" |")
 
 

@@ -541,12 +541,13 @@ def add_payment_by_person(
     overpayment_policy: str | None = None,
 ) -> dict:
     """
-    Alokasikan pembayaran ke semua debt aktif milik seseorang secara FIFO.
+    Alokasikan pembayaran debt per orang dengan basis posisi net.
 
-    Jika orang tersebut punya dua arah debt sekaligus, sistem akan melakukan
-    netting/kompensasi lebih dulu tanpa cashflow. Setelah itu pembayaran
-    nominal hanya mengurangi sisa net debt. Ini membuat kasus:
-    receivable 100k + payable 30k + orang bayar 70k => semuanya settled.
+    Jika satu orang punya dua arah debt sekaligus, pembayaran dihitung terhadap
+    saldo net orang tersebut. Contoh:
+    receivable 415k + payable 88k + orang bayar 373k => net yang perlu dibayar
+    327k, sehingga 46k sisanya masuk flow overpayment, bukan diam-diam
+    mengurangi receivable saja.
     """
     person_name = normalize_person_name(person_name)
     amount = float(amount or 0)
@@ -583,16 +584,21 @@ def add_payment_by_person(
     if target_debt_type == "auto":
         target_debt_type = ""
 
-    def _total_by_type(rows: list[dict], debt_type: str) -> float:
-        return sum(
-            parse_sheet_number(d.get("remaining_amount", 0))
-            for d in rows
+    def _active_rows_by_type(rows: list[dict], debt_type: str) -> list[dict]:
+        return [
+            d for d in rows
             if str(d.get("type", "")).strip() == debt_type
+            and parse_sheet_number(d.get("remaining_amount", 0)) > 0
             and not is_voided_debt(d)
-        )
+        ]
 
-    total_payable_before = _total_by_type(debts_before, "payable")
-    total_receivable_before = _total_by_type(debts_before, "receivable")
+    def _total_rows(rows: list[dict]) -> float:
+        return sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in rows)
+
+    payable_before_rows = _active_rows_by_type(debts_before, "payable")
+    receivable_before_rows = _active_rows_by_type(debts_before, "receivable")
+    total_payable_before = _total_rows(payable_before_rows)
+    total_receivable_before = _total_rows(receivable_before_rows)
     debt_types = {
         str(d.get("type", "")).strip()
         for d in debts_before
@@ -602,7 +608,6 @@ def add_payment_by_person(
     }
 
     if target_debt_type not in {"payable", "receivable"}:
-        # Pilih arah net terbesar sebelum netting.
         if total_receivable_before > total_payable_before:
             target_debt_type = "receivable"
         elif total_payable_before > total_receivable_before:
@@ -615,101 +620,118 @@ def add_payment_by_person(
                 "message": (
                     f"Ada utang dan piutang aktif dengan {person_name}. "
                     "Pakai input yang lebih spesifik: `Sapto bayar hutang 50k` untuk piutang, "
-                    "atau `bayar hutang Sapto 50k` untuk utang Anda. "
-                    "Kalau ingin saling menghapuskan, gunakan offset/settle manual."
+                    "atau `bayar hutang Sapto 50k` untuk utang Anda."
                 ),
                 "remaining": total_payable_before + total_receivable_before,
                 "is_settled": False,
                 "allocations": [],
             }
 
-    # Jangan auto-netting. Payment/settlement harus eksplisit dari user.
-    # Kalau seseorang punya dua arah debt sekaligus, pembayaran tetap dialokasikan
-    # ke arah yang dimaksud oleh input. Untuk kompensasi silang, gunakan flow
-    # offset/settle manual, bukan otomatis saat input pembayaran atau /hutang.
-    netting_result = None
+    opposite_type = "payable" if target_debt_type == "receivable" else "receivable"
+    target_debts = receivable_before_rows if target_debt_type == "receivable" else payable_before_rows
+    opposite_debts = payable_before_rows if target_debt_type == "receivable" else receivable_before_rows
+    target_total_before = _total_rows(target_debts)
+    opposite_total_before = _total_rows(opposite_debts)
 
-    debts = debts_before
-    target_debts = [
-        d for d in debts
-        if str(d.get("type", "")).strip() == target_debt_type
-        and parse_sheet_number(d.get("remaining_amount", 0)) > 0
-        and not is_voided_debt(d)
-    ]
     if not target_debts:
-        total_payable = _total_by_type(debts, "payable")
-        total_receivable = _total_by_type(debts, "receivable")
-        overpayment = amount if total_payable <= 0 and total_receivable <= 0 else 0
         label = "utang" if target_debt_type == "payable" else "piutang"
-        if total_payable <= 0 and total_receivable <= 0:
-            return {
-                "success": True,
-                "message": "Debt sudah netral setelah netting. Pembayaran tidak dialokasikan ke debt." if overpayment > 0 else "ok",
-                "remaining": 0,
-                "remaining_payable": 0,
-                "remaining_receivable": 0,
-                "net_remaining": 0,
-                "is_settled": True,
-                "allocations": [],
-                "netting": netting_result,
-                "overpayment": overpayment,
-                "type": target_debt_type,
-                "debt_id": ", ".join((netting_result or {}).get("affected_debt_ids") or []),
-                "affected_debt_ids": (netting_result or {}).get("affected_debt_ids") or [],
-            }
         return {
             "success": False,
-            "message": f"Tidak ada {label} aktif dengan {person_name} setelah netting.",
-            "remaining": total_payable + total_receivable,
+            "message": f"Tidak ada {label} aktif dengan {person_name}.",
+            "remaining": total_payable_before + total_receivable_before,
             "is_settled": False,
             "allocations": [],
-            "netting": netting_result,
         }
 
-    remaining_payment = amount
-    allocations = []
+    # Kapasitas pembayaran dihitung dari net target setelah mengimbangi arah lawan.
+    # Ini yang membuat receivable 415k dan payable 88k hanya membutuhkan cash 327k
+    # untuk netral. Nominal di atas kapasitas net wajib masuk flow overpayment.
+    offset_capacity = min(target_total_before, opposite_total_before)
+    net_payment_capacity = max(0.0, target_total_before - offset_capacity)
+    net_overpayment = max(0.0, amount - net_payment_capacity)
+    overpayment_policy = str(overpayment_policy or "").strip().lower()
 
-    for debt in sorted(target_debts, key=_debt_row_sort_key_for_settlement):
-        if remaining_payment <= 0:
-            break
-
-        debt_id = str(debt.get("id", "")).strip()
-        debt_remaining = parse_sheet_number(debt.get("remaining_amount", 0))
-        if not debt_id or debt_remaining <= 0:
-            continue
-
-        pay_amount = min(remaining_payment, debt_remaining)
-        result = add_payment(debt_id, pay_amount, note or f"Pembayaran dari {person_name}")
-        if not result.get("success"):
-            return {
-                "success": False,
-                "message": result.get("message", "Gagal alokasi pembayaran."),
-                "remaining": sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in get_debt_by_person(person_name)),
-                "is_settled": False,
-                "allocations": allocations,
-                "netting": netting_result,
-            }
-
-        allocations.append({
-            "debt_id": debt_id,
-            "amount": pay_amount,
-            "description": debt.get("description", ""),
+    if net_overpayment > 0 and overpayment_policy not in {"bonus", "opposite_debt", "debt", "hutang"}:
+        return {
+            "success": False,
+            "message": (
+                "Pembayaran melebihi saldo net debt aktif. "
+                "Pilih perlakuan overpaid terlebih dahulu."
+            ),
+            "remaining": target_total_before,
+            "remaining_payable": total_payable_before,
+            "remaining_receivable": total_receivable_before,
+            "net_remaining": total_receivable_before - total_payable_before,
+            "is_settled": False,
+            "allocations": [],
+            "overpayment": net_overpayment,
             "type": target_debt_type,
-        })
-        remaining_payment -= pay_amount
+        }
+
+    allocations: list[dict] = []
+
+    def _allocate(rows: list[dict], total_amount: float, allocation_type: str, allocation_note: str) -> float:
+        amount_left = max(0.0, float(total_amount or 0))
+        allocated_total = 0.0
+        for debt in sorted(rows, key=_debt_row_sort_key_for_settlement):
+            if amount_left <= 0:
+                break
+            debt_id = str(debt.get("id", "")).strip()
+            debt_remaining = parse_sheet_number(debt.get("remaining_amount", 0))
+            if not debt_id or debt_remaining <= 0:
+                continue
+            pay_amount = min(amount_left, debt_remaining)
+            result = add_payment(debt_id, pay_amount, allocation_note)
+            if not result.get("success"):
+                raise RuntimeError(result.get("message", "Gagal alokasi pembayaran."))
+            allocations.append({
+                "debt_id": debt_id,
+                "amount": pay_amount,
+                "description": debt.get("description", ""),
+                "type": allocation_type,
+            })
+            amount_left -= pay_amount
+            allocated_total += pay_amount
+        return allocated_total
+
+    try:
+        offset_amount = offset_capacity if opposite_total_before > 0 else 0.0
+        cash_amount_for_target = min(amount, net_payment_capacity)
+        target_allocation_amount = min(target_total_before, offset_amount + cash_amount_for_target)
+        opposite_allocation_amount = min(opposite_total_before, offset_amount)
+
+        if target_allocation_amount > 0:
+            _allocate(
+                target_debts,
+                target_allocation_amount,
+                target_debt_type,
+                note or f"Pembayaran debt {person_name}",
+            )
+        if opposite_allocation_amount > 0:
+            _allocate(
+                opposite_debts,
+                opposite_allocation_amount,
+                opposite_type,
+                f"Offset silang otomatis saat pembayaran debt {person_name}: {note or '-'}",
+            )
+    except RuntimeError as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+            "remaining": sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in get_debt_by_person(person_name)),
+            "is_settled": False,
+            "allocations": allocations,
+        }
 
     overpayment_created = None
-    overpayment_policy = str(overpayment_policy or "").strip().lower()
-    overpayment_amount = max(0.0, remaining_payment)
-
-    if overpayment_amount > 0 and overpayment_policy in {"opposite_debt", "debt", "hutang"}:
-        opposite_type = "payable" if target_debt_type == "receivable" else "receivable"
-        label = "Kelebihan bayar piutang" if target_debt_type == "receivable" else "Kelebihan bayar utang"
+    if net_overpayment > 0 and overpayment_policy in {"opposite_debt", "debt", "hutang"}:
+        # Kelebihan dari payment arah receivable berarti Anda harus mengembalikan
+        # ke orang tersebut (payable). Sebaliknya untuk arah payable.
         created = add_debt(
             opposite_type,
             person_name,
-            overpayment_amount,
-            description=f"{label}: {note or 'pembayaran debt'}",
+            net_overpayment,
+            description=f"Kelebihan bayar net debt: {note or 'pembayaran debt'}",
             cashflow_mode="debt_only",
             fronting_mode="overpayment_from_payment",
         )
@@ -720,85 +742,93 @@ def add_payment_by_person(
                 "remaining": 0,
                 "is_settled": False,
                 "allocations": allocations,
-                "overpayment": overpayment_amount,
+                "overpayment": net_overpayment,
             }
         overpayment_created = created
-        remaining_payment = 0
 
     active_after = get_debt_by_person(person_name)
-    remaining_same_type = sum(
-        parse_sheet_number(d.get("remaining_amount", 0))
-        for d in active_after
-        if str(d.get("type", "")).strip() == target_debt_type
-        and not is_voided_debt(d)
-    )
-    total_payable = _total_by_type(active_after, "payable")
-    total_receivable = _total_by_type(active_after, "receivable")
-    net_remaining = total_receivable - total_payable
+    payable_after_rows = _active_rows_by_type(active_after, "payable")
+    receivable_after_rows = _active_rows_by_type(active_after, "receivable")
+    total_payable_after = _total_rows(payable_after_rows)
+    total_receivable_after = _total_rows(receivable_after_rows)
+    remaining_same_type = total_receivable_after if target_debt_type == "receivable" else total_payable_after
     affected_debt_ids = [a.get("debt_id") for a in allocations if a.get("debt_id")]
-    if netting_result:
-        affected_debt_ids = list(dict.fromkeys(((netting_result.get("affected_debt_ids") or []) + affected_debt_ids)))
+    if overpayment_created and overpayment_created.get("debt_id"):
+        affected_debt_ids.append(overpayment_created.get("debt_id"))
 
     return {
         "success": True,
-        "message": "ok" if remaining_payment <= 0 else f"Pembayaran melebihi saldo aktif sebesar {format_rupiah(remaining_payment)}.",
+        "message": "ok",
         "remaining": remaining_same_type,
-        "remaining_payable": total_payable,
-        "remaining_receivable": total_receivable,
-        "net_remaining": net_remaining,
+        "remaining_payable": total_payable_after,
+        "remaining_receivable": total_receivable_after,
+        "net_remaining": total_receivable_after - total_payable_after,
         "is_settled": remaining_same_type <= 0,
         "allocations": allocations,
-        "netting": netting_result,
-        "overpayment": overpayment_amount,
+        "netting": {
+            "offset_amount": offset_capacity,
+            "target_debt_type": target_debt_type,
+            "opposite_debt_type": opposite_type,
+        } if offset_capacity > 0 else None,
+        "net_settlement": offset_capacity > 0,
+        "overpayment": net_overpayment,
         "overpayment_policy": overpayment_policy,
         "overpayment_created": overpayment_created,
         "type": target_debt_type,
-        "debt_id": ", ".join(affected_debt_ids),
-        "affected_debt_ids": affected_debt_ids + ([overpayment_created.get("debt_id")] if overpayment_created and overpayment_created.get("debt_id") else []),
+        "debt_id": ", ".join([x for x in affected_debt_ids if x]),
+        "affected_debt_ids": [x for x in affected_debt_ids if x],
     }
 
-
 def estimate_payment_outcome(person_name: str, amount: float, target_debt_type: str) -> dict:
-    """Hitung preview pembayaran global per orang tanpa mengubah sheet."""
+    """Hitung preview pembayaran global per orang berbasis saldo net."""
     person_name = normalize_person_name(person_name)
     amount = float(amount or 0)
     target_debt_type = str(target_debt_type or "").strip().lower()
     debts = get_debt_by_person(person_name)
 
-    target_rows = [
-        d for d in debts
-        if str(d.get("type", "")).strip() == target_debt_type
-        and parse_sheet_number(d.get("remaining_amount", 0)) > 0
-        and not is_voided_debt(d)
-    ]
-    target_remaining = sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in target_rows)
-    overpayment = max(0.0, amount - target_remaining)
-    remaining_same_type = max(0.0, target_remaining - amount)
+    def _active_rows(debt_type: str) -> list[dict]:
+        return [
+            d for d in debts
+            if str(d.get("type", "")).strip() == debt_type
+            and parse_sheet_number(d.get("remaining_amount", 0)) > 0
+            and not is_voided_debt(d)
+        ]
 
-    total_payable = sum(
-        parse_sheet_number(d.get("remaining_amount", 0))
-        for d in debts
-        if str(d.get("type", "")).strip() == "payable" and not is_voided_debt(d)
-    )
-    total_receivable = sum(
-        parse_sheet_number(d.get("remaining_amount", 0))
-        for d in debts
-        if str(d.get("type", "")).strip() == "receivable" and not is_voided_debt(d)
-    )
+    payable_rows = _active_rows("payable")
+    receivable_rows = _active_rows("receivable")
+    total_payable = sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in payable_rows)
+    total_receivable = sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in receivable_rows)
 
     if target_debt_type == "receivable":
-        total_receivable_after = max(0.0, total_receivable - amount)
-        total_payable_after = total_payable
+        target_remaining = total_receivable
+        opposite_remaining = total_payable
     else:
-        total_payable_after = max(0.0, total_payable - amount)
-        total_receivable_after = total_receivable
+        target_remaining = total_payable
+        opposite_remaining = total_receivable
+
+    offset_amount = min(target_remaining, opposite_remaining)
+    net_payment_capacity = max(0.0, target_remaining - offset_amount)
+    overpayment = max(0.0, amount - net_payment_capacity)
+    cash_applied_to_target = min(amount, net_payment_capacity)
+    target_remaining_after = max(0.0, target_remaining - offset_amount - cash_applied_to_target)
+    opposite_remaining_after = max(0.0, opposite_remaining - offset_amount)
+
+    if target_debt_type == "receivable":
+        total_receivable_after = target_remaining_after
+        total_payable_after = opposite_remaining_after
+    else:
+        total_payable_after = target_remaining_after
+        total_receivable_after = opposite_remaining_after
 
     return {
         "person_name": person_name,
         "target_debt_type": target_debt_type,
         "amount": amount,
         "target_remaining_before": target_remaining,
-        "remaining_same_type": remaining_same_type,
+        "opposite_remaining_before": opposite_remaining,
+        "net_payment_capacity": net_payment_capacity,
+        "offset_amount": offset_amount,
+        "remaining_same_type": target_remaining_after,
         "overpayment": overpayment,
         "remaining_payable_before": total_payable,
         "remaining_receivable_before": total_receivable,
@@ -1539,7 +1569,8 @@ def reverse_debt_payment_transaction(txn: dict) -> dict:
     amount_left = parse_sheet_number(txn.get("amount", 0))
     note_text = str(txn.get("catatan", "") or "")
     is_selected_settle = "selected_settle=1" in note_text
-    if amount_left <= 0 and not is_selected_settle:
+    is_net_settle = "net_settle=1" in note_text
+    if amount_left <= 0 and not (is_selected_settle or is_net_settle):
         return {"success": False, "message": "Nominal transaksi payment tidak valid.", "reversed": []}
 
     allocations = parse_debt_allocation_note(note_text)
@@ -1558,7 +1589,7 @@ def reverse_debt_payment_transaction(txn: dict) -> dict:
     # berisi seluruh debt yang disettle, termasuk offset silang tanpa cashflow.
     # Saat transaksi dihapus, semua debt terpilih harus dibuka lagi, bukan hanya
     # sebesar nominal cashflow transaksi.
-    if is_selected_settle:
+    if is_selected_settle or is_net_settle:
         amount_left = sum(parse_sheet_number(a.get("amount")) for a in allocations)
 
     for alloc in allocations:
@@ -1575,7 +1606,7 @@ def reverse_debt_payment_transaction(txn: dict) -> dict:
         if room <= 0:
             continue
         alloc_amount = alloc.get("amount")
-        if is_selected_settle and alloc_amount is not None:
+        if (is_selected_settle or is_net_settle) and alloc_amount is not None:
             reverse_amount = min(room, parse_sheet_number(alloc_amount))
         else:
             reverse_amount = min(amount_left, room, parse_sheet_number(alloc_amount) if alloc_amount is not None else amount_left)

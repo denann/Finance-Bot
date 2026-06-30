@@ -136,6 +136,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`Sapto bayar hutang 337063 untuk debt 1-17` — versi natural dari settle debt terpilih\n"
         "Nomor `1-17` wajib berasal dari detail terakhir `/hutang nama`. Jika terakhir buka `/hutang Alpat`, bot akan menolak settle untuk Sapto.\n"
         "Jika amount lebih besar dari net debt terpilih, bot memberi warning dan pilihan: anggap bonus/lunas atau catat sebagai hutang lawan arah.\n"
+        "Pembayaran global seperti `Sapto bayar hutang 373063` juga dicek terhadap posisi net: piutang - utang Anda. Jadi overpaid tidak lagi dihitung dari satu arah saja.\n"
         "Detail `/hutang nama` dikelompokkan per tanggal dibuat, menampilkan debt ID full, dan tidak auto-settle tanpa perintah Anda.\n\n"
 
         "*C. Laporan, Budget, Koreksi Data*\n\n"

@@ -1876,7 +1876,11 @@ def validate_edit_debt_payment_conversion(conversion: dict, amount: float) -> di
     label = "utang" if target_type == "payable" else "piutang"
 
     debts = get_debt_by_person(person)
-    target_debts = [d for d in debts if str(d.get("type", "")).strip() == target_type]
+    target_debts = [
+        d for d in debts
+        if str(d.get("type", "")).strip() == target_type
+        and parse_sheet_number(d.get("remaining_amount", 0)) > 0
+    ]
     total_remaining = sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in target_debts)
 
     if not target_debts or total_remaining <= 0:
@@ -1887,12 +1891,14 @@ def validate_edit_debt_payment_conversion(conversion: dict, amount: float) -> di
             "overpayment": 0,
         }
 
-    overpayment = max(0.0, float(amount or 0) - total_remaining)
+    outcome = estimate_payment_outcome(person, amount, target_type)
     return {
         "success": True,
         "message": "ok",
         "total_remaining": total_remaining,
-        "overpayment": overpayment,
+        "opposite_remaining": outcome.get("opposite_remaining_before", 0),
+        "net_payment_capacity": outcome.get("net_payment_capacity", total_remaining),
+        "overpayment": outcome.get("overpayment", 0),
         "target_count": len(target_debts),
         "label": label,
     }
@@ -1910,10 +1916,12 @@ def build_edit_debt_payment_preview_text(preview: dict, conversion: dict, debt_c
         f"\n👤 Orang: *{md_safe(person)}*"
         f"\n💰 Pembayaran: *{format_rupiah(amount)}*"
         f"\n📌 Sisa {label} aktif saat ini: *{format_rupiah(debt_check.get('total_remaining', 0))}*"
+        f"\n📌 Sisa arah lawan saat ini: *{format_rupiah(debt_check.get('opposite_remaining', 0))}*"
+        f"\n📊 Saldo net yang perlu dibayar: *{format_rupiah(debt_check.get('net_payment_capacity', debt_check.get('total_remaining', 0)))}*"
     )
 
     if float(debt_check.get("overpayment", 0) or 0) > 0:
-        text += f"\n⚠️ Nominal melebihi sisa {label}: {format_rupiah(debt_check.get('overpayment', 0))}. Kelebihannya tidak mengurangi debt."
+        text += f"\n⚠️ Nominal melebihi saldo net debt: {format_rupiah(debt_check.get('overpayment', 0))}. Kelebihannya perlu diperlakukan sebagai bonus/lunas atau hutang lawan arah."
 
     return text
 
