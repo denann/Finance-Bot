@@ -29,6 +29,7 @@ from app.bot.handlers import (
     cari_handler,
     coach_handler,
     debt_edit_handler,
+    debt_settle_handler,
     debt_void_handler,
     delete_txn_handler,
     edit_txn_handler,
@@ -121,6 +122,7 @@ telegram_app.add_handler(MessageHandler(filters.Regex(r"(?i)^(pending|rencana)\b
 telegram_app.add_handler(CommandHandler("hutang", hutang_handler))
 telegram_app.add_handler(CommandHandler("debt_void", debt_void_handler))
 telegram_app.add_handler(CommandHandler("debt_edit", debt_edit_handler))
+telegram_app.add_handler(CommandHandler("debt_settle", debt_settle_handler))
 
 
 # ── Recurring Transaction Commands ────────────────────────────────────────────

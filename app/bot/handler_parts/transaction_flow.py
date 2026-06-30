@@ -1887,6 +1887,25 @@ def enrich_ditalangin_split_bill_if_any(debt_parsed: dict, raw: str | None = Non
     return updated
 
 
+def _debt_payment_catatan(debt_parsed: dict, raw: str) -> str:
+    parts = [str(raw or "").strip()]
+    allocations = debt_parsed.get("debt_allocations") or []
+    alloc_parts = []
+    for item in allocations:
+        debt_id = str(item.get("debt_id") or "").strip()
+        amount = item.get("amount")
+        if debt_id and amount is not None:
+            alloc_parts.append(f"{debt_id}:{float(amount)}")
+    if alloc_parts:
+        parts.append("debt_allocations=" + ";".join(alloc_parts))
+    overpayment = float(debt_parsed.get("overpayment", 0) or 0)
+    if overpayment > 0:
+        parts.append(f"overpayment={overpayment}")
+        if debt_parsed.get("overpayment_policy"):
+            parts.append(f"overpayment_policy={debt_parsed.get('overpayment_policy')}")
+    return " | ".join([p for p in parts if p]).strip(" |")
+
+
 def build_debt_cashflow_transaction(
     debt_parsed: dict,
     account: str,
@@ -2014,7 +2033,7 @@ def build_debt_cashflow_transaction(
                 "to_account": None,
                 "subject": person,
                 "description": f"Bayar utang ke {person}",
-                "catatan": raw,
+                "catatan": _debt_payment_catatan(debt_parsed, raw),
                 "tipe_pengeluaran": "",
                 "date": transaction_date,
                 "hutang_id": hutang_id,
@@ -2031,7 +2050,7 @@ def build_debt_cashflow_transaction(
                 "to_account": None,
                 "subject": person,
                 "description": f"Pembayaran piutang dari {person}",
-                "catatan": raw,
+                "catatan": _debt_payment_catatan(debt_parsed, raw),
                 "tipe_pengeluaran": "",
                 "date": transaction_date,
                 "hutang_id": hutang_id,

@@ -228,6 +228,33 @@ def parse_debt_ids_from_txn_record_for_edit(txn: dict) -> list[str]:
     return [part.strip() for part in re.split(r"[,;\s]+", raw) if part.strip()]
 
 
+def overpayment_decision_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Anggap lunas / bonus", callback_data="debt_overpay:bonus")],
+        [InlineKeyboardButton("🔴 Catat sebagai hutang saya", callback_data="debt_overpay:opposite_debt")],
+        [InlineKeyboardButton("❌ Batal", callback_data="cancel:debt")],
+    ])
+
+
+def build_overpayment_decision_text(parsed: dict, outcome: dict) -> str:
+    person = parsed.get("person_name") or outcome.get("person_name") or "-"
+    target_type = outcome.get("target_debt_type")
+    target_label = "piutang" if target_type == "receivable" else "utang Anda"
+    overpaid = float(outcome.get("overpayment", 0) or 0)
+    lines = [
+        "⚠️ *Pembayaran melebihi saldo debt aktif*\n",
+        f"👤 Subjek: *{md_safe(person)}*",
+        f"💰 Nominal input: *{format_rupiah(outcome.get('amount', 0))}*",
+        f"📌 Sisa {target_label} sebelum bayar: *{format_rupiah(outcome.get('target_remaining_before', 0))}*",
+        f"➕ Kelebihan bayar: *{format_rupiah(overpaid)}*",
+        "",
+        "Pilih perlakuan untuk uang lebihnya:",
+        "1. *Anggap lunas/bonus* → debt ditutup, kelebihan tidak jadi hutang baru.",
+        "2. *Catat sebagai hutang saya* → kelebihan jadi utang Anda ke orang tersebut.",
+    ]
+    return "\n".join(lines)
+
+
 def resolve_payment_target_type(parsed: dict, debts: list[dict]) -> tuple[str | None, str | None]:
     """Tentukan arah debt untuk pembayaran by person tanpa memblokir mixed arah.
 
@@ -333,6 +360,87 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await safe_edit_message(query, "❌ Aksi edit tidak valid.")
         return
+
+    if data.startswith("debt_overpay:"):
+        policy = data.split(":", 1)[1].strip()
+        debt_parsed = context.user_data.get("pending_debt")
+        if not debt_parsed:
+            await safe_edit_message(query, "❌ Sesi overpaid expired. Coba input ulang.")
+            return
+
+        if policy not in {"bonus", "opposite_debt"}:
+            await safe_edit_message(query, "❌ Pilihan overpaid tidak valid. Coba input ulang.")
+            return
+
+        debt_parsed["overpayment_policy"] = policy
+        context.user_data["pending_debt"] = debt_parsed
+
+        account = debt_parsed.get("account") or "-"
+        preview = build_debt_confirm_preview(
+            debt_parsed,
+            account,
+            debt_type_for_payment=debt_parsed.get("debt_type_for_payment"),
+        )
+        if policy == "bonus":
+            preview += "\n\nℹ️ Kelebihan bayar akan dianggap lunas/bonus, tidak jadi hutang baru."
+        else:
+            preview += "\n\nℹ️ Kelebihan bayar akan dicatat sebagai hutang Anda ke orang tersebut."
+
+        await safe_edit_message(query, preview, parse_mode="Markdown", reply_markup=confirm_keyboard("debt"))
+        return
+
+    if data.startswith("debt_settle_acc:"):
+        account = data.split(":", 1)[1].strip()
+        payload = context.user_data.get("pending_debt_settle")
+        if not payload:
+            await safe_edit_message(query, "❌ Sesi debt settle expired. Coba ulangi `/hutang Nama` lalu `/debt_settle ...`.", parse_mode="Markdown")
+            return
+        payload["account"] = account
+        context.user_data["pending_debt_settle"] = payload
+
+        from app.bot.handler_parts.command_handlers import (
+            build_selected_debt_settle_preview_text,
+            selected_debt_settle_overpay_keyboard,
+        )
+        if float(payload.get("shortage", 0) or 0) > 0:
+            await safe_edit_message(query, build_selected_debt_settle_preview_text(payload), parse_mode="Markdown")
+            return
+        if float(payload.get("overpayment", 0) or 0) > 0 and not payload.get("overpayment_policy"):
+            await safe_edit_message(
+                query,
+                build_selected_debt_settle_preview_text(payload),
+                parse_mode="Markdown",
+                reply_markup=selected_debt_settle_overpay_keyboard(),
+            )
+            return
+        await safe_edit_message(
+            query,
+            build_selected_debt_settle_preview_text(payload),
+            parse_mode="Markdown",
+            reply_markup=confirm_keyboard("debt_settle"),
+        )
+        return
+
+    if data.startswith("debt_settle_overpay:"):
+        policy = data.split(":", 1)[1].strip()
+        payload = context.user_data.get("pending_debt_settle")
+        if not payload:
+            await safe_edit_message(query, "❌ Sesi overpaid debt settle expired. Coba input ulang.")
+            return
+        if policy not in {"bonus", "opposite_debt"}:
+            await safe_edit_message(query, "❌ Pilihan overpaid tidak valid. Coba input ulang.")
+            return
+        payload["overpayment_policy"] = policy
+        context.user_data["pending_debt_settle"] = payload
+        from app.bot.handler_parts.command_handlers import build_selected_debt_settle_preview_text
+        await safe_edit_message(
+            query,
+            build_selected_debt_settle_preview_text(payload),
+            parse_mode="Markdown",
+            reply_markup=confirm_keyboard("debt_settle"),
+        )
+        return
+
 
     if data.startswith("debt_batch_acc:"):
         account = data.split(":")[1]
@@ -482,12 +590,28 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 and parse_sheet_number(d.get("remaining_amount", 0)) > 0
                 for d in debts
             )
-            # Kalau ada dua arah debt, jangan target 1 debt langsung.
-            # Payment tetap dialokasikan global per orang sesuai arah input;
-            # settlement/offset lawan arah harus eksplisit dari user.
-            debt_parsed["target_debt_id"] = target_debts[0].get("id") if len(target_debts) == 1 and not has_opposite_debt else ""
+            # Payment selalu dialokasikan global per orang sesuai arah input.
+            # Jangan target 1 debt langsung, supaya output dan edit/delete payment
+            # konsisten sebagai ledger per orang.
+            debt_parsed["target_debt_id"] = ""
             debt_parsed["debt_type_for_payment"] = debt_type_for_payment
             debt_parsed["target_debt_type"] = debt_type_for_payment
+
+            outcome = estimate_payment_outcome(person, debt_parsed.get("amount", 0), debt_type_for_payment)
+            if float(outcome.get("overpayment", 0) or 0) > 0 and not debt_parsed.get("overpayment_policy"):
+                if skip_account:
+                    mark_debt_as_historical(debt_parsed)
+                else:
+                    debt_parsed["account"] = account
+                debt_parsed["overpayment_outcome"] = outcome
+                context.user_data["pending_debt"] = debt_parsed
+                await safe_edit_message(
+                    query,
+                    build_overpayment_decision_text(debt_parsed, outcome),
+                    parse_mode="Markdown",
+                    reply_markup=overpayment_decision_keyboard(),
+                )
+                return
 
         if skip_account:
             mark_debt_as_historical(debt_parsed)
@@ -1300,6 +1424,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for debt_id in result.get("linked_debts_voided") or []:
                     lines.append(f"• `{md_code_text(debt_id)}`")
 
+            if result.get("reversed_payment_debts"):
+                lines.append("\n↩️ *Pembayaran debt terkait ikut dibalikkan:*")
+                for item in result.get("reversed_payment_debts") or []:
+                    lines.append(f"• `{md_code_text(item.get('debt_id'))}` +{format_rupiah(item.get('amount', 0))}")
+
             if result.get("blocked"):
                 lines.append("\n🚫 *Diblok karena debt cashflow:*")
                 for txn in result["blocked"]:
@@ -1328,6 +1457,98 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_delete_txn_ids", None)
             return
     
+        if confirm_target == "debt_settle":
+            payload = context.user_data.get("pending_debt_settle")
+            if not payload:
+                await safe_edit_message(query, "❌ Sesi debt settle expired. Coba ulangi `/hutang Nama` lalu `/debt_settle ...`.", parse_mode="Markdown")
+                return
+
+            if float(payload.get("shortage", 0) or 0) > 0:
+                from app.bot.handler_parts.command_handlers import build_selected_debt_settle_preview_text
+                await safe_edit_message(query, build_selected_debt_settle_preview_text(payload), parse_mode="Markdown")
+                return
+
+            if float(payload.get("overpayment", 0) or 0) > 0 and not payload.get("overpayment_policy"):
+                from app.bot.handler_parts.command_handlers import (
+                    build_selected_debt_settle_preview_text,
+                    selected_debt_settle_overpay_keyboard,
+                )
+                await safe_edit_message(
+                    query,
+                    build_selected_debt_settle_preview_text(payload),
+                    parse_mode="Markdown",
+                    reply_markup=selected_debt_settle_overpay_keyboard(),
+                )
+                return
+
+            await safe_edit_message(query, "⏳ *Sedang settle debt terpilih...*", parse_mode="Markdown")
+
+            result = settle_selected_debt_ids(
+                payload.get("person_name"),
+                payload.get("debt_ids") or [],
+                note=payload.get("raw") or f"Settlement debt {payload.get('selection') or ''}",
+                overpayment_amount=float(payload.get("overpayment", 0) or 0),
+                overpayment_policy=payload.get("overpayment_policy"),
+                net_type=payload.get("net_type"),
+            )
+            if not result.get("success"):
+                await safe_edit_message(query, f"❌ *Gagal settle debt.*\n{md_safe(result.get('message') or '-')}", parse_mode="Markdown")
+                context.user_data.pop("pending_debt_settle", None)
+                return
+
+            from app.bot.handler_parts.command_handlers import build_selected_debt_settle_transaction
+            txn = build_selected_debt_settle_transaction(payload, result)
+            txn_result = save_transaction(txn, raw_input=payload.get("raw") or f"/debt_settle {payload.get('person_name')} {payload.get('selection')}")
+
+            lines = ["✅ *Debt terpilih berhasil disettle!*\n"]
+            lines.append(f"👤 Subjek: *{md_safe(payload.get('person_name') or '-')}*")
+            lines.append(f"📌 Rincian: *{md_safe(payload.get('selection') or '-')}*")
+            lines.append(f"🧾 Debt disettle: *{len(result.get('settled') or [])} rincian*")
+            summary = payload.get("summary") or {}
+            lines.append(f"🟢 Piutang terpilih: *{format_rupiah(summary.get('total_receivable', 0))}*")
+            lines.append(f"🔴 Utang terpilih: *{format_rupiah(summary.get('total_payable', 0))}*")
+            lines.append(f"💰 Cashflow: *{format_rupiah(payload.get('amount', 0))}* via *{md_safe(payload.get('account') or '-')}*")
+
+            overpayment = float(result.get("overpayment", 0) or 0)
+            if overpayment > 0:
+                if result.get("overpayment_created"):
+                    lines.append(f"⚠️ Kelebihan *{format_rupiah(overpayment)}* dicatat sebagai debt lawan arah.")
+                else:
+                    lines.append(f"ℹ️ Kelebihan *{format_rupiah(overpayment)}* dianggap lunas/bonus.")
+
+            lines.append("\n*Posisi akhir hutang-piutang:*")
+            for line in format_debt_net_position_lines(
+                payload.get("person_name") or "-",
+                result.get("remaining_payable", 0),
+                result.get("remaining_receivable", 0),
+            ):
+                lines.append(md_safe(line))
+
+            if txn_result.get("success"):
+                lines.append("\n📝 Cashflow tersimpan di transactions.")
+                if txn_result.get("transaction_id"):
+                    lines.append(f"🔖 ID: `{txn_result.get('transaction_id')}`")
+                if txn_result.get("new_balance") is not None:
+                    lines.append(f"💳 Saldo {md_safe(payload.get('account') or '-')}: *{format_rupiah(txn_result.get('new_balance'))}*")
+            else:
+                try:
+                    from app.services.debt_service import reverse_debt_payment_transaction
+                    reverse_result = reverse_debt_payment_transaction(txn)
+                except Exception as e:
+                    reverse_result = {"success": False, "message": str(e)}
+                lines = [
+                    f"❌ *Cashflow gagal disimpan, settlement debt dibatalkan ulang.*\n{md_safe(txn_result.get('message') or '-')}"
+                ]
+                if not reverse_result.get("success"):
+                    lines.append(
+                        "\n⚠️ Gagal membuka ulang sebagian debt otomatis. "
+                        f"Detail: {md_safe(reverse_result.get('message') or '-')}"
+                    )
+
+            await safe_edit_message(query, "\n".join(lines), parse_mode="Markdown")
+            context.user_data.pop("pending_debt_settle", None)
+            return
+
         if confirm_target == "debt_void":
             pending_void = context.user_data.get("pending_debt_void")
 
@@ -1463,16 +1684,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 debt_result = add_debt("receivable", person, amount, description)
 
             elif intent == "add_payment":
-                target_debt_id = debt_parsed.get("target_debt_id")
-
-                if target_debt_id:
-                    debt_result = add_payment(target_debt_id, amount)
-                else:
-                    debt_result = add_payment_by_person(
-                        person,
-                        amount,
-                        target_debt_type=debt_type_for_payment or debt_parsed.get("target_debt_type"),
-                    )
+                debt_result = add_payment_by_person(
+                    person,
+                    amount,
+                    note=description or raw or f"Pembayaran debt {person}",
+                    target_debt_type=debt_type_for_payment or debt_parsed.get("target_debt_type"),
+                    overpayment_policy=debt_parsed.get("overpayment_policy"),
+                )
 
             elif intent == "offset_debt":
                 debt_result = offset_debt_by_person(
@@ -1496,6 +1714,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             fronted_split_result = create_fronted_split_receivable_debts(debt_parsed)
             attach_fronted_split_debt_relations(debt_parsed, debt_result, fronted_split_result)
+
+            if intent == "add_payment":
+                debt_parsed["debt_allocations"] = debt_result.get("allocations") or []
+                debt_parsed["overpayment"] = debt_result.get("overpayment") or 0
+                debt_parsed["overpayment_policy"] = debt_result.get("overpayment_policy") or debt_parsed.get("overpayment_policy") or ""
+                if debt_result.get("affected_debt_ids"):
+                    debt_parsed["hutang_id"] = ", ".join([x for x in debt_result.get("affected_debt_ids") or [] if x])
 
             if not debt_parsed.get("hutang_id") and debt_result.get("debt_id"):
                 debt_parsed["hutang_id"] = debt_result.get("debt_id")
@@ -1533,12 +1758,22 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 append_fronted_split_result_lines(lines, fronted_split_result)
 
             elif intent == "add_payment":
-                if debt_result.get("is_settled"):
-                    lines.append(f"📌 Debt *{person}* lunas")
-                else:
-                    direction = "🔴 Utang Anda" if debt_type_for_payment == "payable" else "🟢 Piutang Anda"
-                    lines.append(f"📌 Posisi: {direction}")
-                    lines.append(f"📊 Sisa: *{format_rupiah(debt_result.get('remaining', 0))}*")
+                target_label = "utang Anda" if debt_type_for_payment == "payable" else "piutang Anda"
+                lines.append(f"📌 Pembayaran mengurangi *{md_safe(target_label)}* dengan *{md_safe(person)}*")
+                lines.append(f"📊 Sisa arah ini: *{format_rupiah(debt_result.get('remaining', 0))}*")
+
+                remaining_payable = float(debt_result.get("remaining_payable", 0) or 0)
+                remaining_receivable = float(debt_result.get("remaining_receivable", 0) or 0)
+                lines.append("\n*Posisi akhir hutang-piutang:*")
+                for line in format_debt_net_position_lines(person, remaining_payable, remaining_receivable):
+                    lines.append(md_safe(line))
+
+                overpayment = float(debt_result.get("overpayment", 0) or 0)
+                if overpayment > 0:
+                    if debt_result.get("overpayment_created"):
+                        lines.append(f"\n⚠️ Kelebihan bayar *{format_rupiah(overpayment)}* dicatat sebagai debt lawan arah.")
+                    else:
+                        lines.append(f"\nℹ️ Kelebihan bayar *{format_rupiah(overpayment)}* dianggap lunas/bonus.")
 
             elif intent == "offset_debt":
                 target_label = "piutang" if debt_result.get("target_debt_type") == "receivable" else "utang"
@@ -2163,6 +2398,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_edit_txn", None)
         context.user_data.pop("pending_bulk_edit_txns", None)
         context.user_data.pop("pending_debt_void", None)
+        context.user_data.pop("pending_debt_settle", None)
         context.user_data.pop("pending_asset_price", None)
         context.user_data.pop("pending_asset_confirm", None)
         context.user_data.pop("pending_asset_add_flow", None)

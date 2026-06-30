@@ -119,9 +119,9 @@ Budget dibuat per bulan. Bot bisa mapping budget umum seperti `makan` ke `Food &
 
 ### 6. Hutang / Piutang
 
-Bot mendukung utang, piutang, dan pembayaran.
+Bot mendukung utang, piutang, pembayaran, edit/void debt, dan settlement debt terpilih.
 
-Contoh:
+Contoh input natural:
 
 ```text
 Budi minjem 300k
@@ -132,25 +132,42 @@ bayar hutang Budi 100k
 minjemin ke Dono 100k - 19k 15-05-2026
 saya nitip Sapto beli nasi kuning 12k
 saya talangin Sapto beli nasi kuning 12k
+Sapto bayar hutang 337063 untuk debt 1-17
 ```
 
 Mode talangan:
 
 - `saya nitip Sapto beli nasi kuning 12k` = Sapto membayar dulu untuk Anda. Bot mencatat **utang ke Sapto** tanpa cashflow, jadi tidak ada pemasukan palsu.
 - `saya talangin Sapto beli nasi kuning 12k` = Anda membayar dulu untuk Sapto. Bot mencatat **piutang Sapto** dan tetap menanyakan rekening karena ada cash out.
+- `ditalangin Alpat beli minyak 46k dibagi 4 sama Alpat Opik Sapto` = PTPT. Anda hutang full Rp46.000 ke Alpat, lalu Alpat/Opik/Sapto masing-masing punya hutang share Rp11.500 ke Anda.
 
-Command:
+Command utama:
 
 ```text
 /hutang
+/hutang Sapto
 /debt_void 1
+/debt_void Sapto 1
+/debt_edit 1 nominal 100k
+/debt_settle Sapto 1-17
+/debt_settle Sapto 1-17 amount=337063 account=DANA
 ```
+
+Selected debt settlement:
+
+- Jalankan `/hutang Sapto` dulu agar bot menyimpan mapping nomor debt terbaru.
+- `/debt_settle Sapto 1-17` menghitung total piutang, total utang, dan net untuk nomor 1 sampai 17 saja.
+- `/debt_settle Sapto 1-17 amount=337063 account=DANA` menyelesaikan hanya debt nomor 1 sampai 17. Debt lain di luar range, misalnya nomor 18, tidak disentuh.
+- Versi natural: `Sapto bayar hutang 337063 untuk debt 1-17`.
+- Nomor `1-17` wajib berasal dari output terakhir `/hutang Sapto`. Jika mapping terakhir berasal dari orang lain, bot akan menolak.
+- Jika pembayaran lebih besar dari net debt terpilih, bot memberi warning dan pilihan: anggap lunas/bonus atau catat kelebihan sebagai hutang lawan arah.
 
 Catatan:
 
-- Transaksi debt cashflow masuk ke `transactions`, tetapi tidak dihapus melalui `/delete_txn` agar sheet `debts` tidak inkonsisten.
-- Gunakan `/debt_void` untuk membatalkan debt secara aman.
+- Gunakan `/debt_void` untuk membatalkan debt yang memang salah input.
 - `/debt_void` mendukung utang dan piutang, termasuk piutang dari split bill.
+- Transaksi pembayaran debt yang salah input bisa dihapus lewat `/delete_txn`; bot akan mencoba membalik efek pembayaran ke sheet `debts` selama relasi payment/debt masih utuh.
+- Transaksi pembayaran debt juga bisa dikoreksi dengan `/edit_txn ... amount=...` agar nominal payment dan sheet `debts` ikut sinkron.
 
 ---
 
@@ -246,7 +263,7 @@ Command edit:
 /edit_txn 2 date=2026-06-10
 ```
 
-Untuk transaksi debt cashflow, gunakan `/debt_void`, bukan `/delete_txn`.
+Untuk debt yang salah dibuat, gunakan `/debt_void`. Untuk transaksi pembayaran debt yang salah nominal/input, gunakan `/edit_txn ... amount=...` atau `/delete_txn` agar efek payment ke sheet `debts` ikut dibalik bila relasinya masih utuh.
 
 ---
 

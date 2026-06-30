@@ -50,6 +50,7 @@ from app.bot.handler_parts.command_handlers import (
     build_pending_expense_lines,
     format_budget_net_gross,
     bulanan_handler,
+    handle_natural_debt_settle,
     handle_natural_finance_question,
     harian_handler,
     help_handler,
@@ -986,6 +987,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=confirm_keyboard("pending_expense"),
         )
+        return
+
+    # ── Natural selected debt settlement ─────────────────────────────────────
+    # Contoh: "Sapto bayar hutang 337063 untuk debt 1-17".
+    # Harus jalan sebelum debt parser biasa supaya tidak dialokasikan global.
+    selected_debt_settle_handled = await handle_natural_debt_settle(update, context, user_text)
+    if selected_debt_settle_handled:
         return
 
     # ── RAG/Gemini finance question read-only ───────────────────────────────

@@ -26,7 +26,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         "📊 *Laporan & koreksi data*\n"
         "`/saldo`, `/rekening`, `/harian`, `/mingguan`, `/bulanan`, `/last`, `/cari`\n"
-        "`/transaksi`, `/edit_txn`, `/delete_txn`, `/download_data`\n\n"
+        "`/transaksi`, `/edit_txn`, `/delete_txn`, `/debt_settle`, `/download_data`\n\n"
 
         "🕒 *Pending, budget & transaksi rutin*\n"
         "`/pending`, `/pending_add`, `/budget`, `/budget_history`, `/recurring`\n"
@@ -131,6 +131,11 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/debt_edit 1 nominal 100k` — edit nominal rincian\n"
         "`/debt_edit 1 nama Budi` — edit nama orang\n"
         "`/debt_edit 1 tipe piutang` — ubah arah debt\n"
+        "`/debt_settle Sapto 1-17` — hitung total/net debt nomor 1-17 dari output terakhir `/hutang Sapto`\n"
+        "`/debt_settle Sapto 1-17 amount=337063 account=DANA` — settle hanya nomor 1-17, debt lain tidak disentuh\n"
+        "`Sapto bayar hutang 337063 untuk debt 1-17` — versi natural dari settle debt terpilih\n"
+        "Nomor `1-17` wajib berasal dari detail terakhir `/hutang nama`. Jika terakhir buka `/hutang Alpat`, bot akan menolak settle untuk Sapto.\n"
+        "Jika amount lebih besar dari net debt terpilih, bot memberi warning dan pilihan: anggap bonus/lunas atau catat sebagai hutang lawan arah.\n"
         "Detail `/hutang nama` dikelompokkan per tanggal dibuat, menampilkan debt ID full, dan tidak auto-settle tanpa perintah Anda.\n\n"
 
         "*C. Laporan, Budget, Koreksi Data*\n\n"
@@ -1374,22 +1379,30 @@ async def pending_cancel_handler(update: Update, context: ContextTypes.DEFAULT_T
 
 
 def parse_amount_text(value: str) -> float:
-    raw = str(value or "").strip().lower()
-    raw = raw.replace(" ", "")
+    raw = str(value or "").strip().lower().replace(" ", "").replace(",", ".")
+    if not raw:
+        return 0
 
-    multiplier = 1
-
-    if raw.endswith(("rb", "ribu", "k")):
-        multiplier = 1_000
-        raw = re.sub(r"(rb|ribu|k)$", "", raw)
-    elif raw.endswith(("jt", "juta", "m")):
-        multiplier = 1_000_000
-        raw = re.sub(r"(jt|juta|m)$", "", raw)
-
-    raw = raw.replace(",", ".")
+    unit = ""
+    for suffix in ["ribu", "rb", "juta", "jt", "miliar", "miliard", "milyard", "k", "m"]:
+        if raw.endswith(suffix):
+            unit = suffix
+            raw = raw[: -len(suffix)]
+            break
 
     try:
-        return float(raw) * multiplier
+        if unit in {"rb", "ribu", "k"}:
+            # 331.063k = 331.063 rupiah, bukan 331.063.000.
+            if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", raw):
+                return float(raw.replace(".", ""))
+            return float(raw) * 1_000
+        if unit in {"jt", "juta", "m"}:
+            return float(raw) * 1_000_000
+        if unit in {"miliar", "miliard", "milyard"}:
+            return float(raw) * 1_000_000_000
+        if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", raw):
+            return float(raw.replace(".", ""))
+        return float(raw)
     except Exception:
         return 0
     
@@ -1958,6 +1971,479 @@ def debt_detail_sort_key_for_display(debt: dict) -> tuple[str, str, int]:
     return (created_date, debt_id, row_index)
 
 
+
+
+# ── Debt Settle Selected Range ───────────────────────────────────────────────
+
+def parse_debt_number_selection(selection: str) -> list[str]:
+    """Parse nomor debt dari detail /hutang <nama>. Support: 1-17, 1 2 3, 1,3,5."""
+    raw = str(selection or "").strip()
+    if not raw:
+        return []
+    numbers: list[int] = []
+    for token in re.split(r"[,\s]+", raw):
+        token = token.strip()
+        if not token:
+            continue
+        m = re.fullmatch(r"(\d+)\s*-\s*(\d+)", token)
+        if m:
+            start, end = int(m.group(1)), int(m.group(2))
+            if start <= 0 or end <= 0:
+                continue
+            step = 1 if end >= start else -1
+            numbers.extend(range(start, end + step, step))
+            continue
+        if token.isdigit():
+            n = int(token)
+            if n > 0:
+                numbers.append(n)
+    seen = set()
+    ordered = []
+    for n in numbers:
+        if n not in seen:
+            seen.add(n)
+            ordered.append(str(n))
+    return ordered
+
+
+def parse_debt_settle_command_args(args: list[str]) -> dict:
+    """Parse /debt_settle Sapto 1-17 amount=337063 account=DANA."""
+    args = [str(a or "").strip() for a in (args or []) if str(a or "").strip()]
+    result = {"person_name": "", "selection": "", "numbers": [], "amount": None, "account": "", "error": ""}
+    if len(args) < 2:
+        result["error"] = (
+            "Format: `/debt_settle Nama 1-17 amount=337063 account=DANA`\n"
+            "Untuk hitung total saja: `/debt_settle Nama 1-17`"
+        )
+        return result
+
+    amount_raw = ""
+    account = ""
+    positional = []
+    i = 0
+    while i < len(args):
+        token = args[i]
+        low = token.lower()
+        if low.startswith("amount=") or low.startswith("nominal="):
+            amount_raw = token.split("=", 1)[1]
+        elif low in {"amount", "nominal"} and i + 1 < len(args):
+            i += 1
+            amount_raw = args[i]
+        elif low.startswith("account=") or low.startswith("rekening=") or low.startswith("akun="):
+            account = token.split("=", 1)[1]
+        elif low in {"account", "rekening", "akun", "dari", "ke"} and i + 1 < len(args):
+            i += 1
+            account = args[i]
+        else:
+            positional.append(token)
+        i += 1
+
+    # Selection adalah token terakhir yang mengandung angka/range. Sisanya dianggap nama.
+    selection_idx = None
+    for idx, token in enumerate(positional):
+        if re.fullmatch(r"\d+(?:-\d+)?(?:[,\s]+\d+(?:-\d+)?)*", token):
+            selection_idx = idx
+            break
+    if selection_idx is None:
+        # fallback: ambil token terakhir sebagai selection
+        selection_idx = len(positional) - 1
+
+    person_parts = positional[:selection_idx]
+    selection = " ".join(positional[selection_idx:]).strip()
+    if not person_parts or not selection:
+        result["error"] = "Nama atau nomor debt belum lengkap. Contoh: `/debt_settle Sapto 1-17 amount=337063 account=DANA`."
+        return result
+
+    amount = None
+    if amount_raw:
+        amount = parse_human_amount(amount_raw)
+        if amount <= 0:
+            result["error"] = "Nominal tidak valid. Contoh: `amount=337063`."
+            return result
+
+    numbers = parse_debt_number_selection(selection)
+    if not numbers:
+        result["error"] = "Nomor/range debt tidak valid. Contoh: `1-17` atau `1 3 5`."
+        return result
+
+    result.update({
+        "person_name": normalize_person_name(" ".join(person_parts)),
+        "selection": selection,
+        "numbers": numbers,
+        "amount": amount,
+        "account": account.strip(),
+    })
+    return result
+
+
+def parse_natural_debt_settle_text(text: str) -> dict | None:
+    """Parse natural: Sapto bayar hutang 337063 untuk debt 1-17."""
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    pattern = re.compile(
+        r"^(?P<person>[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.'-]{0,60}?)\s+"
+        r"bayar\s+(?:h?utang|utang)\s+"
+        r"(?P<amount>\d[\d.,]*(?:\s*(?:k|rb|ribu|jt|juta))?)\s+"
+        r"(?:untuk|buat)\s+(?:debt|hutang|piutang)\s+"
+        r"(?P<selection>\d+(?:\s*-\s*\d+)?(?:[,\s]+\d+(?:\s*-\s*\d+)?)*)"
+        r"(?:\s+(?:dari|ke|account=|rekening=|akun=)\s*(?P<account>[A-Za-z0-9 _-]+))?\s*$",
+        re.IGNORECASE,
+    )
+    m = pattern.match(raw)
+    if not m:
+        return None
+    amount = parse_human_amount(m.group("amount"))
+    numbers = parse_debt_number_selection(m.group("selection"))
+    if amount <= 0 or not numbers:
+        return None
+    return {
+        "person_name": normalize_person_name(m.group("person")),
+        "selection": m.group("selection").strip(),
+        "numbers": numbers,
+        "amount": amount,
+        "account": (m.group("account") or "").strip(),
+        "raw": raw,
+        "source": "natural",
+    }
+
+
+def resolve_selected_debts_from_last_detail(context: ContextTypes.DEFAULT_TYPE, person_name: str, numbers: list[str]) -> dict:
+    """Pastikan nomor berasal dari hasil terakhir /hutang <person>."""
+    person = normalize_person_name(person_name)
+    last_person = normalize_person_name(context.user_data.get("last_debt_person", ""))
+    last_map = context.user_data.get("last_debt_map") or {}
+    if not last_map or not last_person:
+        return {
+            "success": False,
+            "message": f"Jalankan `/hutang {md_safe(person)}` dulu, baru pakai nomor debt dari output itu.",
+        }
+    if last_person != person:
+        return {
+            "success": False,
+            "message": (
+                f"Nomor debt terakhir berasal dari `/hutang {md_safe(last_person)}`, "
+                f"bukan `/hutang {md_safe(person)}`. Jalankan `/hutang {md_safe(person)}` dulu."
+            ),
+        }
+
+    selected = []
+    debt_ids = []
+    missing = []
+    for n in numbers:
+        mapped = last_map.get(str(n))
+        if not mapped or not mapped.get("debt_id"):
+            missing.append(str(n))
+            continue
+        debt_id = str(mapped.get("debt_id") or "").strip()
+        row, debt = get_debt_by_id_any_status(debt_id)
+        if not debt:
+            missing.append(str(n))
+            continue
+        if normalize_person_name(debt.get("person_name", "")) != person:
+            return {
+                "success": False,
+                "message": f"Debt nomor {n} bukan milik {md_safe(person)}. Jalankan ulang `/hutang {md_safe(person)}`.",
+            }
+        if is_voided_debt(debt):
+            return {"success": False, "message": f"Debt nomor {n} sudah void, tidak bisa disettle."}
+        remaining = parse_sheet_number(debt.get("remaining_amount", 0))
+        if remaining <= 0:
+            continue
+        debt = dict(debt)
+        debt["_row_index"] = row
+        debt["_display_no"] = str(n)
+        selected.append(debt)
+        debt_ids.append(debt_id)
+
+    if missing:
+        return {
+            "success": False,
+            "message": "Nomor debt tidak ditemukan di output /hutang terakhir: " + ", ".join(missing),
+        }
+    if not selected:
+        return {"success": False, "message": "Debt terpilih sudah tidak aktif/lunas."}
+
+    summary = summarize_debt_rows_for_settlement(selected)
+    return {
+        "success": True,
+        "person_name": person,
+        "selected": selected,
+        "debt_ids": debt_ids,
+        "summary": summary,
+    }
+
+
+def build_selected_debt_total_text(payload: dict) -> str:
+    person = payload.get("person_name") or "-"
+    numbers = payload.get("numbers") or []
+    selection = payload.get("selection") or ", ".join(numbers)
+    summary = payload.get("summary") or {}
+    lines = [
+        "🧮 *Total Debt Terpilih*\n",
+        f"👤 Subjek: *{md_safe(person)}*",
+        f"📌 Nomor dari `/hutang {md_safe(person)}`: *{md_safe(selection)}*",
+        f"🟢 Piutang Anda: *{format_rupiah(summary.get('total_receivable', 0))}*",
+        f"🔴 Utang Anda: *{format_rupiah(summary.get('total_payable', 0))}*",
+    ]
+    net = float(summary.get("net_amount", 0) or 0)
+    if net > 0:
+        lines.append(f"📊 Net: *{md_safe(person)} harus bayar Anda {format_rupiah(net)}*")
+    elif net < 0:
+        lines.append(f"📊 Net: *Anda harus bayar {md_safe(person)} {format_rupiah(abs(net))}*")
+    else:
+        lines.append("📊 Net: *impas / tidak perlu cashflow*")
+    lines.append(
+        "\nUntuk settle dari range ini:\n"
+        f"`/debt_settle {md_safe(person)} {md_safe(selection)} amount={summary.get('net_abs', 0)} account=DANA`"
+    )
+    return "\n".join(lines)
+
+
+def build_selected_debt_settle_preview_text(payload: dict) -> str:
+    person = payload.get("person_name") or "-"
+    selection = payload.get("selection") or ", ".join(payload.get("numbers") or [])
+    summary = payload.get("summary") or {}
+    amount = float(payload.get("amount", 0) or 0)
+    account = payload.get("account") or "-"
+    overpayment = max(0.0, float(payload.get("overpayment", 0) or 0))
+    shortage = max(0.0, float(payload.get("shortage", 0) or 0))
+    net_type = payload.get("net_type") or summary.get("net_type")
+    lines = [
+        "🧾 *Preview Settle Debt Terpilih*\n",
+        f"👤 Subjek: *{md_safe(person)}*",
+        f"📌 Rincian dipilih: *{md_safe(selection)}*",
+        f"🟢 Piutang Anda: *{format_rupiah(summary.get('total_receivable', 0))}*",
+        f"🔴 Utang Anda: *{format_rupiah(summary.get('total_payable', 0))}*",
+    ]
+    if net_type == "receivable":
+        lines.append(f"📊 Net yang harus dibayar {md_safe(person)}: *{format_rupiah(summary.get('net_abs', 0))}*")
+        lines.append(f"💰 Pembayaran diterima: *{format_rupiah(amount)}*")
+        lines.append(f"🏦 Masuk ke: *{md_safe(account)}*")
+    elif net_type == "payable":
+        lines.append(f"📊 Net yang harus Anda bayar ke {md_safe(person)}: *{format_rupiah(summary.get('net_abs', 0))}*")
+        lines.append(f"💰 Pembayaran keluar: *{format_rupiah(amount)}*")
+        lines.append(f"🏦 Keluar dari: *{md_safe(account)}*")
+    else:
+        lines.append("📊 Net: *impas / tidak perlu cashflow*")
+
+    if shortage > 0:
+        lines.append(
+            f"\n❌ *Nominal kurang {format_rupiah(shortage)}.* "
+            "Karena ini `/debt_settle`, debt terpilih hanya bisa ditutup kalau nominal minimal sama dengan net terpilih."
+        )
+        return "\n".join(lines)
+
+    if overpayment > 0:
+        lines.append(
+            f"\n⚠️ *Pembayaran melebihi net debt terpilih sebesar {format_rupiah(overpayment)}.*"
+        )
+        policy = str(payload.get("overpayment_policy") or "").strip()
+        if policy == "bonus":
+            lines.append("ℹ️ Kelebihan akan dianggap lunas/bonus, tidak jadi hutang baru.")
+        elif policy == "opposite_debt":
+            if net_type == "receivable":
+                lines.append(f"ℹ️ Kelebihan akan dicatat sebagai utang Anda ke {md_safe(person)}.")
+            else:
+                lines.append(f"ℹ️ Kelebihan akan dicatat sebagai piutang Anda ke {md_safe(person)}.")
+        else:
+            lines.append(
+                "Pilih perlakuan untuk uang lebihnya:\n"
+                "1. *Anggap lunas/bonus*\n"
+                "2. *Catat sebagai hutang lawan arah*"
+            )
+            return "\n".join(lines)
+
+    lines.append(
+        "\nEfek jika disimpan:\n"
+        "✅ Hanya debt nomor terpilih yang disettle\n"
+        "✅ Debt lain di luar range/list tidak disentuh\n"
+        "✅ Cashflow tersimpan di transactions\n"
+        "✅ Relasi debt disimpan supaya `/delete_txn` bisa membuka lagi debt terpilih"
+    )
+    lines.append("\nSimpan settlement ini?")
+    return "\n".join(lines)
+
+
+def build_selected_settle_catatan(payload: dict, result: dict) -> str:
+    raw = str(payload.get("raw") or "").strip()
+    parts = [raw, "selected_settle=1"]
+    allocs = []
+    for item in result.get("settled") or result.get("allocations") or []:
+        debt_id = str(item.get("debt_id") or "").strip()
+        amount = item.get("amount")
+        if debt_id and amount is not None:
+            allocs.append(f"{debt_id}:{float(amount)}")
+    if allocs:
+        parts.append("debt_allocations=" + ";".join(allocs))
+    overpayment = float(result.get("overpayment", 0) or 0)
+    if overpayment > 0:
+        parts.append(f"overpayment={overpayment}")
+        policy = result.get("overpayment_policy") or payload.get("overpayment_policy") or ""
+        if policy:
+            parts.append(f"overpayment_policy={policy}")
+        created = result.get("overpayment_created") or {}
+        if created.get("debt_id"):
+            parts.append(f"overpayment_debt_id={created.get('debt_id')}")
+    return " | ".join([p for p in parts if p]).strip(" |")
+
+
+def prepare_selected_debt_settle_payload(context: ContextTypes.DEFAULT_TYPE, parsed: dict) -> dict:
+    resolved = resolve_selected_debts_from_last_detail(context, parsed.get("person_name", ""), parsed.get("numbers") or [])
+    if not resolved.get("success"):
+        return {"success": False, "message": resolved.get("message", "Gagal resolve debt terpilih.")}
+    summary = resolved.get("summary") or {}
+    amount = parsed.get("amount")
+    payload = {
+        "success": True,
+        "person_name": resolved.get("person_name"),
+        "selection": parsed.get("selection") or ", ".join(parsed.get("numbers") or []),
+        "numbers": parsed.get("numbers") or [],
+        "debt_ids": resolved.get("debt_ids") or [],
+        "summary": summary,
+        "amount": amount,
+        "account": parsed.get("account") or "",
+        "raw": parsed.get("raw") or "",
+        "source": parsed.get("source") or "command",
+        "net_type": summary.get("net_type"),
+    }
+    if amount is not None:
+        required = float(summary.get("net_abs", 0) or 0)
+        payload["overpayment"] = max(0.0, float(amount or 0) - required)
+        payload["shortage"] = max(0.0, required - float(amount or 0))
+    return payload
+
+
+def selected_debt_settle_overpay_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Anggap lunas / bonus", callback_data="debt_settle_overpay:bonus")],
+        [InlineKeyboardButton("🔴 Catat sebagai hutang lawan arah", callback_data="debt_settle_overpay:opposite_debt")],
+        [InlineKeyboardButton("❌ Batal", callback_data="cancel:debt_settle")],
+    ])
+
+
+async def debt_settle_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    parsed = parse_debt_settle_command_args(context.args or [])
+    if parsed.get("error"):
+        await update.message.reply_text(f"❌ {parsed['error']}", parse_mode="Markdown")
+        return
+
+    payload = prepare_selected_debt_settle_payload(context, parsed)
+    if not payload.get("success"):
+        await update.message.reply_text(f"❌ {payload.get('message')}", parse_mode="Markdown")
+        return
+
+    # Tanpa amount = mode hitung total saja.
+    if payload.get("amount") is None:
+        await update.message.reply_text(build_selected_debt_total_text(payload), parse_mode="Markdown")
+        return
+
+    if not payload.get("account"):
+        context.user_data["pending_debt_settle"] = payload
+        await update.message.reply_text(
+            build_selected_debt_settle_preview_text(payload) + "\n\nPilih rekening cashflow:",
+            parse_mode="Markdown",
+            reply_markup=account_keyboard("debt_settle_acc", include_skip=False),
+        )
+        return
+
+    if float(payload.get("shortage", 0) or 0) > 0:
+        await update.message.reply_text(build_selected_debt_settle_preview_text(payload), parse_mode="Markdown")
+        return
+
+    context.user_data["pending_debt_settle"] = payload
+    if float(payload.get("overpayment", 0) or 0) > 0 and not payload.get("overpayment_policy"):
+        await update.message.reply_text(
+            build_selected_debt_settle_preview_text(payload),
+            parse_mode="Markdown",
+            reply_markup=selected_debt_settle_overpay_keyboard(),
+        )
+        return
+
+    await update.message.reply_text(
+        build_selected_debt_settle_preview_text(payload),
+        parse_mode="Markdown",
+        reply_markup=confirm_keyboard("debt_settle"),
+    )
+
+
+async def handle_natural_debt_settle(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> bool:
+    parsed = parse_natural_debt_settle_text(text)
+    if not parsed:
+        return False
+
+    payload = prepare_selected_debt_settle_payload(context, parsed)
+    if not payload.get("success"):
+        await update.message.reply_text(f"❌ {payload.get('message')}", parse_mode="Markdown")
+        return True
+
+    if not payload.get("account"):
+        context.user_data["pending_debt_settle"] = payload
+        await update.message.reply_text(
+            build_selected_debt_settle_preview_text(payload) + "\n\nPilih rekening cashflow:",
+            parse_mode="Markdown",
+            reply_markup=account_keyboard("debt_settle_acc", include_skip=False),
+        )
+        return True
+
+    if float(payload.get("shortage", 0) or 0) > 0:
+        await update.message.reply_text(build_selected_debt_settle_preview_text(payload), parse_mode="Markdown")
+        return True
+
+    context.user_data["pending_debt_settle"] = payload
+    if float(payload.get("overpayment", 0) or 0) > 0 and not payload.get("overpayment_policy"):
+        await update.message.reply_text(
+            build_selected_debt_settle_preview_text(payload),
+            parse_mode="Markdown",
+            reply_markup=selected_debt_settle_overpay_keyboard(),
+        )
+        return True
+
+    await update.message.reply_text(
+        build_selected_debt_settle_preview_text(payload),
+        parse_mode="Markdown",
+        reply_markup=confirm_keyboard("debt_settle"),
+    )
+    return True
+
+
+def build_selected_debt_settle_transaction(payload: dict, result: dict) -> dict:
+    person = payload.get("person_name") or ""
+    amount = float(payload.get("amount", 0) or 0)
+    account = payload.get("account") or ""
+    net_type = payload.get("net_type") or (payload.get("summary") or {}).get("net_type")
+    affected_ids = result.get("affected_debt_ids") or payload.get("debt_ids") or []
+    description = f"Settlement debt terpilih {person} nomor {payload.get('selection') or '-'}"
+    if net_type == "payable":
+        txn_type = "expense"
+        category = "Bayar Utang"
+        tipe_hutang = "utang"
+        desc = f"Bayar utang terpilih ke {person}"
+    else:
+        txn_type = "income"
+        category = "Pembayaran Piutang"
+        tipe_hutang = "piutang"
+        desc = f"Pembayaran piutang terpilih dari {person}"
+    return {
+        "type": txn_type,
+        "amount": amount,
+        "category": category,
+        "account": account,
+        "to_account": None,
+        "subject": person,
+        "description": desc,
+        "catatan": build_selected_settle_catatan(payload, result),
+        "tipe_pengeluaran": "",
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "hutang_id": ", ".join([x for x in affected_ids if x]),
+        "tipe_hutang": tipe_hutang,
+        "parsed_by": "debt_settle",
+    }
+
 async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -2013,6 +2499,9 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 last_debt_map[str(i)] = {
                     "debt_id": d.get("id"),
                     "row_index": d.get("_row_index"),
+                    "person_name": person,
+                    "type": d.get("type"),
+                    "remaining_amount": d.get("remaining_amount"),
                 }
                 created_date = format_debt_created_date_for_display(d)
                 if created_date != current_debt_date_group:
@@ -2054,6 +2543,7 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         context.user_data["last_debt_map"] = last_debt_map
+        context.user_data["last_debt_person"] = person
         if last_debt_map:
             lines.append(
                 "\nKelola rincian dari daftar ini:\n"
@@ -2061,6 +2551,9 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"`/debt_void {md_safe(person)}` — batalkan semua rincian aktif {md_safe(person)}\n"
                 f"`/debt_void {md_safe(person)} 1` — batalkan rincian nomor 1 milik {md_safe(person)}\n"
                 "`/debt_edit 1 nominal 100k` — edit nominal rincian\n"
+                f"`/debt_settle {md_safe(person)} 1-3` — hitung total debt nomor 1-3 dari detail ini\n"
+                f"`/debt_settle {md_safe(person)} 1-3 amount=100000 account=DANA` — settle debt nomor 1-3 saja\n"
+                f"`{md_safe(person)} bayar hutang 100000 untuk debt 1-3` — versi natural settle debt terpilih\n"
                 "Angka mengikuti nomor dari hasil detail `/hutang nama`."
             )
 
@@ -2122,6 +2615,7 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # /debt_void dan /debt_edit sekarang lebih aman dipakai dari /hutang <nama>,
     # karena /hutang utama sudah agregat per orang.
     context.user_data["last_debt_map"] = {}
+    context.user_data.pop("last_debt_person", None)
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 

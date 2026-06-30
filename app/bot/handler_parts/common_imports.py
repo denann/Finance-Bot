@@ -110,6 +110,10 @@ from app.services.debt_service import (
     add_debt,
     add_payment,
     add_payment_by_person,
+    estimate_payment_outcome,
+    summarize_debt_rows_for_settlement,
+    settle_selected_debt_ids,
+    format_debt_net_position_lines,
     parse_sheet_number,
     offset_debt_by_person,
     settle_opposite_debts_by_person,
@@ -117,6 +121,9 @@ from app.services.debt_service import (
     get_debt_person_summary,
     get_debt_person_detail,
     get_debt_by_person,
+    get_debt_by_id_any_status,
+    normalize_person_name,
+    is_voided_debt,
     preview_void_debt,
     preview_void_debts_by_person,
     void_debt,
@@ -713,24 +720,33 @@ def parse_human_amount(value: str | None) -> float:
 
 
 def parse_amount_text(value: str) -> float:
-    raw = str(value or "").strip().lower().replace(" ", "")
-    multiplier = 1
-
-    if raw.endswith(("rb", "ribu", "k")):
-        multiplier = 1_000
-        raw = re.sub(r"(rb|ribu|k)$", "", raw)
-    elif raw.endswith(("jt", "juta", "m")):
-        multiplier = 1_000_000
-        raw = re.sub(r"(jt|juta|m)$", "", raw)
-
-    raw = raw.replace(",", ".")
-
-    try:
-        return float(raw) * multiplier
-    except Exception:
+    raw = str(value or "").strip().lower().replace(" ", "").replace(",", ".")
+    if not raw:
         return 0
 
+    unit = ""
+    for suffix in ["ribu", "rb", "juta", "jt", "miliar", "miliard", "milyard", "k", "m"]:
+        if raw.endswith(suffix):
+            unit = suffix
+            raw = raw[: -len(suffix)]
+            break
 
+    try:
+        if unit in {"rb", "ribu", "k"}:
+            # 331.063k = 331.063 rupiah, bukan 331.063.000.
+            if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", raw):
+                return float(raw.replace(".", ""))
+            return float(raw) * 1_000
+        if unit in {"jt", "juta", "m"}:
+            return float(raw) * 1_000_000
+        if unit in {"miliar", "miliard", "milyard"}:
+            return float(raw) * 1_000_000_000
+        if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", raw):
+            return float(raw.replace(".", ""))
+        return float(raw)
+    except Exception:
+        return 0
+    
 def extract_split_bill_total_amount(raw_text: str) -> float | None:
     text = str(raw_text or "").strip()
     amount_token = r"(?P<amount>\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta|m)?)"

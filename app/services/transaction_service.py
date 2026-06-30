@@ -1200,12 +1200,32 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
         }
 
     linked_debt_voided_ids = []
+    reversed_payment_debt_items = []
     try:
-        from app.services.debt_service import void_debts_for_transaction
+        from app.services.debt_service import void_debts_for_transaction, reverse_debt_payment_transaction
 
         for txn in deletable:
             txn_id = str(txn.get("id", "") or "").strip()
             linked_ids = parse_transaction_debt_ids(txn)
+            category = str(txn.get("category", "") or "").strip()
+
+            # Kalau transaksi yang dihapus adalah pembayaran debt, efeknya harus
+            # dibalik ke debts, bukan mem-void debt sumbernya.
+            if category in {"Pembayaran Piutang", "Bayar Utang"}:
+                reverse_result = reverse_debt_payment_transaction(txn)
+                if not reverse_result.get("success"):
+                    return {
+                        "success": False,
+                        "message": reverse_result.get("message", "Gagal membalik pembayaran debt terkait transaksi."),
+                        "deleted_count": 0,
+                        "deleted_ids": [],
+                        "blocked": blocked,
+                        "missing_ids": missing_ids,
+                        "new_balances": balance_result.get("new_balances", {}),
+                    }
+                reversed_payment_debt_items.extend(reverse_result.get("reversed", []))
+                continue
+
             if not txn_id and not linked_ids:
                 continue
 
@@ -1224,7 +1244,7 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
     except Exception as e:
         return {
             "success": False,
-            "message": f"Gagal void debt terkait transaksi: {str(e)}",
+            "message": f"Gagal sync debt terkait transaksi: {str(e)}",
             "deleted_count": 0,
             "deleted_ids": [],
             "blocked": blocked,
@@ -1269,6 +1289,7 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
         "missing_ids": missing_ids,
         "new_balances": balance_result.get("new_balances", {}),
         "linked_debts_voided": linked_debt_voided_ids,
+        "reversed_payment_debts": reversed_payment_debt_items,
     }
 
 def delete_transactions_by_refs(
@@ -1325,12 +1346,31 @@ def delete_transactions_by_refs(
         }
 
     linked_debt_voided_ids = []
+    reversed_payment_debt_items = []
     try:
-        from app.services.debt_service import void_debts_for_transaction
+        from app.services.debt_service import void_debts_for_transaction, reverse_debt_payment_transaction
 
         for txn in deletable:
             txn_id = str(txn.get("id", "") or "").strip()
             linked_ids = parse_transaction_debt_ids(txn)
+            category = str(txn.get("category", "") or "").strip()
+
+            if category in {"Pembayaran Piutang", "Bayar Utang"}:
+                reverse_result = reverse_debt_payment_transaction(txn)
+                if not reverse_result.get("success"):
+                    return {
+                        "success": False,
+                        "message": reverse_result.get("message", "Gagal membalik pembayaran debt terkait transaksi."),
+                        "deleted_count": 0,
+                        "deleted_ids": [],
+                        "blocked": blocked,
+                        "missing_ids": missing_ids,
+                        "missing_rows": missing_rows,
+                        "new_balances": balance_result.get("new_balances", {}),
+                    }
+                reversed_payment_debt_items.extend(reverse_result.get("reversed", []))
+                continue
+
             if not txn_id and not linked_ids:
                 continue
 
@@ -1350,7 +1390,7 @@ def delete_transactions_by_refs(
     except Exception as e:
         return {
             "success": False,
-            "message": f"Gagal void debt terkait transaksi: {str(e)}",
+            "message": f"Gagal sync debt terkait transaksi: {str(e)}",
             "deleted_count": 0,
             "deleted_ids": [],
             "blocked": blocked,
@@ -1398,6 +1438,7 @@ def delete_transactions_by_refs(
         "missing_rows": missing_rows,
         "new_balances": balance_result.get("new_balances", {}),
         "linked_debts_voided": linked_debt_voided_ids,
+        "reversed_payment_debts": reversed_payment_debt_items,
     }
 
 TRANSACTION_COLUMNS = [
@@ -1706,13 +1747,16 @@ def preview_edit_transaction_by_ref(
 
     old_payment_category = str(old_txn.get("category", "") or "").strip()
     if old_payment_category in {"Pembayaran Piutang", "Bayar Utang"}:
-        return {
-            "success": False,
-            "message": (
-                "Transaksi pembayaran hutang/piutang belum boleh diedit dari edit umum. "
-                "Ubah lewat flow pembayaran debt agar alokasi payment tetap konsisten."
-            ),
-        }
+        # Payment debt boleh diedit nominalnya saja. Saat disimpan, efek payment
+        # lama akan dibalik lalu payment baru dialokasikan ulang ke debts.
+        if set(normalized_updates.keys()) != {"amount"}:
+            return {
+                "success": False,
+                "message": (
+                    "Transaksi pembayaran hutang/piutang hanya boleh diedit nominalnya. "
+                    "Untuk koreksi lain, pakai /delete_txn lalu input ulang."
+                ),
+            }
 
     old_has_debt_relation = transaction_has_debt_relation(old_txn)
 
@@ -1753,6 +1797,105 @@ def preview_edit_transaction_by_ref(
     }
 
 
+
+def _payment_allocation_note(raw: str, allocations: list[dict], overpayment: float = 0.0, policy: str = "") -> str:
+    parts = [str(raw or "").strip()]
+    alloc_parts = []
+    for item in allocations or []:
+        debt_id = str(item.get("debt_id") or "").strip()
+        amount = item.get("amount")
+        if debt_id and amount is not None:
+            alloc_parts.append(f"{debt_id}:{float(amount)}")
+    if alloc_parts:
+        parts.append("debt_allocations=" + ";".join(alloc_parts))
+    if overpayment:
+        parts.append(f"overpayment={float(overpayment)}")
+    if policy:
+        parts.append(f"overpayment_policy={policy}")
+    return " | ".join([p for p in parts if p]).strip(" |")
+
+
+def edit_debt_payment_transaction_amount(preview: dict) -> dict:
+    """Edit nominal transaksi pembayaran debt sambil sync sheet debts.
+
+    Mekanisme:
+    1. Reverse alokasi payment lama dari catatan/hutang_id.
+    2. Alokasikan ulang payment baru secara global per orang.
+    3. Update saldo rekening sesuai selisih nominal.
+    4. Update row transaksi dengan allocation baru.
+
+    Kalau nominal baru overpaid, kelebihan otomatis dicatat sebagai debt lawan arah
+    agar tidak hilang. Untuk pilihan bonus/manual, lebih aman delete lalu input ulang.
+    """
+    old_txn = preview["old_txn"]
+    new_txn = preview["new_txn"]
+    net_deltas = preview["net_deltas"]
+    category = str(old_txn.get("category", "") or "").strip()
+    person = str(old_txn.get("subject", "") or "").strip()
+    if not person:
+        return {"success": False, "message": "Subject/person transaksi payment kosong."}
+
+    target_debt_type = "receivable" if category == "Pembayaran Piutang" else "payable"
+    new_amount = float(new_txn.get("amount", 0) or 0)
+    raw_note = str(old_txn.get("raw_input", "") or old_txn.get("catatan", "") or "")
+
+    try:
+        from app.services.debt_service import reverse_debt_payment_transaction, add_payment_by_person
+        reverse_result = reverse_debt_payment_transaction(old_txn)
+        if not reverse_result.get("success"):
+            return {"success": False, "message": reverse_result.get("message", "Gagal reverse payment lama.")}
+
+        payment_result = add_payment_by_person(
+            person,
+            new_amount,
+            note=f"Edit payment dari transaksi {old_txn.get('id') or '-'}",
+            target_debt_type=target_debt_type,
+            overpayment_policy="opposite_debt",
+        )
+        if not payment_result.get("success"):
+            return {"success": False, "message": payment_result.get("message", "Gagal alokasi payment baru.")}
+    except Exception as e:
+        return {"success": False, "message": f"Gagal sync debt payment: {str(e)}"}
+
+    try:
+        balance_result = apply_account_deltas(net_deltas)
+        if balance_result.get("failed_accounts"):
+            return {"success": False, "message": "Rekening tidak ditemukan: " + ", ".join(balance_result["failed_accounts"])}
+    except Exception as e:
+        return {"success": False, "message": f"Gagal update saldo: {str(e)}"}
+
+    try:
+        target_row_index = int(old_txn.get("_row_index"))
+        new_txn["id"] = old_txn.get("id")
+        new_txn["hutang_id"] = ", ".join([x for x in payment_result.get("affected_debt_ids") or [] if x])
+        new_txn["tipe_hutang"] = "piutang" if target_debt_type == "receivable" else "utang"
+        new_txn["catatan"] = _payment_allocation_note(
+            raw_note,
+            payment_result.get("allocations") or [],
+            overpayment=float(payment_result.get("overpayment", 0) or 0),
+            policy=str(payment_result.get("overpayment_policy") or "opposite_debt"),
+        )
+        old_raw = str(old_txn.get("raw_input", "") or "")
+        new_txn["raw_input"] = old_raw if "[edited]" in old_raw else f"{old_raw} [edited]".strip()
+        update_row(SHEET_TRANSACTIONS, target_row_index, build_transaction_row_from_record(new_txn))
+        sort_transactions_sheet_by_date(desc=True)
+    except Exception as e:
+        return {
+            "success": False,
+            "message": "Saldo/debt sudah sempat berubah, tapi update row transaksi gagal. Cek manual. Error: " + str(e),
+            "new_balances": balance_result.get("new_balances", {}),
+        }
+
+    return {
+        "success": True,
+        "message": "ok",
+        "old_txn": old_txn,
+        "new_txn": new_txn,
+        "net_deltas": net_deltas,
+        "new_balances": balance_result.get("new_balances", {}),
+        "debt_sync": {"success": True, "payment_reallocated": True, "payment_result": payment_result},
+    }
+
 def edit_transaction_by_ref(
     updates: dict,
     row_index: int | None = None,
@@ -1776,6 +1919,10 @@ def edit_transaction_by_ref(
     old_txn = preview["old_txn"]
     new_txn = preview["new_txn"]
     net_deltas = preview["net_deltas"]
+
+    old_payment_category = str(old_txn.get("category", "") or "").strip()
+    if old_payment_category in {"Pembayaran Piutang", "Bayar Utang"}:
+        return edit_debt_payment_transaction_amount(preview)
 
     try:
         balance_result = apply_account_deltas(net_deltas)

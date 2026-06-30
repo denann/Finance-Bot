@@ -538,6 +538,7 @@ def add_payment_by_person(
     amount: float,
     note: str = "",
     target_debt_type: str | None = None,
+    overpayment_policy: str | None = None,
 ) -> dict:
     """
     Alokasikan pembayaran ke semua debt aktif milik seseorang secara FIFO.
@@ -697,6 +698,33 @@ def add_payment_by_person(
         })
         remaining_payment -= pay_amount
 
+    overpayment_created = None
+    overpayment_policy = str(overpayment_policy or "").strip().lower()
+    overpayment_amount = max(0.0, remaining_payment)
+
+    if overpayment_amount > 0 and overpayment_policy in {"opposite_debt", "debt", "hutang"}:
+        opposite_type = "payable" if target_debt_type == "receivable" else "receivable"
+        label = "Kelebihan bayar piutang" if target_debt_type == "receivable" else "Kelebihan bayar utang"
+        created = add_debt(
+            opposite_type,
+            person_name,
+            overpayment_amount,
+            description=f"{label}: {note or 'pembayaran debt'}",
+            cashflow_mode="debt_only",
+            fronting_mode="overpayment_from_payment",
+        )
+        if not created.get("success"):
+            return {
+                "success": False,
+                "message": "Pembayaran utama berhasil, tapi gagal mencatat overpaid sebagai debt lawan arah: " + created.get("message", ""),
+                "remaining": 0,
+                "is_settled": False,
+                "allocations": allocations,
+                "overpayment": overpayment_amount,
+            }
+        overpayment_created = created
+        remaining_payment = 0
+
     active_after = get_debt_by_person(person_name)
     remaining_same_type = sum(
         parse_sheet_number(d.get("remaining_amount", 0))
@@ -721,11 +749,79 @@ def add_payment_by_person(
         "is_settled": remaining_same_type <= 0,
         "allocations": allocations,
         "netting": netting_result,
-        "overpayment": max(0, remaining_payment),
+        "overpayment": overpayment_amount,
+        "overpayment_policy": overpayment_policy,
+        "overpayment_created": overpayment_created,
         "type": target_debt_type,
         "debt_id": ", ".join(affected_debt_ids),
-        "affected_debt_ids": affected_debt_ids,
+        "affected_debt_ids": affected_debt_ids + ([overpayment_created.get("debt_id")] if overpayment_created and overpayment_created.get("debt_id") else []),
     }
+
+
+def estimate_payment_outcome(person_name: str, amount: float, target_debt_type: str) -> dict:
+    """Hitung preview pembayaran global per orang tanpa mengubah sheet."""
+    person_name = normalize_person_name(person_name)
+    amount = float(amount or 0)
+    target_debt_type = str(target_debt_type or "").strip().lower()
+    debts = get_debt_by_person(person_name)
+
+    target_rows = [
+        d for d in debts
+        if str(d.get("type", "")).strip() == target_debt_type
+        and parse_sheet_number(d.get("remaining_amount", 0)) > 0
+        and not is_voided_debt(d)
+    ]
+    target_remaining = sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in target_rows)
+    overpayment = max(0.0, amount - target_remaining)
+    remaining_same_type = max(0.0, target_remaining - amount)
+
+    total_payable = sum(
+        parse_sheet_number(d.get("remaining_amount", 0))
+        for d in debts
+        if str(d.get("type", "")).strip() == "payable" and not is_voided_debt(d)
+    )
+    total_receivable = sum(
+        parse_sheet_number(d.get("remaining_amount", 0))
+        for d in debts
+        if str(d.get("type", "")).strip() == "receivable" and not is_voided_debt(d)
+    )
+
+    if target_debt_type == "receivable":
+        total_receivable_after = max(0.0, total_receivable - amount)
+        total_payable_after = total_payable
+    else:
+        total_payable_after = max(0.0, total_payable - amount)
+        total_receivable_after = total_receivable
+
+    return {
+        "person_name": person_name,
+        "target_debt_type": target_debt_type,
+        "amount": amount,
+        "target_remaining_before": target_remaining,
+        "remaining_same_type": remaining_same_type,
+        "overpayment": overpayment,
+        "remaining_payable_before": total_payable,
+        "remaining_receivable_before": total_receivable,
+        "remaining_payable_after": total_payable_after,
+        "remaining_receivable_after": total_receivable_after,
+        "net_remaining_after": total_receivable_after - total_payable_after,
+    }
+
+
+def format_debt_net_position_lines(person_name: str, remaining_payable: float, remaining_receivable: float) -> list[str]:
+    """Format posisi akhir hutang-piutang global per orang."""
+    net = float(remaining_receivable or 0) - float(remaining_payable or 0)
+    lines = [
+        f"📊 Sisa piutang: {format_rupiah(remaining_receivable)}",
+        f"📊 Sisa utang Anda: {format_rupiah(remaining_payable)}",
+    ]
+    if net > 0:
+        lines.append(f"🟢 Posisi akhir: {person_name} masih hutang ke Anda {format_rupiah(net)}")
+    elif net < 0:
+        lines.append(f"🔴 Posisi akhir: Anda masih hutang ke {person_name} {format_rupiah(abs(net))}")
+    else:
+        lines.append(f"⚪ Posisi akhir: debt dengan {person_name} netral/lunas")
+    return lines
 
 
 def offset_debt_by_person(
@@ -1223,6 +1319,295 @@ def get_debt_summary() -> dict:
         "total_receivable": total_receivable,
         "payables": payables,
         "receivables": receivables,
+    }
+
+
+
+
+# ── Selected Debt Settlement ─────────────────────────────────────────────────
+
+def summarize_debt_rows_for_settlement(debts: list[dict]) -> dict:
+    """Hitung total debt terpilih tanpa membaca ulang sheet.
+
+    receivable = orang tersebut hutang ke Anda.
+    payable    = Anda hutang ke orang tersebut.
+    net = receivable - payable.
+    """
+    selected = []
+    total_receivable = 0.0
+    total_payable = 0.0
+
+    for debt in debts or []:
+        if not debt or is_voided_debt(debt):
+            continue
+        remaining = parse_sheet_number(debt.get("remaining_amount", 0))
+        if remaining <= 0:
+            continue
+        debt_type = str(debt.get("type", "") or "").strip().lower()
+        if debt_type not in {"receivable", "payable"}:
+            continue
+        item = dict(debt)
+        item["remaining_amount"] = remaining
+        selected.append(item)
+        if debt_type == "receivable":
+            total_receivable += remaining
+        else:
+            total_payable += remaining
+
+    net_amount = total_receivable - total_payable
+    if abs(net_amount) <= 0.0001:
+        net_type = "balanced"
+    elif net_amount > 0:
+        net_type = "receivable"
+    else:
+        net_type = "payable"
+
+    return {
+        "selected": selected,
+        "count": len(selected),
+        "total_receivable": total_receivable,
+        "total_payable": total_payable,
+        "net_amount": net_amount,
+        "net_abs": abs(net_amount),
+        "net_type": net_type,
+    }
+
+
+def settle_selected_debt_ids(
+    person_name: str,
+    debt_ids: list[str],
+    note: str = "",
+    overpayment_amount: float = 0.0,
+    overpayment_policy: str | None = None,
+    net_type: str | None = None,
+) -> dict:
+    """Settle hanya debt_id yang dipilih dari /hutang <nama>.
+
+    Fungsi ini sengaja tidak melakukan FIFO global per orang. Semua debt_id yang
+    diberikan akan dibuat remaining=0, sehingga debt di luar range/list tetap aktif.
+    """
+    person = normalize_person_name(person_name)
+    clean_ids = [str(x or "").strip() for x in (debt_ids or []) if str(x or "").strip()]
+    if not person:
+        return {"success": False, "message": "Nama orang kosong.", "settled": []}
+    if not clean_ids:
+        return {"success": False, "message": "Tidak ada debt terpilih.", "settled": []}
+
+    rows = []
+    seen = set()
+    for debt_id in clean_ids:
+        if debt_id in seen:
+            continue
+        seen.add(debt_id)
+        row_index, debt = get_debt_row_by_id(debt_id)
+        if not row_index or not debt:
+            return {"success": False, "message": f"Debt {debt_id} tidak ditemukan.", "settled": rows}
+        current_person = normalize_person_name(debt.get("person_name", ""))
+        if current_person != person:
+            return {
+                "success": False,
+                "message": f"Debt {debt_id} bukan milik {person}.",
+                "settled": rows,
+            }
+        if is_voided_debt(debt):
+            return {"success": False, "message": f"Debt {debt_id} sudah void.", "settled": rows}
+        remaining = parse_sheet_number(debt.get("remaining_amount", 0))
+        if remaining <= 0:
+            continue
+        rows.append({"row_index": row_index, "debt": debt, "remaining": remaining})
+
+    if not rows:
+        return {"success": False, "message": "Semua debt terpilih sudah lunas/tidak aktif.", "settled": []}
+
+    settled_items = []
+    mutation_note = note or f"Settlement debt terpilih {person}"
+    try:
+        for item in rows:
+            row_index = int(item["row_index"])
+            debt = item["debt"]
+            remaining = float(item["remaining"] or 0)
+            debt_id = str(debt.get("id", "") or "").strip()
+            _set_debt_remaining(row_index, 0, parse_sheet_number(debt.get("original_amount", 0)))
+            append_debt_mutation(debt_id, remaining, mutation_note, mutation_type="selected_settle")
+            settled_items.append({
+                "debt_id": debt_id,
+                "amount": remaining,
+                "type": str(debt.get("type", "") or "").strip(),
+                "description": debt.get("description", ""),
+            })
+    except Exception as e:
+        return {"success": False, "message": str(e), "settled": settled_items}
+
+    overpayment_amount = max(0.0, float(overpayment_amount or 0))
+    overpayment_policy = str(overpayment_policy or "").strip().lower()
+    overpayment_created = None
+    if overpayment_amount > 0 and overpayment_policy in {"opposite_debt", "debt", "hutang"}:
+        # Jika orang membayar piutang Anda terlalu besar, sisa lebihnya menjadi
+        # payable: Anda harus mengembalikan ke orang tersebut. Sebaliknya untuk
+        # utang Anda yang dibayar terlalu besar.
+        opposite_type = "payable" if str(net_type or "").strip() == "receivable" else "receivable"
+        created = add_debt(
+            opposite_type,
+            person,
+            overpayment_amount,
+            description=f"Kelebihan bayar settlement debt terpilih: {mutation_note}",
+            cashflow_mode="debt_only",
+            fronting_mode="overpayment_from_selected_settle",
+        )
+        if not created.get("success"):
+            return {
+                "success": False,
+                "message": "Debt terpilih sudah disettle, tapi gagal mencatat overpaid: " + created.get("message", ""),
+                "settled": settled_items,
+                "overpayment": overpayment_amount,
+            }
+        overpayment_created = created
+
+    active_after = get_debt_by_person(person)
+    total_payable = sum(
+        parse_sheet_number(d.get("remaining_amount", 0))
+        for d in active_after
+        if str(d.get("type", "") or "").strip() == "payable" and not is_voided_debt(d)
+    )
+    total_receivable = sum(
+        parse_sheet_number(d.get("remaining_amount", 0))
+        for d in active_after
+        if str(d.get("type", "") or "").strip() == "receivable" and not is_voided_debt(d)
+    )
+
+    affected_ids = [x["debt_id"] for x in settled_items if x.get("debt_id")]
+    if overpayment_created and overpayment_created.get("debt_id"):
+        affected_ids.append(overpayment_created["debt_id"])
+
+    return {
+        "success": True,
+        "message": "ok",
+        "settled": settled_items,
+        "allocations": settled_items,
+        "overpayment": overpayment_amount,
+        "overpayment_policy": overpayment_policy,
+        "overpayment_created": overpayment_created,
+        "affected_debt_ids": affected_ids,
+        "remaining_payable": total_payable,
+        "remaining_receivable": total_receivable,
+        "net_remaining": total_receivable - total_payable,
+    }
+
+# ── Debt Payment Reversal / Delete Payment Transaction ────────────────────────
+
+def parse_debt_allocation_note(note: str) -> list[dict]:
+    """Parse catatan transaksi: debt_allocations=debt_id:amount;debt_id:amount."""
+    raw = str(note or "")
+    m = re.search(r"debt_allocations=([^|]+)", raw)
+    if not m:
+        return []
+    payload = m.group(1).strip()
+    result = []
+    for part in payload.split(";"):
+        part = part.strip()
+        if not part or ":" not in part:
+            continue
+        debt_id, amount_raw = part.split(":", 1)
+        amount = parse_sheet_number(amount_raw)
+        if debt_id.strip() and amount > 0:
+            result.append({"debt_id": debt_id.strip(), "amount": amount})
+    return result
+
+
+def _set_debt_remaining(row_index: int, new_remaining: float, original_amount: float | None = None):
+    original = float(original_amount or 0)
+    remaining = max(0.0, float(new_remaining or 0))
+    is_settled = remaining <= 0.0001
+    update_cell(SHEET_DEBTS, row_index, DEBT_REMAINING_AMOUNT_COL, 0 if is_settled else remaining)
+    update_cell(SHEET_DEBTS, row_index, DEBT_IS_SETTLED_COL, "TRUE" if is_settled else "FALSE")
+    update_cell(SHEET_DEBTS, row_index, DEBT_SETTLED_AT_COL, datetime.now().strftime("%Y-%m-%d") if is_settled else "")
+
+
+def reverse_debt_payment_transaction(txn: dict) -> dict:
+    """Balikkan efek pembayaran debt dari transaksi yang akan dihapus.
+
+    Prioritas pakai catatan debt_allocations. Untuk transaksi lama yang belum punya
+    catatan allocation, fallback membagi reversal ke debt_id yang ada di hutang_id
+    sampai amount transaksi habis. Ini tidak sesempurna allocation baru, tapi cukup
+    untuk memperbaiki payment salah tanpa edit sheet manual.
+    """
+    txn = txn or {}
+    category = str(txn.get("category", "") or "").strip()
+    if category not in {"Pembayaran Piutang", "Bayar Utang"}:
+        return {"success": True, "message": "Bukan transaksi payment debt.", "reversed": []}
+
+    amount_left = parse_sheet_number(txn.get("amount", 0))
+    note_text = str(txn.get("catatan", "") or "")
+    is_selected_settle = "selected_settle=1" in note_text
+    if amount_left <= 0 and not is_selected_settle:
+        return {"success": False, "message": "Nominal transaksi payment tidak valid.", "reversed": []}
+
+    allocations = parse_debt_allocation_note(note_text)
+    if not allocations:
+        debt_ids = [x.strip() for x in re.split(r"[,;\s]+", str(txn.get("hutang_id", "") or "")) if x.strip()]
+        allocations = [{"debt_id": debt_id, "amount": None} for debt_id in debt_ids]
+
+    if not allocations:
+        return {"success": False, "message": "Transaksi payment tidak punya hutang_id/allocation untuk dibalikkan.", "reversed": []}
+
+    reversed_items = []
+    failed = []
+    today_note = f"Reverse payment karena transaksi {txn.get('id') or '-'} dihapus/diedit"
+
+    # Kalau transaksi berasal dari /debt_settle selected, alokasi di catatan
+    # berisi seluruh debt yang disettle, termasuk offset silang tanpa cashflow.
+    # Saat transaksi dihapus, semua debt terpilih harus dibuka lagi, bukan hanya
+    # sebesar nominal cashflow transaksi.
+    if is_selected_settle:
+        amount_left = sum(parse_sheet_number(a.get("amount")) for a in allocations)
+
+    for alloc in allocations:
+        debt_id = str(alloc.get("debt_id") or "").strip()
+        if not debt_id or amount_left <= 0:
+            continue
+        row_index, debt = get_debt_row_by_id(debt_id)
+        if not row_index or not debt:
+            failed.append(f"{debt_id}: debt tidak ditemukan")
+            continue
+        original = parse_sheet_number(debt.get("original_amount", 0))
+        current_remaining = parse_sheet_number(debt.get("remaining_amount", 0))
+        room = max(0.0, original - current_remaining)
+        if room <= 0:
+            continue
+        alloc_amount = alloc.get("amount")
+        if is_selected_settle and alloc_amount is not None:
+            reverse_amount = min(room, parse_sheet_number(alloc_amount))
+        else:
+            reverse_amount = min(amount_left, room, parse_sheet_number(alloc_amount) if alloc_amount is not None else amount_left)
+        if reverse_amount <= 0:
+            continue
+        new_remaining = min(original, current_remaining + reverse_amount)
+        _set_debt_remaining(row_index, new_remaining, original)
+        append_debt_mutation(debt_id, -reverse_amount, today_note, mutation_type="reverse_payment")
+        reversed_items.append({"debt_id": debt_id, "amount": reverse_amount, "remaining_after": new_remaining})
+        amount_left -= reverse_amount
+
+    # Jika overpayment sempat dibuat sebagai debt lawan arah, hapus efek aktifnya
+    # ketika transaksi settlement/payment di-delete.
+    overpay_id_match = re.search(r"overpayment_debt_id=([^|;\s]+)", note_text)
+    if overpay_id_match:
+        overpay_debt_id = overpay_id_match.group(1).strip()
+        row_index, debt = get_debt_row_by_id(overpay_debt_id)
+        if row_index and debt:
+            current_remaining = parse_sheet_number(debt.get("remaining_amount", 0))
+            if current_remaining > 0:
+                _set_debt_remaining(row_index, 0, parse_sheet_number(debt.get("original_amount", 0)))
+                append_debt_mutation(overpay_debt_id, current_remaining, today_note, mutation_type="reverse_overpayment_debt")
+                reversed_items.append({"debt_id": overpay_debt_id, "amount": current_remaining, "remaining_after": 0})
+
+    if failed:
+        return {"success": False, "message": "; ".join(failed), "reversed": reversed_items}
+
+    return {
+        "success": True,
+        "message": "ok",
+        "reversed": reversed_items,
+        "unreversed_amount": max(0.0, amount_left),
     }
 
 # ── Debt Void ─────────────────────────────────────────────────────────────────

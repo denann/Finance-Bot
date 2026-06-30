@@ -26,29 +26,17 @@ def normalize_amount(text: str) -> int | None:
     text = text.replace(",", ".")
 
     # Cari angka (termasuk desimal) + satuan
-    pattern = r"(\d+(?:\.\d+)?)\s*(rb|ribu|k|jt|juta|m|miliar|miliard|milyard)?"
+    pattern = r"(\d+(?:\.\d+)?)(?:\s*(rb|ribu|k|jt|juta|m|miliar|miliard|milyard)\b)?"
     match = re.search(pattern, text)
 
     if not match:
         return None
 
-    number = float(match.group(1))
+    number_str = match.group(1)
     unit = match.group(2) or ""
 
-    multiplier = {
-        "rb": 1_000,
-        "ribu": 1_000,
-        "k": 1_000,
-        "jt": 1_000_000,
-        "juta": 1_000_000,
-        "m": 1_000_000,
-        "miliar": 1_000_000_000,
-        "miliard": 1_000_000_000,
-        "milyard": 1_000_000_000,
-    }
-
-    result = number * multiplier.get(unit, 1)
-    return int(result)
+    parsed = parse_amount_value(number_str, unit)
+    return parsed
 
 
 def normalize_text(text: str) -> str:
@@ -60,38 +48,37 @@ def parse_amount_value(number_str: str, unit: str = "") -> int | None:
     """
     Parse satu token nominal menjadi integer.
 
-    Catatan khusus:
-    - 91.457k -> 91457 (91.457 × 1000)
-    - 70.100k -> 70100
-    - 150.000 tanpa unit -> 150000
+    Catatan penting untuk kebiasaan input user:
+    - 37.5k    -> 37.500  (titik 1-2 digit dianggap desimal)
+    - 331.063k -> 331.063 (titik 3 digit dianggap pemisah ribuan, bukan 331 juta)
+    - 331k     -> 331.000
+    - 150.000  -> 150.000
     """
-    number_str = str(number_str or "").strip().lower().replace(",", ".")
+    raw = str(number_str or "").strip().lower().replace(",", ".")
     unit = str(unit or "").strip().lower()
 
-    if not number_str:
+    if not raw:
         return None
 
     try:
-        if unit:
-            number = float(number_str)
-            multiplier = {
-                "rb": 1_000,
-                "ribu": 1_000,
-                "k": 1_000,
-                "jt": 1_000_000,
-                "juta": 1_000_000,
-                "m": 1_000_000,
-                "miliar": 1_000_000_000,
-                "miliard": 1_000_000_000,
-                "milyard": 1_000_000_000,
-            }.get(unit, 1)
-            return int(number * multiplier)
+        # Dengan unit ribuan/juta, bedakan titik ribuan vs desimal.
+        # Kasus khas user: "331.063k" maksudnya Rp331.063, bukan Rp331.063.000.
+        if unit in {"rb", "ribu", "k"}:
+            if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", raw):
+                return int(raw.replace(".", ""))
+            return int(float(raw) * 1_000)
+
+        if unit in {"jt", "juta", "m"}:
+            return int(float(raw) * 1_000_000)
+
+        if unit in {"miliar", "miliard", "milyard"}:
+            return int(float(raw) * 1_000_000_000)
 
         # Tanpa unit: titik dengan grup 3 digit dianggap ribuan.
-        if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", number_str):
-            return int(number_str.replace(".", ""))
+        if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", raw):
+            return int(raw.replace(".", ""))
 
-        return int(float(number_str))
+        return int(float(raw))
     except Exception:
         return None
 
@@ -110,7 +97,7 @@ def extract_amount_from_text(text: str) -> int | None:
     # Handle ekspresi nominal sederhana: "70.100k - 19k", "100k + 25k".
     # Wajib ada unit pada salah satu sisi agar tidak salah baca tanggal seperti 15-05-2026.
     unit_pattern = r"rb|ribu|k|jt|juta|m|miliar|miliard|milyard"
-    token_pattern = rf"(\d+(?:[.,]\d+)?)\s*({unit_pattern})?"
+    token_pattern = rf"(\d+(?:[.,]\d+)?)(?:\s*({unit_pattern})\b)?"
     expr_match = re.search(
         rf"{token_pattern}\s*([+\-])\s*{token_pattern}",
         text,
@@ -135,7 +122,7 @@ def extract_amount_from_text(text: str) -> int | None:
         return int(clean)
 
     # Handle format normal dengan satuan
-    pattern = r"(\d+(?:[.,]\d+)?)\s*(rb|ribu|k|jt|juta|m|miliar|miliard|milyard)?"
+    pattern = r"(\d+(?:[.,]\d+)?)(?:\s*(rb|ribu|k|jt|juta|m|miliar|miliard|milyard)\b)?"
     matches = re.findall(pattern, text)
 
     if not matches:
@@ -146,25 +133,9 @@ def extract_amount_from_text(text: str) -> int | None:
     best_value = 0
 
     for number_str, unit in matches:
-        number_str = number_str.replace(",", ".")
-        try:
-            number = float(number_str)
-        except ValueError:
+        value = parse_amount_value(number_str, unit or "")
+        if value is None:
             continue
-
-        multiplier = {
-            "rb": 1_000,
-            "ribu": 1_000,
-            "k": 1_000,
-            "jt": 1_000_000,
-            "juta": 1_000_000,
-            "m": 1_000_000,
-            "miliar": 1_000_000_000,
-            "miliard": 1_000_000_000,
-            "milyard": 1_000_000_000,
-        }.get(unit, 1)
-
-        value = int(number * multiplier)
         if value > best_value:
             best_value = value
             best = value
