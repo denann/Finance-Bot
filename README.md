@@ -1,6 +1,6 @@
-# Denan Finance Bot
+# Personal Finance Bot
 
-Denan Finance Bot adalah Telegram personal finance assistant untuk mencatat, mengelola, dan menganalisis keuangan pribadi langsung dari chat.
+Personal Finance Bot adalah Telegram personal finance assistant untuk mencatat, mengelola, dan menganalisis keuangan pribadi langsung dari chat.
 
 Project ini dibuat untuk menyelesaikan masalah pencatatan keuangan harian yang sering terasa ribet, tidak konsisten, dan mudah terlupakan. User cukup mengetik input natural seperti `beli kopi 25k`, `topup gopay 100k dari bsi`, atau `ditalangin Budi bayar makan 100k`, lalu bot akan membantu membuat preview sebelum data disimpan ke Google Sheets.
 
@@ -808,6 +808,5 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 **Denanda Aufadlan Tsaqif**
 
-- LinkedIn: `https://www.linkedin.com/in/your-linkedin`
-- Portfolio: `https://your-portfolio.com`
-- GitHub: `https://github.com/your-username`
+- LinkedIn: `https://www.linkedin.com/in/denandaa`
+- GitHub: `https://github.com/denann`
