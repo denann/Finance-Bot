@@ -31,6 +31,7 @@ INCOME_KEYWORDS = [
 TRANSFER_KEYWORDS = [
     "transfer", "pindah", "move", "tarik tunai", "tarik",
     "setor tunai", "setor ke", "isi", "ngisi", "top up", "topup",
+    "tf", "trf",
 ]
 
 ACCOUNT_NAMES = ["cash", "bri", "bsi", "bca", "dana", "gopay", "seabank", "sea bank"]
@@ -56,6 +57,7 @@ CATEGORY_KEYWORDS = {
         "snack", "cemilan", "jajan", "resto", "restoran", "warung",
         "cafe", "kafe", "warteg", "indomaret", "alfamart", "supermarket",
         "beras", "sayur", "buah", "daging", "telur", "susu",
+        "galon", "air galon",
     ],
     "Transport": [
         "bensin", "bbm", "pertalite", "pertamax", "solar",
@@ -87,7 +89,7 @@ CATEGORY_KEYWORDS = {
     "Education": [
         "buku", "kursus", "les", "pelatihan", "training", "seminar",
         "udemy", "coursera", "kampus", "kuliah", "spp", "ukt",
-        "alat tulis", "fotocopy", "print",
+        "wisuda", "alat tulis", "fotocopy", "print",
     ],
     "Personal Care": [
         "potong rambut", "cukur", "salon", "barbershop",
@@ -148,7 +150,7 @@ SPENDING_TYPE_KEYWORDS = {
 
 DEBT_PAYABLE_KEYWORDS = [
     "hutang ke", "utang ke", "pinjem ke", "pinjam ke",
-    "hutang sama", "utang sama", "bayar ke",
+    "hutang sama", "utang sama",
     "minjem ke",
 ]
 
@@ -545,7 +547,10 @@ def parse_debt_input(text: str) -> dict | None:
     # dan bukan transfer antar rekening. Namun pola "Nama bayar 5k" adalah
     # pembayaran piutang natural, karena subjeknya orang yang membayar ke user.
 
-    # ── Payment natural: "Raka bayar 5k" / "Raka bayar hutang 500k" ───────
+    # ── Payment natural debt yang eksplisit ─────────────────────────────────
+    # Person + "bayar" tanpa keyword debt terlalu rawan:
+    # "Budi bayar makan 100k" bisa berarti expense, debt payment, atau no-cashflow.
+    # Karena itu hanya langsung masuk debt flow kalau ada kata debt/lunas/cicil.
     person_pays_match = re.search(
         r"^\s*(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)\s+"
         r"(?:bayar|byr|melunasi|lunasin|lunasi|nyicil|cicil|transfer\s+balik|kembaliin|balikin|dibalikin)\b"
@@ -553,7 +558,7 @@ def parse_debt_input(text: str) -> dict | None:
         text_lower,
         flags=re.IGNORECASE,
     )
-    if person_pays_match:
+    if person_pays_match and re.search(r"\b(?:hutang|utang|piutang|debt|cicil|cicilan|lunas|lunasi|lunasin|melunasi|nyicil|transfer\s+balik|kembaliin|balikin|dibalikin)\b", text_lower):
         person = re.sub(r"\s+", " ", person_pays_match.group("person")).strip().title()
         if (
             person
@@ -672,6 +677,7 @@ def parse_debt_input(text: str) -> dict | None:
 
 def detect_type(text: str) -> str | None:
     text_lower = normalize_text(text)
+    account_pattern = r"cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank"
 
     # Income dari orang/non-rekening.
     # Contoh: "Transaksi dari Maya 55k", "transfer dari Bagas 50k",
@@ -689,14 +695,40 @@ def detect_type(text: str) -> str | None:
         if source and first_token not in ACCOUNT_NAMES:
             return "income"
 
-    # Transfer antar rekening hanya dianggap transfer kalau ada nama rekening
-    # yang dikenali (Cash/BRI/BSI/DANA/GoPay).
-    # Contoh: "ngisi gopay 50k" -> transfer/topup ke GoPay.
-    for kw in TRANSFER_KEYWORDS:
-        if kw in text_lower:
-            for acc in ACCOUNT_NAMES:
-                if acc in text_lower:
-                    return "transfer"
+    # Transfer antar rekening tanpa keyword eksplisit:
+    # "BCA ke DANA 200k", "Cash ke BRI 100k".
+    if re.search(rf"\b({account_pattern})\s+ke\s+({account_pattern})\b", text_lower, flags=re.IGNORECASE):
+        return "transfer"
+
+    # Alias transfer.
+    # "tf gopay 100k dari BRI", "trf DANA 50k dari BCA".
+    if re.search(r"\b(?:tf|trf)\b", text_lower) and re.search(rf"\b({account_pattern})\b", text_lower, flags=re.IGNORECASE):
+        return "transfer"
+
+    # Keyword transfer eksplisit selain topup/isi.
+    # Jangan jadikan "isi bensin 50k dari BRI" sebagai transfer hanya karena ada BRI.
+    explicit_transfer_keywords = [
+        "transfer", "pindah", "move", "tarik tunai", "tarik",
+        "setor tunai", "setor ke",
+    ]
+    if any(kw in text_lower for kw in explicit_transfer_keywords):
+        if re.search(rf"\b({account_pattern})\b", text_lower, flags=re.IGNORECASE):
+            return "transfer"
+
+    # Top up/isi hanya transfer kalau targetnya rekening/wallet yang dikenali.
+    # Selain itu tetap expense: isi bensin, isi pulsa, top up game/ML.
+    topup_to_account = re.search(
+        rf"\b(?:top\s*up|topup|isi|ngisi)\s+({account_pattern})\b",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    topup_ke_account = re.search(
+        rf"\b(?:top\s*up|topup|isi|ngisi)\b.*\bke\s+({account_pattern})\b",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if topup_to_account or topup_ke_account:
+        return "transfer"
 
     # Pola pemasukan natural yang sebelumnya sering gagal:
     # "uang ptpt bulanan dari fajar 200k"

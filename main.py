@@ -70,7 +70,7 @@ from app.config import (
     WEBHOOK_URL,
 )
 from app.scheduler.jobs import create_scheduler
-from app.sheets.client import get_spreadsheet, sheets_transaction
+from app.sheets.client import get_spreadsheet, ensure_spreadsheet_schema, sheets_transaction
 
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
@@ -221,6 +221,23 @@ async def startup():
     await telegram_app.initialize()
     await telegram_app.start()
 
+    try:
+        schema_results = ensure_spreadsheet_schema()
+        changed = [
+            result
+            for result in schema_results
+            if result.get("actions") != ["no_change"]
+        ]
+        print(
+            "✅ Google Sheets schema siap."
+            f" Tabs dicek: {len(schema_results)}."
+            f" Perubahan: {len(changed)}."
+        )
+    except Exception as e:
+        # Jangan matikan webhook hanya karena Sheets belum siap.
+        # Handler pertama yang butuh Sheets tetap akan mengangkat error yang jelas.
+        print(f"⚠️ Google Sheets schema belum bisa dipastikan: {e}")
+
     await telegram_app.bot.set_webhook(
         url=f"{WEBHOOK_URL}/webhook",
         secret_token=TELEGRAM_WEBHOOK_SECRET,
@@ -248,6 +265,7 @@ async def health_check():
 @app.get("/test-sheets")
 async def test_sheets():
     try:
+        schema_results = ensure_spreadsheet_schema()
         spreadsheet = get_spreadsheet()
         sheets = [ws.title for ws in spreadsheet.worksheets()]
 
@@ -255,6 +273,7 @@ async def test_sheets():
             "status": "connected",
             "spreadsheet_title": spreadsheet.title,
             "sheets_found": sheets,
+            "schema_check": schema_results,
         }
 
     except Exception as e:

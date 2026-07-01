@@ -1,6 +1,6 @@
-# Denan Finance Bot
+# Personal Finance Bot
 
-Denan Finance Bot adalah Telegram personal finance assistant untuk mencatat, mengelola, dan menganalisis keuangan pribadi langsung dari chat.
+Personal Finance Bot adalah Telegram personal finance assistant untuk mencatat, mengelola, dan menganalisis keuangan pribadi langsung dari chat.
 
 Project ini dibuat untuk menyelesaikan masalah pencatatan keuangan harian yang sering terasa ribet, tidak konsisten, dan mudah terlupakan. Alih-alih membuka spreadsheet manual setiap kali ada transaksi, user cukup mengetik input natural seperti `beli kopi 25k`, `topup gopay 100k dari bsi`, atau `ditalangin Budi bayar makan 100k`.
 
@@ -10,11 +10,11 @@ Bot akan membaca input tersebut, mem-parse tanggal, nominal, rekening, kategori,
 
 - [Features](#features)
 - [Tech Stack](#tech-stack)
-- [System Architecture](#system-architecture)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Project Structure](#project-structure)
-- [Limitations](#limitations)
+- [System Architecture](#system-architecture) 
+- [Installation](#installation) 
+- [Usage](#usage) 
+- [Project Structure](#project-structure) 
+- [Limitations](#limitations) 
 - [Author](#author)
 
 ## Features
@@ -167,9 +167,11 @@ Contoh penggunaan bot tersedia di bagian [Usage](#usage).
   <img src="assets/workflow-ai-finance-assistant.png" alt="Workflow AI Finance Assistant" width="900">
 </p>
 
-Sistem ini memiliki dua alur utama. Pertama, **alur pencatatan transaksi**, yaitu input dari Telegram diproses oleh parser, divalidasi melalui preview, lalu disimpan ke Google Sheets sebagai data layer utama. Kedua, **alur AI insight**, yaitu user dapat bertanya melalui `/ask`, `/audit`, `/coach`, atau `/insight`, lalu backend mengambil konteks data yang relevan sebelum Gemini membantu menyusun penjelasan.
+Sistem ini memiliki dua alur utama. Pertama, alur pencatatan transaksi, yaitu input dari Telegram diproses oleh parser, lalu melewati tahap Confidence / Safety Routing sebelum masuk ke preview dan konfirmasi. Pada tahap ini, sistem menentukan apakah hasil parsing sudah aman untuk preview normal, perlu warning, perlu bantuan AI review, atau harus meminta klarifikasi ulang ke user. Setelah user melakukan konfirmasi, data baru disimpan ke Google Sheets sebagai data layer utama.
 
-Prinsip utama dari arsitektur ini adalah AI tidak langsung mengambil keputusan finansial sendiri. Business logic tetap dikontrol oleh backend, sedangkan Gemini digunakan untuk membantu memahami input, membaca gambar, dan menjelaskan insight berdasarkan data yang sudah tersedia.
+Kedua, alur AI insight, yaitu user dapat bertanya melalui /ask, /audit, /coach, atau /insight. Backend akan mengambil dan menghitung konteks data yang relevan terlebih dahulu, lalu LLM membantu menyusun penjelasan yang lebih natural dan mudah dipahami.
+
+Prinsip utama dari arsitektur ini adalah AI tidak langsung mengambil keputusan finansial sendiri. Business logic tetap dikontrol oleh backend, sedangkan AI digunakan untuk membantu memahami input, membaca gambar, membuat draft parsing saat diperlukan, dan menjelaskan insight berdasarkan data yang sudah tersedia. Dengan pendekatan ini, input tetap praktis, data tetap aman, dan risiko menyimpan output yang salah bisa dikurangi melalui preview, edit dulu, dan safety routing.
 
 ## Installation
 
@@ -236,6 +238,11 @@ GOOGLE_SERVICE_ACCOUNT_JSON=service_account.json
 
 # Gemini
 GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=your_gemini_model_here
+GEMINI_TEXT_MODEL=your_gemini_model_here
+GEMINI_INTENT_MODEL=your_gemini_model_here
+GEMINI_IMAGE_MODEL=your_gemini_model_here
+GEMINI_INSIGHT_MODEL=your_gemini_model_here
 
 # App
 WEBHOOK_URL=https://your-domain.com
@@ -417,6 +424,31 @@ Contoh:
 
 Tanpa step ini, bot tidak bisa membaca dan menulis data ke Google Sheets.
 
+#### Setup Struktur Spreadsheet Otomatis
+
+Setelah `GOOGLE_SHEET_ID` dan akses service account benar, bot akan mengecek struktur Google Sheets saat startup dan saat endpoint `/test-sheets` dipanggil. Jika spreadsheet masih kosong, tab belum ada, atau header sheet belum lengkap, struktur dasar akan dibuat otomatis oleh aplikasi.
+
+Tab yang disiapkan otomatis meliputi:
+
+```text
+transactions
+accounts
+budgets
+debts
+debt_payments
+categories
+monthly_summary
+recurring_rules
+recurring_logs
+assets
+pending_expenses
+net_worth_snapshots
+```
+
+Sheet `accounts` juga akan diberi rekening awal dengan saldo 0 agar bot langsung bisa membaca rekening umum seperti `Cash`, `BRI`, `BSI`, `BCA`, `DANA`, `GoPay`, dan `Seabank`. Saldo awalnya bisa kamu edit manual di Google Sheets setelah struktur dibuat.
+
+Kalau sebuah sheet sudah berisi data tetapi urutan header-nya benar-benar berbeda dari format bot, aplikasi tidak akan memaksa migrasi otomatis karena berisiko menggeser makna data lama. Untuk case seperti itu, rapikan header manual sesuai pesan error atau pindahkan data lama ke backup dulu.
+
 ### 11. Setup Gemini API Key
 
 `GEMINI_API_KEY` digunakan untuk fitur AI parser, image parser, dan finance insight.
@@ -432,7 +464,22 @@ Contoh:
 
 ```env
 GEMINI_API_KEY=AIzaSyExampleGeminiApiKey
+GEMINI_MODEL=gemini-model-yang-kamu-pakai
+GEMINI_TEXT_MODEL=gemini-model-yang-kamu-pakai
+GEMINI_INTENT_MODEL=gemini-model-yang-kamu-pakai
+GEMINI_IMAGE_MODEL=gemini-model-yang-kamu-pakai
+GEMINI_INSIGHT_MODEL=gemini-model-yang-kamu-pakai
 ```
+
+Catatan LLM support saat ini:
+
+- Project ini saat ini **baru mendukung Gemini** sebagai provider LLM.
+- Nama model Gemini bisa dikonfigurasi lewat `.env`.
+- `GEMINI_MODEL` digunakan sebagai default model.
+- `GEMINI_TEXT_MODEL`, `GEMINI_INTENT_MODEL`, `GEMINI_IMAGE_MODEL`, dan `GEMINI_INSIGHT_MODEL` bisa dipakai jika ingin membedakan model untuk parsing teks, intent routing, image parser, dan finance insight.
+- Provider lain seperti Llama, OpenAI, Groq, Ollama, atau OpenRouter belum didukung out of the box. Untuk provider selain Gemini, perlu menambahkan adapter/client LLM baru di kode.
+
+Dengan kata lain, model Gemini-nya fleksibel lewat `.env`, tetapi provider LLM-nya masih Gemini.
 
 ### 12. Setup App URL and Port
 
@@ -496,6 +543,11 @@ GOOGLE_SERVICE_ACCOUNT_JSON=service_account.json
 
 # Gemini
 GEMINI_API_KEY=AIzaSyExampleGeminiApiKey
+GEMINI_MODEL=gemini-model-yang-kamu-pakai
+GEMINI_TEXT_MODEL=gemini-model-yang-kamu-pakai
+GEMINI_INTENT_MODEL=gemini-model-yang-kamu-pakai
+GEMINI_IMAGE_MODEL=gemini-model-yang-kamu-pakai
+GEMINI_INSIGHT_MODEL=gemini-model-yang-kamu-pakai
 
 # App
 WEBHOOK_URL=https://your-app-name.wispbyte.com
@@ -715,16 +767,19 @@ Beberapa batasan project saat ini:
 3. **AI insight bergantung pada kualitas data**  
    Insight dari Gemini akan lebih akurat jika kategori, rekening, tanggal, dan tipe transaksi sudah rapi.
 
-4. **Belum multi-user penuh**  
+4. **LLM provider saat ini baru Gemini**  
+   Model Gemini bisa diganti melalui `.env`, tetapi provider selain Gemini seperti Llama, OpenAI, Groq, Ollama, atau OpenRouter belum didukung tanpa penambahan adapter/client baru.
+
+5. **Belum multi-user penuh**  
    Bot ini dirancang sebagai personal finance bot, bukan aplikasi SaaS multi-user.
 
-5. **Google Sheets quota limit**  
+6. **Google Sheets quota limit**  
    Jika terlalu banyak operasi read/write dalam waktu singkat, bot dapat terkena limit API Google Sheets.
 
-6. **Image parser bergantung pada kualitas gambar**  
+7. **Image parser bergantung pada kualitas gambar**  
    Struk yang buram, terpotong, atau terlalu gelap dapat membuat hasil parsing kurang akurat.
 
-7. **Command dan business logic masih berkembang**  
+8. **Command dan business logic masih berkembang**  
    Beberapa fitur seperti recurring, net worth, debt management, dan AI insight masih bisa terus disempurnakan sesuai kebutuhan pemakaian harian.
 
 ## Author

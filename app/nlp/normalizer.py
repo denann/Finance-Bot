@@ -164,9 +164,13 @@ def apply_split_operation(text: str, base_amount: int) -> int:
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
 
-    if re.search(rf"\b{split_word}\s*(?:jadi\s*)?\d+\s+(?:orang\s+)?{friend_marker}\b", text_lower):
+    participant_token = r"(?:\d+|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|berdua|bertiga|berempat|berlima|berenam)"
+
+    if re.search(rf"\b{split_word}\s*(?:jadi\s*)?{participant_token}\s+(?:orang\s+)?{friend_marker}\b", text_lower):
         return base_amount
-    if re.search(rf"\b{friend_marker}\s+[a-zA-ZÀ-ÿ\s]{{1,60}}\s+{split_word}\s*(?:jadi\s*)?\d+\b", text_lower):
+    if re.search(rf"\b{friend_marker}\s+[a-zA-ZÀ-ÿ\s]{{1,60}}\s+{split_word}\s*(?:jadi\s*)?{participant_token}\b", text_lower):
+        return base_amount
+    if re.search(rf"\b(?:berdua|bertiga|berempat|berlima|berenam)\s+{friend_marker}\b", text_lower):
         return base_amount
 
     # Shorthand split bill: "46k/4 sama raka bagas fajar".
@@ -179,30 +183,45 @@ def apply_split_operation(text: str, base_amount: int) -> int:
 
     # Pola: "dibagi N", "di bagi N", "di-bagi N", "bagi N", "split N", "/ N"
     split_patterns = [
-        rf"{split_word}\s*(?:jadi\s*)?(\d+)",
+        rf"{split_word}\s*(?:jadi\s*)?(\d+|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh)",
         r"/\s*(\d+)",
-        r"untuk\s+(\d+)\s+orang",
-        r"bertiga|berdua|berempat|berlima",
-        r"(\d+)\s+orang",
+        r"untuk\s+(\d+|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh)\s+orang",
+        r"bertiga|berdua|berempat|berlima|berenam",
+        r"(\d+|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh)\s+orang",
     ]
 
-    # Handle kata khusus
+    # Handle kata khusus hanya jika ada konteks pembagian.
+    # Jangan membagi amount hanya karena deskripsi memuat kata seperti "dua".
     word_map = {
+        "dua": 2,
+        "tiga": 3,
+        "empat": 4,
+        "lima": 5,
+        "enam": 6,
+        "tujuh": 7,
+        "delapan": 8,
+        "sembilan": 9,
+        "sepuluh": 10,
         "berdua": 2,
         "bertiga": 3,
         "berempat": 4,
         "berlima": 5,
+        "berenam": 6,
     }
-    for word, divisor in word_map.items():
-        if word in text_lower:
+
+    ber_match = re.search(r"\b(berdua|bertiga|berempat|berlima|berenam)\b", text_lower)
+    if ber_match and re.search(rf"\b(?:{split_word}|untuk|bareng)\b", text_lower):
+        divisor = word_map.get(ber_match.group(1))
+        if divisor and divisor > 1:
             return base_amount // divisor
 
-    # Handle pola angka
+    # Handle pola angka/kata yang punya operator pembagian jelas.
     for pattern in split_patterns:
         match = re.search(pattern, text_lower)
         if match and match.lastindex:
             try:
-                divisor = int(match.group(1))
+                raw_divisor = str(match.group(1)).strip().lower()
+                divisor = word_map.get(raw_divisor) or int(raw_divisor)
                 if divisor > 1:
                     return base_amount // divisor
             except (IndexError, ValueError):

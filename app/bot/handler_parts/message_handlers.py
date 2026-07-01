@@ -26,6 +26,8 @@ from app.bot.handler_parts.transaction_flow import (
     build_debt_only_confirm_preview,
     build_missing_amount_prompt,
     build_mixed_preview,
+    build_parse_clarification_prompt,
+    build_preview_with_parse_safety,
     build_mixed_split_bill_queue_prompt,
     build_preview,
     build_split_bill_prompt_from_parsed,
@@ -38,6 +40,7 @@ from app.bot.handler_parts.transaction_flow import (
     mixed_split_bill_keyboard,
     mixed_split_bill_needs_decision,
     needs_account,
+    parse_clarification_keyboard,
     parse_income_missing_amount,
     parse_input,
     parse_mixed_item,
@@ -58,6 +61,65 @@ from app.bot.handler_parts.command_handlers import (
     mingguan_handler,
     saldo_handler,
 )
+from app.nlp.gemini_parser import parse_with_gemini
+from app.nlp.parse_safety import (
+    CLARIFICATION,
+    GEMINI_DRAFT_PREVIEW,
+    WARNING_PREVIEW,
+    assess_parse_safety,
+)
+
+async def send_parse_clarification(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: str, parsed: dict | None, assessment: dict) -> None:
+    """Kirim prompt klarifikasi tanpa menyimpan apa pun."""
+    context.user_data["pending_parse_clarification"] = {
+        "raw": raw,
+        "parsed": parsed or {},
+        "assessment": assessment or {},
+    }
+    context.user_data.pop("pending_parsed", None)
+    context.user_data.pop("pending_raw", None)
+    context.user_data.pop("pending_batch", None)
+    context.user_data.pop("pending_debt", None)
+    context.user_data.pop("pending_debt_batch", None)
+    context.user_data.pop("pending_mixed", None)
+
+    await update.message.reply_text(
+        build_parse_clarification_prompt(raw, assessment),
+        parse_mode="Markdown",
+        reply_markup=parse_clarification_keyboard(),
+    )
+
+
+def try_gemini_draft_for_parse_safety(raw: str, fallback_parsed: dict, assessment: dict) -> tuple[dict, dict, bool]:
+    """Ambil draft Gemini untuk non-sensitive review. Kalau gagal, tetap pakai regex + warning."""
+    if str((fallback_parsed or {}).get("parsed_by") or "").strip().lower() == "gemini":
+        draft_assessment = dict(assessment or {})
+        reasons = list(draft_assessment.get("reasons") or [])
+        if "Draft transaksi dibuat oleh Gemini dan belum disimpan." not in reasons:
+            reasons.append("Draft transaksi dibuat oleh Gemini dan belum disimpan.")
+        draft_assessment["reasons"] = reasons
+        draft_assessment["recommended_action"] = GEMINI_DRAFT_PREVIEW
+        return fallback_parsed, draft_assessment, True
+
+    gemini_parsed = parse_with_gemini(raw)
+    if not gemini_parsed:
+        fallback_assessment = dict(assessment or {})
+        reasons = list(fallback_assessment.get("reasons") or [])
+        if "Gemini belum berhasil membuat draft, jadi preview memakai hasil parser lokal." not in reasons:
+            reasons.append("Gemini belum berhasil membuat draft, jadi preview memakai hasil parser lokal.")
+        fallback_assessment["reasons"] = reasons
+        fallback_assessment["recommended_action"] = WARNING_PREVIEW
+        return fallback_parsed, fallback_assessment, False
+
+    attach_split_bill_if_any(gemini_parsed, raw)
+    draft_assessment = dict(assessment or {})
+    reasons = list(draft_assessment.get("reasons") or [])
+    if "Draft transaksi dibuat oleh Gemini dan belum disimpan." not in reasons:
+        reasons.append("Draft transaksi dibuat oleh Gemini dan belum disimpan.")
+    draft_assessment["reasons"] = reasons
+    draft_assessment["recommended_action"] = GEMINI_DRAFT_PREVIEW
+    return gemini_parsed, draft_assessment, True
+
 
 async def debt_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -1007,6 +1069,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if finance_question_handled:
         return
 
+    # ── Parse Safety Routing: clarification yang harus ditangkap sebelum parser debt/transaction.
+    # Contoh: "Budi bayar makan 100k", "saldo BRI 500k", "uang Budi 50k".
+    pre_parse_assessment = assess_parse_safety(user_text, {})
+    if pre_parse_assessment.get("recommended_action") == CLARIFICATION:
+        await send_parse_clarification(update, context, user_text, {}, pre_parse_assessment)
+        return
+
     has_explicit_separator = bool(re.search(r"[\n\r;,]", user_text))
     input_lines = split_user_inputs(user_text)
     is_multi_input = has_explicit_separator or len(input_lines) > 1
@@ -1176,14 +1245,33 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     attach_split_bill_if_any(parsed, user_text)
 
+    safety_assessment = assess_parse_safety(user_text, parsed)
+    safety_action = safety_assessment.get("recommended_action")
+
+    if safety_action == CLARIFICATION:
+        await send_parse_clarification(update, context, user_text, parsed, safety_assessment)
+        return
+
+    preview_mode = "normal"
+    if safety_action == GEMINI_DRAFT_PREVIEW:
+        parsed, safety_assessment, gemini_used = try_gemini_draft_for_parse_safety(user_text, parsed, safety_assessment)
+        preview_mode = "gemini" if gemini_used else "warning"
+    elif safety_action == WARNING_PREVIEW:
+        preview_mode = "warning"
+
     context.user_data["pending_parsed"] = parsed
     context.user_data["pending_raw"] = user_text
     context.user_data.pop("pending_batch", None)
     context.user_data.pop("pending_debt", None)
     context.user_data.pop("pending_debt_batch", None)
     context.user_data.pop("pending_mixed", None)
+    context.user_data.pop("pending_parse_clarification", None)
 
-    preview = build_preview(parsed)
+    preview = (
+        build_preview_with_parse_safety(parsed, safety_assessment, preview_mode)
+        if preview_mode in {"warning", "gemini"}
+        else build_preview(parsed)
+    )
 
     # Untuk split bill, tanya status pembayaran teman dulu.
     # Setelah user memilih paid/unpaid, baru lanjut pilih rekening atau confirm.

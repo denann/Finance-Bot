@@ -6,8 +6,24 @@ import time
 from contextlib import contextmanager
 
 import gspread
+from gspread.exceptions import WorksheetNotFound
 from google.oauth2.service_account import Credentials
-from app.config import GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SHEET_ID
+from app.config import (
+    GOOGLE_SERVICE_ACCOUNT_JSON,
+    GOOGLE_SHEET_ID,
+    SHEET_ACCOUNTS,
+    SHEET_ASSETS,
+    SHEET_BUDGETS,
+    SHEET_CATEGORIES,
+    SHEET_DEBT_PAYMENTS,
+    SHEET_DEBTS,
+    SHEET_MONTHLY_SUMMARY,
+    SHEET_NET_WORTH_SNAPSHOTS,
+    SHEET_PENDING_EXPENSES,
+    SHEET_RECURRING_LOGS,
+    SHEET_RECURRING_RULES,
+    SHEET_TRANSACTIONS,
+)
 
 # Scope yang dibutuhkan untuk baca + tulis Sheets
 SCOPES = [
@@ -18,7 +34,180 @@ SCOPES = [
 _client = None
 _spreadsheet = None
 _worksheets = {}
+_schema_checked_sheets = set()
 _current_transaction = contextvars.ContextVar("sheets_current_transaction", default=None)
+
+
+SHEET_SCHEMAS = {
+    SHEET_TRANSACTIONS: [
+        "id",
+        "date",
+        "type",
+        "amount",
+        "category",
+        "account",
+        "to_account",
+        "subject",
+        "description",
+        "catatan",
+        "tipe_pengeluaran",
+        "raw_input",
+        "parsed_by",
+        "hutang_id",
+        "tipe_hutang",
+    ],
+    SHEET_ACCOUNTS: [
+        "account_name",
+        "type",
+        "balance",
+        "currency",
+        "last_updated",
+    ],
+    SHEET_BUDGETS: [
+        "id",
+        "month",
+        "category",
+        "budget_amount",
+        "created_at",
+        "updated_at",
+    ],
+    SHEET_DEBTS: [
+        "id",
+        "type",
+        "person_name",
+        "original_amount",
+        "remaining_amount",
+        "description",
+        "due_date",
+        "is_settled",
+        "created_at",
+        "settled_at",
+        "source_transaction_id",
+        "cashflow_mode",
+        "fronting_mode",
+    ],
+    SHEET_DEBT_PAYMENTS: [
+        "id",
+        "debt_id",
+        "amount",
+        "date",
+        "note",
+    ],
+    SHEET_CATEGORIES: [
+        "category",
+        "type",
+        "is_active",
+    ],
+    SHEET_MONTHLY_SUMMARY: [
+        "month",
+        "total_income",
+        "total_expense",
+        "net",
+        "created_at",
+        "updated_at",
+    ],
+    SHEET_RECURRING_RULES: [
+        "id",
+        "name",
+        "type",
+        "amount",
+        "category",
+        "account",
+        "to_account",
+        "subject",
+        "description",
+        "catatan",
+        "tipe_pengeluaran",
+        "frequency",
+        "day_of_month",
+        "next_run_date",
+        "is_active",
+        "created_at",
+        "updated_at",
+    ],
+    SHEET_RECURRING_LOGS: [
+        "id",
+        "rule_id",
+        "transaction_id",
+        "run_date",
+        "status",
+        "message",
+        "created_at",
+    ],
+    SHEET_ASSETS: [
+        "id",
+        "name",
+        "category",
+        "current_value",
+        "description",
+        "is_active",
+        "created_at",
+        "updated_at",
+        "asset_type",
+        "quantity",
+        "unit",
+        "price_source",
+        "price_per_unit",
+        "last_price_update",
+        "purchase_price_per_unit",
+        "purchase_date",
+    ],
+    SHEET_PENDING_EXPENSES: [
+        "id",
+        "due_date",
+        "month",
+        "due_precision",
+        "amount",
+        "category",
+        "account",
+        "subject",
+        "description",
+        "status",
+        "created_at",
+        "updated_at",
+        "paid_transaction_id",
+        "raw_input",
+    ],
+    SHEET_NET_WORTH_SNAPSHOTS: [
+        "id",
+        "snapshot_date",
+        "total_accounts",
+        "total_assets",
+        "total_liabilities",
+        "net_worth",
+        "created_at",
+    ],
+}
+
+
+DEFAULT_ACCOUNT_ROWS = [
+    ["Cash", "cash", 0, "IDR", ""],
+    ["BRI", "bank", 0, "IDR", ""],
+    ["BSI", "bank", 0, "IDR", ""],
+    ["BCA", "bank", 0, "IDR", ""],
+    ["DANA", "ewallet", 0, "IDR", ""],
+    ["GoPay", "ewallet", 0, "IDR", ""],
+    ["Seabank", "bank", 0, "IDR", ""],
+]
+
+
+DEFAULT_CATEGORY_ROWS = [
+    ["Food & Beverage", "expense", "TRUE"],
+    ["Transport", "expense", "TRUE"],
+    ["Bills & Utilities", "expense", "TRUE"],
+    ["Entertainment", "expense", "TRUE"],
+    ["Health", "expense", "TRUE"],
+    ["Shopping", "expense", "TRUE"],
+    ["Education", "expense", "TRUE"],
+    ["Housing", "expense", "TRUE"],
+    ["Charity", "expense", "TRUE"],
+    ["Other Expense", "expense", "TRUE"],
+    ["Salary", "income", "TRUE"],
+    ["Bonus", "income", "TRUE"],
+    ["Refund", "income", "TRUE"],
+    ["Cashback", "income", "TRUE"],
+    ["Other Income", "income", "TRUE"],
+]
 
 
 class SheetsAtomicWriteError(RuntimeError):
@@ -224,6 +413,151 @@ def _pad_row(row: list, width: int) -> list:
     return values[:width]
 
 
+def _clean_header(values: list) -> list[str]:
+    return [str(value or "").strip() for value in values]
+
+
+def _has_data_rows(values: list[list]) -> bool:
+    return any(any(str(cell or "").strip() for cell in row) for row in values[1:])
+
+
+def _is_blank_header(header: list[str]) -> bool:
+    return not header or not any(str(cell or "").strip() for cell in header)
+
+
+def _header_has_expected_prefix(header: list[str], expected_header: list[str]) -> bool:
+    return header[:len(expected_header)] == expected_header
+
+
+def _header_is_safe_prefix(header: list[str], expected_header: list[str]) -> bool:
+    # Safe untuk sheet yang header-nya versi lama tetapi urutannya masih prefix
+    # dari schema baru. Contoh: assets lama tanpa kolom asset_type dst.
+    if len(header) > len(expected_header):
+        return False
+    return header == expected_header[:len(header)]
+
+
+def _resize_columns_if_needed(sheet, width: int):
+    current_cols = int(getattr(sheet, "col_count", 0) or 0)
+    if current_cols < width:
+        _call_with_retry(lambda: sheet.add_cols(width - current_cols))
+
+
+def _write_header(sheet, header: list[str]):
+    _resize_columns_if_needed(sheet, len(header))
+    end_col = _get_column_letter(len(header))
+    _call_with_retry(lambda: sheet.update(f"A1:{end_col}1", [header], value_input_option="RAW"))
+
+
+def _default_rows_for_sheet(sheet_name: str) -> list[list]:
+    if sheet_name == SHEET_ACCOUNTS:
+        return DEFAULT_ACCOUNT_ROWS
+    if sheet_name == SHEET_CATEGORIES:
+        return DEFAULT_CATEGORY_ROWS
+    return []
+
+
+def _seed_default_rows_if_empty(sheet_name: str, sheet, values: list[list]) -> list[str]:
+    default_rows = _default_rows_for_sheet(sheet_name)
+    if not default_rows or _has_data_rows(values):
+        return []
+
+    _call_with_retry(lambda: sheet.append_rows(default_rows, value_input_option="RAW"))
+    return [f"seeded_default_rows:{sheet_name}:{len(default_rows)}"]
+
+
+def _get_or_create_worksheet(spreadsheet, sheet_name: str):
+    try:
+        return _call_with_retry(lambda: spreadsheet.worksheet(sheet_name))
+    except WorksheetNotFound:
+        expected_header = SHEET_SCHEMAS.get(sheet_name)
+        if not expected_header:
+            raise
+
+        rows = max(100, len(_default_rows_for_sheet(sheet_name)) + 10)
+        cols = max(10, len(expected_header))
+        return _call_with_retry(
+            lambda: spreadsheet.add_worksheet(title=sheet_name, rows=rows, cols=cols)
+        )
+
+
+def ensure_sheet_schema(sheet_name: str, sheet=None) -> dict:
+    """Pastikan tab dan header Google Sheets siap dipakai bot.
+
+    Fungsi ini idempotent dan sengaja tidak ikut rollback transaksi Telegram.
+    Schema spreadsheet adalah bagian setup aplikasi, bukan bagian dari satu input user.
+    """
+    global _worksheets, _schema_checked_sheets
+
+    clean_name = str(sheet_name or "").strip()
+    if not clean_name:
+        raise ValueError("sheet_name kosong")
+
+    expected_header = SHEET_SCHEMAS.get(clean_name)
+    if not expected_header:
+        return {
+            "sheet": clean_name,
+            "status": "skipped",
+            "actions": [],
+        }
+
+    if sheet is None:
+        spreadsheet = get_spreadsheet()
+        sheet = _get_or_create_worksheet(spreadsheet, clean_name)
+        _worksheets[clean_name] = sheet
+
+    actions = []
+    values = _call_with_retry(lambda: sheet.get_all_values())
+    header = _clean_header(values[0]) if values else []
+    header_trimmed = header[:len(expected_header)]
+    has_data = _has_data_rows(values)
+
+    if _is_blank_header(header):
+        _write_header(sheet, expected_header)
+        actions.append("header_created")
+    elif _header_has_expected_prefix(header, expected_header):
+        # Header sudah sesuai. Extra columns setelah schema utama tetap dibiarkan.
+        pass
+    elif _header_is_safe_prefix(header_trimmed, expected_header):
+        _write_header(sheet, expected_header)
+        actions.append("header_extended")
+    elif not has_data:
+        _write_header(sheet, expected_header)
+        actions.append("header_repaired_empty_sheet")
+    else:
+        raise ValueError(
+            f"Format header sheet '{clean_name}' tidak cocok dan sheet sudah berisi data. "
+            "Bot tidak mengubah urutan kolom otomatis agar data lama tidak rusak. "
+            f"Header yang dibutuhkan: {', '.join(expected_header)}"
+        )
+
+    # Re-read setelah header dibuat supaya seed memakai kondisi terbaru.
+    if actions:
+        values = _call_with_retry(lambda: sheet.get_all_values())
+
+    actions.extend(_seed_default_rows_if_empty(clean_name, sheet, values))
+
+    _schema_checked_sheets.add(clean_name)
+    return {
+        "sheet": clean_name,
+        "status": "ok",
+        "actions": actions or ["no_change"],
+    }
+
+
+def ensure_spreadsheet_schema() -> list[dict]:
+    """Buat semua tab wajib dan header jika spreadsheet masih kosong/belum siap."""
+    spreadsheet = get_spreadsheet()
+    results = []
+
+    for sheet_name in SHEET_SCHEMAS:
+        sheet = _get_or_create_worksheet(spreadsheet, sheet_name)
+        _worksheets[sheet_name] = sheet
+        results.append(ensure_sheet_schema(sheet_name, sheet=sheet))
+
+    return results
+
+
 def get_spreadsheet():
     """
     Singleton pattern — koneksi dibuat sekali, dipakai ulang.
@@ -258,7 +592,10 @@ def get_sheet(sheet_name: str):
 
     if clean_name not in _worksheets:
         spreadsheet = get_spreadsheet()
-        _worksheets[clean_name] = _call_with_retry(lambda: spreadsheet.worksheet(clean_name))
+        _worksheets[clean_name] = _get_or_create_worksheet(spreadsheet, clean_name)
+
+    if clean_name in SHEET_SCHEMAS and clean_name not in _schema_checked_sheets:
+        ensure_sheet_schema(clean_name, sheet=_worksheets[clean_name])
 
     return _worksheets[clean_name]
 

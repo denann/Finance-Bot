@@ -496,6 +496,86 @@ def edit_or_continue_keyboard(scope: str) -> InlineKeyboardMarkup:
     ])
 
 
+def build_parse_safety_notice(assessment: dict, mode: str = "warning") -> str:
+    """Header warning/AI review untuk ditempel di atas preview existing."""
+    reasons = [str(r).strip() for r in (assessment or {}).get("reasons", []) if str(r).strip()]
+
+    if mode == "gemini":
+        lines = ["🤖 *Saya pakai Gemini untuk bantu menafsirkan input ini, tapi tetap perlu dicek.*"]
+    else:
+        lines = ["⚠️ *Saya agak ragu dengan hasil parsing ini.*"]
+
+    if reasons:
+        lines.append("\n*Alasan:*")
+        for reason in reasons[:4]:
+            lines.append(f"• {md_safe(reason)}")
+
+    return "\n".join(lines)
+
+
+def build_preview_with_parse_safety(parsed: dict, assessment: dict, mode: str = "warning") -> str:
+    return f"{build_parse_safety_notice(assessment, mode)}\n\n{build_preview(parsed)}"
+
+
+def parse_clarification_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("1️⃣ Debt payment", callback_data="clarify_parse:debt_payment")],
+        [InlineKeyboardButton("2️⃣ Expense saya", callback_data="clarify_parse:expense")],
+        [InlineKeyboardButton("3️⃣ No cashflow", callback_data="clarify_parse:no_cashflow")],
+        [InlineKeyboardButton("4️⃣ Saya talangin", callback_data="clarify_parse:fronting")],
+        [InlineKeyboardButton("5️⃣ Tulis ulang", callback_data="clarify_parse:rewrite")],
+        [InlineKeyboardButton("❌ Batal", callback_data="cancel:clarification")],
+    ])
+
+
+def build_parse_clarification_prompt(raw: str, assessment: dict | None = None) -> str:
+    safe_raw = md_safe(raw)
+    lines = [
+        "🤔 *Saya belum yakin maksud input ini:*",
+        "",
+        f'"{safe_raw}"',
+    ]
+
+    reasons = [str(r).strip() for r in (assessment or {}).get("reasons", []) if str(r).strip()]
+    if reasons:
+        lines.append("\n*Kenapa ditanya dulu:*")
+        for reason in reasons[:3]:
+            lines.append(f"• {md_safe(reason)}")
+
+    lines.extend([
+        "",
+        "Maksudnya yang mana?",
+        "1. Budi/orang ini bayar hutang/piutang ke saya",
+        "2. Saya mencatat pengeluaran biasa",
+        "3. Orang lain yang membayar, tidak perlu mengubah saldo saya",
+        "4. Saya talangin orang ini",
+        "5. Saya tulis ulang inputnya",
+    ])
+    return "\n".join(lines)
+
+
+def parse_participant_count(value: str) -> int | None:
+    clean = str(value or "").strip().lower()
+    mapping = {
+        "dua": 2, "2": 2, "berdua": 2,
+        "tiga": 3, "3": 3, "bertiga": 3,
+        "empat": 4, "4": 4, "berempat": 4,
+        "lima": 5, "5": 5, "berlima": 5,
+        "enam": 6, "6": 6, "berenam": 6,
+        "tujuh": 7, "7": 7,
+        "delapan": 8, "8": 8,
+        "sembilan": 9, "9": 9,
+        "sepuluh": 10, "10": 10,
+    }
+    if clean in mapping:
+        return mapping[clean]
+    try:
+        value_int = int(clean)
+        return value_int if value_int > 0 else None
+    except Exception:
+        return None
+
+
 def build_account_delta_summary_from_transaction_items(items: list[dict]) -> str:
     """Ringkasan dampak saldo per rekening dari item transaksi yang sudah punya account."""
     transaction_items = []
@@ -1016,16 +1096,17 @@ def strip_split_bill_phrase(text: str) -> str:
     # "Nasi Kuning Dibagi Sama Raka".
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
+    participant_token = r"(?:\d+|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|berdua|bertiga|berempat|berlima|berenam)"
     name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s,;&:%./]{0,140}"
 
     clean = re.sub(
-        rf"\b{split_word}\s*(?:jadi\s*)?\d*\s*(?:orang\s+)?{friend_marker}\s+{name_chunk}",
+        rf"\b{split_word}\s*(?:jadi\s*)?{participant_token}?\s*(?:orang\s+)?{friend_marker}\s+{name_chunk}",
         " ",
         clean,
         flags=re.IGNORECASE,
     )
     clean = re.sub(
-        rf"\b{friend_marker}\s+{name_chunk}\s+{split_word}\s*(?:jadi\s*)?\d*",
+        rf"\b{friend_marker}\s+{name_chunk}\s+{split_word}\s*(?:jadi\s*)?{participant_token}?",
         " ",
         clean,
         flags=re.IGNORECASE,
@@ -1033,7 +1114,7 @@ def strip_split_bill_phrase(text: str) -> str:
     # Support input tanpa marker "sama":
     # "Nasi kuning 22k dibagi 2 raka".
     clean = re.sub(
-        rf"\b{split_word}\s*(?:jadi\s*)?\d+\s*(?:orang\s+)?{name_chunk}",
+        rf"\b{split_word}\s*(?:jadi\s*)?{participant_token}\s*(?:orang\s+)?{name_chunk}",
         " ",
         clean,
         flags=re.IGNORECASE,
@@ -1327,15 +1408,18 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     text = normalize_slash_split_syntax(str(raw or ""))
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
+    participant_token = r"(?:\d+|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|berdua|bertiga|berempat|berlima|berenam)"
     name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s,;&:%./]{0,140}"
     patterns = [
-        # "dibagi 2 sama raka"
-        rf"\b{split_word}\s*(?:jadi\s*)?(\d+)\s*(?:orang)?\s+{friend_marker}\s+({name_chunk})",
-        # "sama raka dibagi 2"
-        rf"\b{friend_marker}\s+({name_chunk})\s+{split_word}\s*(?:jadi\s*)?(\d+)",
+        # "dibagi 2 sama raka" / "bagi dua sama raka" / "patungan berempat sama ..."
+        rf"\b{split_word}\s*(?:jadi\s*)?({participant_token})\s*(?:orang)?\s+{friend_marker}\s+({name_chunk})",
+        # "sama raka dibagi 2" / "bareng raka bagi dua"
+        rf"\b{friend_marker}\s+({name_chunk})\s+{split_word}\s*(?:jadi\s*)?({participant_token})",
         # "dibagi 2 raka" tanpa marker sama/dengan.
         # Nama harus diawali huruf, jadi "dibagi 2 11-05-2026" tidak match.
-        rf"\b{split_word}\s*(?:jadi\s*)?(\d+)\s*(?:orang)?\s+({name_chunk})",
+        rf"\b{split_word}\s*(?:jadi\s*)?({participant_token})\s*(?:orang)?\s+({name_chunk})",
+        # "berdua sama raka" / "bertiga bareng raka fajar".
+        rf"\b({participant_token})\s+{friend_marker}\s+({name_chunk})",
     ]
 
     participants = None
@@ -1349,12 +1433,15 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
         if not match:
             continue
 
-        if idx in (0, 2):
-            participants = int(match.group(1))
+        if idx in (0, 2, 3):
+            participants = parse_participant_count(match.group(1))
             name_text = match.group(2)
         else:
             name_text = match.group(1)
-            participants = int(match.group(2))
+            participants = parse_participant_count(match.group(2))
+
+        if not participants:
+            continue
 
         share_parse = parse_split_bill_people_and_shares(name_text, amount, participants)
         person_names = share_parse.get("person_names") or []

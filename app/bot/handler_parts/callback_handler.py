@@ -10,10 +10,12 @@ from app.bot.handler_parts.transaction_flow import (
     apply_split_bill_decision_to_current_mixed,
     apply_split_bill_decision_to_mixed_index,
     apply_split_bill_decision_to_parsed,
+    attach_split_bill_if_any,
     build_batch_preview,
     build_debt_batch_confirm_preview,
     build_debt_cashflow_transaction,
     build_debt_confirm_preview,
+    build_debt_account_prompt,
     build_mixed_edit_choose_prompt,
     build_mixed_preview,
     build_mixed_short_summary,
@@ -34,6 +36,9 @@ from app.bot.handler_parts.transaction_flow import (
     split_bill_needs_decision,
     build_debt_only_confirm_preview,
 )
+from app.nlp.parse_safety import extract_person_candidate
+from app.nlp.regex_parser import detect_category
+from app.nlp.normalizer import normalize_text
 
 
 def is_skip_account_choice(account: str) -> bool:
@@ -297,6 +302,122 @@ def resolve_payment_target_type(parsed: dict, debts: list[dict]) -> tuple[str | 
     return target, None
 
 
+def clear_parse_clarification_state(context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop("pending_parse_clarification", None)
+
+
+def infer_clarified_payment_target_type(raw: str) -> str:
+    clean = normalize_text(raw)
+    if re.search(r"^\s*(?:saya|aku|gw|gue|gua)\s+(?:bayar|byr)\b", clean):
+        return "payable"
+    if re.search(r"^\s*(?:bayar|byr)\s+(?:ke\s+)?[a-zA-ZÀ-ÿ]", clean):
+        return "payable"
+    return "receivable"
+
+
+def build_clarified_debt_payment(raw: str, parsed: dict | None = None) -> dict | None:
+    parsed = parsed or {}
+    amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
+    person = extract_person_candidate(raw) or parsed.get("person_name") or parsed.get("subject") or ""
+    person = re.sub(r"\s+", " ", str(person or "")).strip().title()
+    if not person or amount <= 0:
+        return None
+
+    target_type = infer_clarified_payment_target_type(raw)
+    label = "Bayar hutang ke" if target_type == "payable" else "Pembayaran piutang dari"
+    return {
+        "intent": "add_payment",
+        "person_name": person,
+        "amount": amount,
+        "description": f"{label} {person}",
+        "date": detect_date(raw),
+        "raw_input": raw,
+        "target_debt_type": target_type,
+    }
+
+
+def build_expense_candidate_raw(raw: str) -> str:
+    clean = str(raw or "").strip()
+    # "Budi bayar makan 100k" -> "bayar makan 100k" agar description tidak
+    # bocor menjadi "Budi Bayar Makan" saat user memilih expense biasa.
+    clean = re.sub(
+        r"^\s*(?!saya\b|aku\b|gw\b|gue\b|gua\b)([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,30}?)\s+(?:bayar|byr)\s+",
+        "bayar ",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    return clean
+
+
+def build_clarified_expense(raw: str, parsed: dict | None = None) -> dict | None:
+    parsed = dict(parsed or {})
+    expense_raw = build_expense_candidate_raw(raw)
+    candidate = parse_with_regex(expense_raw) or parse_with_regex(raw)
+    if candidate and candidate.get("type") in {"expense", "income", "transfer"}:
+        parsed = dict(candidate)
+    else:
+        amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
+        if amount <= 0:
+            return None
+        description = strip_date_phrases(expense_raw)
+        description = re.sub(r"\b(?:rp|idr)?\s*\d[\d.,]*\s*(?:rb|ribu|k|jt|juta)?\b", " ", description, flags=re.IGNORECASE)
+        description = re.sub(r"\s+", " ", description).strip(" .,-") or "Expense"
+        parsed = {
+            "type": "expense",
+            "amount": amount,
+            "category": detect_category(expense_raw, "expense"),
+            "account": None,
+            "to_account": None,
+            "subject": description.title(),
+            "description": description.title(),
+            "catatan": "",
+            "tipe_pengeluaran": "Harian",
+            "date": detect_date(raw),
+            "parsed_by": "clarification",
+        }
+
+    if parsed.get("type") != "expense":
+        parsed["type"] = "expense"
+        parsed["category"] = detect_category(expense_raw, "expense")
+        parsed["to_account"] = None
+    parsed["raw_input"] = raw
+    parsed["parsed_by"] = parsed.get("parsed_by") or "clarification"
+    attach_split_bill_if_any(parsed, raw)
+    return parsed
+
+
+def build_clarified_fronting(raw: str, parsed: dict | None = None) -> dict | None:
+    parsed = parsed or {}
+    amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
+    person = extract_person_candidate(raw) or parsed.get("person_name") or parsed.get("subject") or ""
+    person = re.sub(r"\s+", " ", str(person or "")).strip().title()
+    if not person or amount <= 0:
+        return None
+
+    desc_source = build_expense_candidate_raw(raw)
+    desc_source = strip_date_phrases(desc_source)
+    desc_source = re.sub(r"\b(?:rp|idr)?\s*\d[\d.,]*\s*(?:rb|ribu|k|jt|juta)?\b", " ", desc_source, flags=re.IGNORECASE)
+    desc_source = re.sub(r"\b(?:bayar|byr|ke|sama)\b", " ", desc_source, flags=re.IGNORECASE)
+    desc_source = re.sub(r"\s+", " ", desc_source).strip(" .,-") or "Talangan"
+
+    synthetic = f"talangin {person} buat {desc_source} {int(amount)}"
+    debt_parsed = parse_debt_input(synthetic)
+    if debt_parsed:
+        debt_parsed["raw_input"] = raw
+        return debt_parsed
+
+    return {
+        "intent": "add_receivable",
+        "person_name": person,
+        "amount": amount,
+        "description": f"Talangin {person}: {desc_source.title()}",
+        "date": detect_date(raw),
+        "raw_input": raw,
+        "cashflow_mode": "cashflow",
+        "fronting_mode": "talangin",
+    }
+
+
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -306,6 +427,126 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data or ""
     await show_callback_loading(query)
+
+    if data.startswith("clarify_parse:"):
+        choice = data.split(":", 1)[1].strip()
+        pending = context.user_data.get("pending_parse_clarification") or {}
+        raw = pending.get("raw") or ""
+        parsed = pending.get("parsed") or {}
+
+        if not raw:
+            clear_parse_clarification_state(context)
+            await safe_edit_message(query, "❌ Sesi klarifikasi expired. Coba input ulang.")
+            return
+
+        if choice == "rewrite":
+            clear_parse_clarification_state(context)
+            await safe_edit_message(
+                query,
+                "✍️ Oke. Silakan tulis ulang inputnya dengan format yang lebih jelas.",
+                parse_mode="Markdown",
+            )
+            return
+
+        if choice == "no_cashflow":
+            clear_parse_clarification_state(context)
+            await safe_edit_message(
+                query,
+                "✅ Oke, tidak ada data yang disimpan karena ini dianggap tidak memengaruhi cashflow Anda.",
+                parse_mode="Markdown",
+            )
+            return
+
+        if choice == "debt_payment":
+            debt_parsed = build_clarified_debt_payment(raw, parsed)
+            if not debt_parsed:
+                clear_parse_clarification_state(context)
+                await safe_edit_message(
+                    query,
+                    "❌ Nama orang atau nominal belum kebaca. Silakan tulis ulang inputnya dengan kata hutang/utang/piutang.",
+                    parse_mode="Markdown",
+                )
+                return
+
+            context.user_data["pending_debt"] = debt_parsed
+            context.user_data.pop("pending_parsed", None)
+            context.user_data.pop("pending_raw", None)
+            context.user_data.pop("pending_batch", None)
+            context.user_data.pop("pending_mixed", None)
+            clear_parse_clarification_state(context)
+
+            await safe_edit_message(
+                query,
+                build_debt_account_prompt(debt_parsed),
+                parse_mode="Markdown",
+                reply_markup=account_keyboard("debt_acc"),
+            )
+            return
+
+        if choice == "fronting":
+            debt_parsed = build_clarified_fronting(raw, parsed)
+            if not debt_parsed:
+                clear_parse_clarification_state(context)
+                await safe_edit_message(
+                    query,
+                    "❌ Nama orang atau nominal belum kebaca. Contoh: `saya talangin Budi makan 100k`.",
+                    parse_mode="Markdown",
+                )
+                return
+
+            context.user_data["pending_debt"] = debt_parsed
+            context.user_data.pop("pending_parsed", None)
+            context.user_data.pop("pending_raw", None)
+            context.user_data.pop("pending_batch", None)
+            context.user_data.pop("pending_mixed", None)
+            clear_parse_clarification_state(context)
+
+            await safe_edit_message(
+                query,
+                build_debt_account_prompt(debt_parsed),
+                parse_mode="Markdown",
+                reply_markup=account_keyboard("debt_acc"),
+            )
+            return
+
+        if choice == "expense":
+            clarified = build_clarified_expense(raw, parsed)
+            if not clarified:
+                clear_parse_clarification_state(context)
+                await safe_edit_message(
+                    query,
+                    "❌ Nominal transaksi belum kebaca. Silakan tulis ulang inputnya.",
+                    parse_mode="Markdown",
+                )
+                return
+
+            context.user_data["pending_parsed"] = clarified
+            context.user_data["pending_raw"] = raw
+            context.user_data.pop("pending_debt", None)
+            context.user_data.pop("pending_debt_batch", None)
+            context.user_data.pop("pending_batch", None)
+            context.user_data.pop("pending_mixed", None)
+            clear_parse_clarification_state(context)
+
+            if split_bill_needs_decision(clarified):
+                await safe_edit_message(
+                    query,
+                    build_split_bill_prompt_from_parsed(clarified),
+                    parse_mode="Markdown",
+                    reply_markup=split_bill_keyboard("single"),
+                )
+                return
+
+            await safe_edit_message(
+                query,
+                f"{build_preview(clarified)}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+                parse_mode="Markdown",
+                reply_markup=edit_or_continue_keyboard("single"),
+            )
+            return
+
+        await safe_edit_message(query, "❌ Pilihan klarifikasi tidak valid.")
+        return
 
     if data.startswith("recurring_paid:"):
         rule_id = data.split(":", 1)[1].strip()
@@ -2421,6 +2662,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_expense_confirm", None)
         context.user_data.pop("pending_preview_edit", None)
         context.user_data.pop("pending_missing_amount", None)
+        context.user_data.pop("pending_parse_clarification", None)
         context.user_data.pop("mixed_review_preview_sent", None)
 
         await safe_edit_message(query, "❌ Input dibatalkan.")
