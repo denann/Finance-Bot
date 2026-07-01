@@ -16,6 +16,7 @@ from app.bot.handler_parts.transaction_flow import (
     build_debt_cashflow_transaction,
     build_debt_confirm_preview,
     build_debt_account_prompt,
+    build_debt_initial_preview,
     build_mixed_edit_choose_prompt,
     build_mixed_preview,
     build_mixed_short_summary,
@@ -477,9 +478,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await safe_edit_message(
                 query,
-                build_debt_account_prompt(debt_parsed),
+                f"{build_debt_initial_preview(debt_parsed)}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
                 parse_mode="Markdown",
-                reply_markup=account_keyboard("debt_acc"),
+                reply_markup=edit_or_continue_keyboard("debt"),
             )
             return
 
@@ -503,9 +504,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await safe_edit_message(
                 query,
-                build_debt_account_prompt(debt_parsed),
+                f"{build_debt_initial_preview(debt_parsed)}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
                 parse_mode="Markdown",
-                reply_markup=account_keyboard("debt_acc"),
+                reply_markup=edit_or_continue_keyboard("debt"),
             )
             return
 
@@ -588,6 +589,42 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data["pending_preview_edit"] = {"scope": "mixed", "step": "choose_item"}
                 await safe_edit_message(query, 
                     build_mixed_edit_choose_prompt(mixed_items),
+                    parse_mode="Markdown",
+                )
+                return
+
+            if scope == "debt":
+                if not context.user_data.get("pending_debt"):
+                    await safe_edit_message(query, "❌ Sesi debt expired. Coba input ulang.")
+                    return
+                context.user_data["pending_preview_edit"] = {"scope": "debt", "step": "edit_item"}
+                await safe_edit_message(
+                    query,
+                    build_preview_edit_help("debt"),
+                    parse_mode="Markdown",
+                )
+                return
+
+            if scope == "pending_expense":
+                if not context.user_data.get("pending_expense_confirm"):
+                    await safe_edit_message(query, "❌ Sesi pending expense expired. Coba input ulang.")
+                    return
+                context.user_data["pending_preview_edit"] = {"scope": "pending_expense", "step": "edit_item"}
+                await safe_edit_message(
+                    query,
+                    build_preview_edit_help("pending_expense"),
+                    parse_mode="Markdown",
+                )
+                return
+
+            if scope == "asset":
+                if not context.user_data.get("pending_asset_confirm"):
+                    await safe_edit_message(query, "❌ Sesi tambah aset expired. Coba input ulang.")
+                    return
+                context.user_data["pending_preview_edit"] = {"scope": "asset", "step": "edit_item"}
+                await safe_edit_message(
+                    query,
+                    build_preview_edit_help("asset"),
                     parse_mode="Markdown",
                 )
                 return

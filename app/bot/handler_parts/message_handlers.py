@@ -23,11 +23,13 @@ from app.bot.handler_parts.command_router import (
 from app.bot.handler_parts.transaction_flow import (
     attach_split_bill_if_any,
     build_debt_account_prompt,
+    build_debt_initial_preview,
     build_debt_only_confirm_preview,
     build_missing_amount_prompt,
     build_mixed_preview,
     build_parse_clarification_prompt,
     build_preview_with_parse_safety,
+    build_pending_expense_confirm_preview,
     build_mixed_split_bill_queue_prompt,
     build_preview,
     build_split_bill_prompt_from_parsed,
@@ -180,18 +182,10 @@ async def debt_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data.pop("pending_batch", None)
     context.user_data.pop("pending_debt_batch", None)
 
-    if intent == "offset_debt" or not debt_uses_cashflow(debt_parsed):
-        await update.message.reply_text(
-            build_debt_only_confirm_preview(debt_parsed),
-            parse_mode="Markdown",
-            reply_markup=confirm_keyboard("debt"),
-        )
-        return True
-
     await update.message.reply_text(
-        build_debt_account_prompt(debt_parsed),
+        f"{build_debt_initial_preview(debt_parsed)}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
         parse_mode="Markdown",
-        reply_markup=account_keyboard("debt_acc"),
+        reply_markup=edit_or_continue_keyboard("debt"),
     )
 
     return True
@@ -879,6 +873,7 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Single transaction dari gambar.
     if len(items) == 1:
         parsed = items[0]
+        attach_split_bill_if_any(parsed, caption or "")
         context.user_data["pending_parsed"] = parsed
         context.user_data["pending_raw"] = caption or "[gambar]"
         context.user_data.pop("pending_batch", None)
@@ -886,29 +881,31 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_debt_batch", None)
         context.user_data.pop("pending_mixed", None)
 
-        preview = build_preview(parsed)
+        if split_bill_needs_decision(parsed):
+            await status_msg.edit_text(
+                build_split_bill_prompt_from_parsed(parsed),
+                parse_mode="Markdown",
+                reply_markup=split_bill_keyboard("single"),
+            )
+            return
 
-        if needs_account(parsed):
-            await status_msg.edit_text(
-                f"{preview}\n\n💳 Dari rekening mana?",
-                parse_mode="Markdown",
-                reply_markup=account_keyboard("acc"),
-            )
-        else:
-            await status_msg.edit_text(
-                f"{preview}\n\nSimpan transaksi dari gambar ini?",
-                parse_mode="Markdown",
-                reply_markup=confirm_keyboard("pending"),
-            )
+        preview = build_preview(parsed)
+        await status_msg.edit_text(
+            f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+            parse_mode="Markdown",
+            reply_markup=edit_or_continue_keyboard("single"),
+        )
         return
 
     # Multiple transaction dari gambar.
     mixed_items = []
     for idx, parsed in enumerate(items, 1):
+        raw_item = f"gambar item {idx}"
+        attach_split_bill_if_any(parsed, caption or raw_item)
         mixed_items.append({
             "kind": "transaction",
             "parsed": parsed,
-            "raw": f"gambar item {idx}",
+            "raw": raw_item,
         })
 
     context.user_data["pending_mixed"] = mixed_items
@@ -921,17 +918,17 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     preview = build_mixed_preview(mixed_items)
 
-    if mixed_needs_account(mixed_items):
+    if mixed_split_bill_needs_decision(mixed_items):
         await status_msg.edit_text(
-            f"{preview}\n\n💳 Pilih rekening untuk item yang belum punya rekening:",
+            build_mixed_split_bill_queue_prompt(mixed_items),
             parse_mode="Markdown",
-            reply_markup=account_keyboard("mixed_acc"),
+            reply_markup=mixed_split_bill_keyboard(mixed_items),
         )
     else:
         await status_msg.edit_text(
-            f"{preview}\n\nSimpan semua transaksi dari gambar ini?",
+            f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
             parse_mode="Markdown",
-            reply_markup=confirm_keyboard("mixed"),
+            reply_markup=edit_or_continue_keyboard("mixed"),
         )
 
 # ── Message Handler ──────────────────────────────────────────────────────────
@@ -978,9 +975,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_asset_price", None)
 
         await update.message.reply_text(
-            build_asset_confirm_preview(pending_asset),
+            f"{build_asset_confirm_preview(pending_asset)}\n\nMau edit dulu atau lanjut ke simpan?",
             parse_mode="Markdown",
-            reply_markup=confirm_keyboard("asset"),
+            reply_markup=edit_or_continue_keyboard("asset"),
         )
         return
 
@@ -1038,16 +1035,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         context.user_data["pending_expense_confirm"] = item
-        lines = ["🕒 *Preview Pending Expense*\n"]
-        lines.extend(build_pending_expense_lines([item], "Detail Pending", float(item.get("amount", 0) or 0))[2:-1])
-        lines.append(
-            "\nCatatan: pending expense tidak mengubah saldo dan belum masuk pengeluaran aktual.\n"
-            "Simpan pending expense ini?"
-        )
         await update.message.reply_text(
-            "\n".join(lines),
+            f"{build_pending_expense_confirm_preview(item, include_question=False)}\n\nMau edit dulu atau lanjut ke simpan?",
             parse_mode="Markdown",
-            reply_markup=confirm_keyboard("pending_expense"),
+            reply_markup=edit_or_continue_keyboard("pending_expense"),
         )
         return
 

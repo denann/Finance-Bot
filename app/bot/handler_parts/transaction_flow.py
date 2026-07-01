@@ -2,6 +2,8 @@
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
+from app.bot.handler_parts.networth_assets import build_asset_confirm_preview
+
 
 def parse_input(text: str) -> dict:
     """Coba regex dulu, fallback ke Gemini."""
@@ -517,6 +519,46 @@ def build_preview_with_parse_safety(parsed: dict, assessment: dict, mode: str = 
     return f"{build_parse_safety_notice(assessment, mode)}\n\n{build_preview(parsed)}"
 
 
+def build_pending_expense_confirm_preview(item: dict, include_question: bool = True) -> str:
+    """Preview pending expense sebelum user lanjut ke confirm save.
+
+    Dibuat di transaction_flow supaya natural pending dan /pending_add bisa
+    memakai flow Edit dulu -> Lanjut -> Simpan yang sama.
+    """
+    item = dict(item or {})
+    due_date = str(item.get("due_date") or "").strip()
+    due_precision = str(item.get("due_precision") or "unknown").strip().lower()
+    month = str(item.get("month") or "-").strip()
+    if due_date:
+        due_text = due_date
+    elif due_precision == "month":
+        due_text = f"{month} (tanggal belum pasti)"
+    else:
+        due_text = "Belum pasti"
+
+    account = str(item.get("account") or "-").strip() or "-"
+    category = str(item.get("category") or "Other Expense").strip()
+    status = str(item.get("status") or "pending").strip()
+    subject = str(item.get("subject") or item.get("description") or "Pending Expense").strip()
+    description = str(item.get("description") or subject).strip()
+    amount = float(item.get("amount", 0) or 0)
+
+    lines = [
+        "🕒 *Preview Pending Expense*\n",
+        f"📝 *{md_safe(subject)}*",
+        f"📄 Deskripsi: {md_safe(description)}",
+        f"📅 Jatuh tempo: *{md_safe(due_text)}*",
+        f"💰 Nominal: *{format_rupiah(amount)}*",
+        f"🏷️ Kategori: *{md_safe(category)}*",
+        f"🏦 Rekening rencana: *{md_safe(account)}*",
+        f"Status: `{md_safe(status)}`",
+        "\nCatatan: pending expense tidak mengubah saldo dan belum masuk pengeluaran aktual.",
+    ]
+    if include_question:
+        lines.append("Simpan pending expense ini?")
+    return "\n".join(lines)
+
+
 def parse_clarification_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("1️⃣ Debt payment", callback_data="clarify_parse:debt_payment")],
@@ -701,6 +743,36 @@ def build_updated_item_summary(item: dict, index: int | None = None) -> str:
 
 
 def build_preview_edit_help(scope: str = "single") -> str:
+    if scope == "pending_expense":
+        return (
+            "✏️ *Mau edit pending expense apa?*\n\n"
+            "Ketik salah satu format berikut:\n"
+            "`nominal 285000`\n"
+            "`kategori Bills & Utilities`\n"
+            "`deskripsi Wifi rumah`\n"
+            "`subjek Wifi Juli`\n"
+            "`rekening BRI`\n"
+            "`tanggal 2026-07-30`\n"
+            "`bulan 2026-07`\n\n"
+            "Bisa juga pakai `field=value`, contoh `category=Bills & Utilities`."
+        )
+
+    if scope == "asset":
+        return (
+            "✏️ *Mau edit aset apa?*\n\n"
+            "Ketik salah satu format berikut:\n"
+            "`nama Laptop kerja`\n"
+            "`nominal 8000000`\n"
+            "`kategori Electronics`\n"
+            "`deskripsi Laptop utama`\n"
+            "`jumlah 41`\n"
+            "`unit gram`\n"
+            "`harga_satuan 2594000`\n"
+            "`harga_beli 2559000`\n"
+            "`tanggal_beli 2026-06-10`\n\n"
+            "Bisa juga pakai `field=value`, contoh `price_per_unit=2594000`."
+        )
+
     item_hint = "" if scope == "single" else "\nKamu sedang mengedit item yang dipilih."
     return (
         "✏️ *Mau edit apa?*" + item_hint + "\n\n"
@@ -751,6 +823,15 @@ def parse_preview_edit_updates(text: str) -> dict:
         "to_account": "to_account", "ke_rekening": "to_account", "rekening_tujuan": "to_account",
         "catatan": "catatan", "note": "catatan",
         "tipe_pengeluaran": "tipe_pengeluaran", "pengeluaran": "tipe_pengeluaran",
+        "due_date": "due_date", "tanggal_jatuh_tempo": "due_date", "jatuh_tempo": "due_date", "tenggat": "due_date",
+        "month": "month", "bulan": "month",
+        "name": "name", "nama": "name",
+        "quantity": "quantity", "jumlah_unit": "quantity", "jumlah_aset": "quantity",
+        "unit": "unit", "satuan": "unit",
+        "price_per_unit": "price_per_unit", "harga_satuan": "price_per_unit", "harga_sekarang": "price_per_unit",
+        "purchase_price_per_unit": "purchase_price_per_unit", "harga_beli": "purchase_price_per_unit", "modal": "purchase_price_per_unit",
+        "purchase_date": "purchase_date", "tanggal_beli": "purchase_date",
+        "asset_type": "asset_type", "tipe_aset": "asset_type",
     }
 
     eq_match = re.match(r"^([a-zA-Z_]+)\s*=\s*(.+)$", raw)
@@ -759,7 +840,7 @@ def parse_preview_edit_updates(text: str) -> dict:
         value = eq_match.group(2).strip()
     else:
         natural_match = re.match(
-            r"^(nominal|jumlah|amount|kategori|category|deskripsi|description|desc|subjek|subject|tipe|type|jenis|tanggal|tgl|date|rekening|account|akun|catatan|note|tipe_pengeluaran|pengeluaran|ke_rekening|to_account|rekening_tujuan)\s+(.+)$",
+            r"^(nominal|jumlah|amount|kategori|category|deskripsi|description|desc|subjek|subject|tipe|type|jenis|tanggal|tgl|date|rekening|account|akun|catatan|note|tipe_pengeluaran|pengeluaran|ke_rekening|to_account|rekening_tujuan|due_date|tanggal_jatuh_tempo|jatuh_tempo|tenggat|month|bulan|name|nama|quantity|jumlah_unit|jumlah_aset|unit|satuan|price_per_unit|harga_satuan|harga_sekarang|purchase_price_per_unit|harga_beli|modal|purchase_date|tanggal_beli|asset_type|tipe_aset)\s+(.+)$",
             raw,
             flags=re.IGNORECASE,
         )
@@ -771,7 +852,7 @@ def parse_preview_edit_updates(text: str) -> dict:
     if not key or value == "":
         return {}
 
-    if key == "amount":
+    if key in {"amount", "quantity", "price_per_unit", "purchase_price_per_unit"}:
         amount = parse_human_amount(value)
         if amount <= 0:
             return {}
@@ -786,10 +867,12 @@ def parse_preview_edit_updates(text: str) -> dict:
         if normalized not in type_aliases:
             return {}
         updates[key] = type_aliases[normalized]
-    elif key == "date":
+    elif key in {"date", "due_date", "purchase_date"}:
         from app.nlp.regex_parser import parse_explicit_date
         parsed_date = parse_explicit_date(value) or value
         updates[key] = parsed_date
+    elif key == "month":
+        updates[key] = value.strip()
     elif key in ["account", "to_account"]:
         value_clean = value.strip()
         updates[key] = value_clean.upper() if value_clean.lower() in ["bca", "bri", "bsi", "dana"] else value_clean.title()
@@ -850,6 +933,64 @@ async def proceed_after_preview_edit(query, context: ContextTypes.DEFAULT_TYPE, 
             f"{short_summary}\n\nSimpan semua item ini?",
             parse_mode="Markdown",
             reply_markup=confirm_keyboard("mixed"),
+        )
+        return
+
+    if scope == "debt":
+        debt_parsed = context.user_data.get("pending_debt")
+        if not debt_parsed:
+            await safe_edit_message(query, "❌ Sesi debt expired. Coba input ulang.")
+            return
+
+        intent = debt_parsed.get("intent")
+        if debt_uses_cashflow(debt_parsed) and intent != "offset_debt" and not debt_parsed.get("account"):
+            await safe_edit_message(
+                query,
+                build_debt_account_prompt(debt_parsed),
+                parse_mode="Markdown",
+                reply_markup=account_keyboard("debt_acc"),
+            )
+            return
+
+        if debt_uses_cashflow(debt_parsed) and intent != "offset_debt":
+            account_label = debt_parsed.get("account") or "-"
+            preview = build_debt_confirm_preview(debt_parsed, account_label)
+        else:
+            preview = build_debt_only_confirm_preview(debt_parsed)
+
+        await safe_edit_message(
+            query,
+            preview,
+            parse_mode="Markdown",
+            reply_markup=confirm_keyboard("debt"),
+        )
+        return
+
+    if scope == "pending_expense":
+        item = context.user_data.get("pending_expense_confirm")
+        if not item:
+            await safe_edit_message(query, "❌ Sesi pending expense expired. Coba input ulang.")
+            return
+
+        await safe_edit_message(
+            query,
+            build_pending_expense_confirm_preview(item, include_question=True),
+            parse_mode="Markdown",
+            reply_markup=confirm_keyboard("pending_expense"),
+        )
+        return
+
+    if scope == "asset":
+        asset = context.user_data.get("pending_asset_confirm")
+        if not asset:
+            await safe_edit_message(query, "❌ Sesi tambah aset expired. Coba input ulang.")
+            return
+
+        await safe_edit_message(
+            query,
+            build_asset_confirm_preview(asset),
+            parse_mode="Markdown",
+            reply_markup=confirm_keyboard("asset"),
         )
         return
 
@@ -944,6 +1085,95 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
             f"{item_summary}\n\n{short_summary}\n\nMau edit lagi atau lanjut?",
             parse_mode="Markdown",
             reply_markup=edit_or_continue_keyboard("mixed"),
+        )
+        return True
+
+    if scope == "debt":
+        debt_parsed = context.user_data.get("pending_debt")
+        if not debt_parsed:
+            context.user_data.pop("pending_preview_edit", None)
+            await update.message.reply_text("❌ Sesi edit debt expired. Coba input ulang.")
+            return True
+
+        debt_updates = dict(updates)
+        if "subject" in debt_updates:
+            debt_updates["person_name"] = debt_updates.pop("subject")
+        # Field type dari editor transaksi tidak dipakai untuk debt agar intent debt
+        # tidak berubah menjadi income/expense secara tidak sengaja.
+        debt_updates.pop("type", None)
+        debt_parsed.update(debt_updates)
+        context.user_data["pending_debt"] = debt_parsed
+        context.user_data.pop("pending_preview_edit", None)
+
+        short_summary = build_debt_short_summary(debt_parsed)
+        await reply_update_safely(
+            update,
+            f"✅ Preview debt sudah diupdate.\n\n{short_summary}\n\nMau edit lagi atau lanjut?",
+            parse_mode="Markdown",
+            reply_markup=edit_or_continue_keyboard("debt"),
+        )
+        return True
+
+    if scope == "pending_expense":
+        item = context.user_data.get("pending_expense_confirm")
+        if not item:
+            context.user_data.pop("pending_preview_edit", None)
+            await update.message.reply_text("❌ Sesi edit pending expense expired. Coba input ulang.")
+            return True
+
+        pending_updates = dict(updates)
+        if "date" in pending_updates:
+            pending_updates["due_date"] = pending_updates.pop("date")
+        pending_updates.pop("type", None)
+        pending_updates.pop("to_account", None)
+
+        item.update(pending_updates)
+        if "due_date" in pending_updates and pending_updates.get("due_date"):
+            item["due_precision"] = "date"
+        if "month" in pending_updates and pending_updates.get("month") and not item.get("due_date"):
+            item["due_precision"] = "month"
+        if "description" in pending_updates and not pending_updates.get("subject"):
+            item["subject"] = pending_updates["description"]
+
+        context.user_data["pending_expense_confirm"] = item
+        context.user_data.pop("pending_preview_edit", None)
+
+        await reply_update_safely(
+            update,
+            f"✅ Preview pending expense sudah diupdate.\n\n{build_pending_expense_confirm_preview(item, include_question=False)}\n\nMau edit lagi atau lanjut?",
+            parse_mode="Markdown",
+            reply_markup=edit_or_continue_keyboard("pending_expense"),
+        )
+        return True
+
+    if scope == "asset":
+        asset = context.user_data.get("pending_asset_confirm")
+        if not asset:
+            context.user_data.pop("pending_preview_edit", None)
+            await update.message.reply_text("❌ Sesi edit aset expired. Coba input ulang.")
+            return True
+
+        asset_updates = dict(updates)
+        if "amount" in asset_updates:
+            asset_updates["amount"] = asset_updates["amount"]
+        if "description" in asset_updates and not asset_updates.get("name") and not asset.get("name"):
+            asset_updates["name"] = asset_updates["description"]
+
+        asset.update(asset_updates)
+        if asset.get("quantity") not in [None, ""] and asset.get("price_per_unit"):
+            try:
+                asset["amount"] = float(asset.get("quantity") or 0) * float(asset.get("price_per_unit") or 0)
+            except Exception:
+                pass
+
+        context.user_data["pending_asset_confirm"] = asset
+        context.user_data.pop("pending_preview_edit", None)
+
+        await reply_update_safely(
+            update,
+            f"✅ Preview aset sudah diupdate.\n\n{build_asset_confirm_preview(asset)}\n\nMau edit lagi atau lanjut?",
+            parse_mode="Markdown",
+            reply_markup=edit_or_continue_keyboard("asset"),
         )
         return True
 
@@ -1380,6 +1610,49 @@ def clean_split_person_name(name: str) -> str:
     return " ".join(names).title() if names else ""
 
 
+def build_split_bill_item_description_from_raw(raw: str, fallback: str = "") -> str:
+    """Ambil nama item split bill dari raw input, bukan dari sisa parser.
+
+    Ini memperbaiki kasus seperti:
+    - "makan 80k bagi dua sama Budi" -> "Makan"
+    - "makan 80k berdua sama Budi" -> "Makan"
+    - "46k/4 sama Alpat Opik Sapto" -> fallback aman, bukan "/"
+    """
+    text = normalize_slash_split_syntax(str(raw or ""))
+    text = strip_date_phrases(text)
+    text = re.sub(r"\b(?:rp|idr)?\s*\d[\d.,]*\s*(?:rb|ribu|k|jt|juta|m|miliar)?\b", " ", text, flags=re.IGNORECASE)
+
+    split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
+    friend_marker = r"(?:sama|ama|dengan|bareng)"
+    participant_token = r"(?:\d+|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|berdua|bertiga|berempat|berlima|berenam)"
+    name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s,;&:%./]{0,140}"
+
+    cleanup_patterns = [
+        rf"\b{split_word}\s*(?:jadi\s*)?{participant_token}?\s*(?:orang\s+)?{friend_marker}\s+{name_chunk}",
+        rf"\b{friend_marker}\s+{name_chunk}\s+{split_word}\s*(?:jadi\s*)?{participant_token}?",
+        rf"\b{split_word}\s*(?:jadi\s*)?{participant_token}\s*(?:orang\s+)?{name_chunk}",
+        rf"\b{participant_token}\s+{friend_marker}\s+{name_chunk}",
+        rf"\b{split_word}\b.*$",
+    ]
+    for pattern in cleanup_patterns:
+        text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
+
+    text = re.sub(r"^(?:beli|bayar|buat|untuk|jajan)\s+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"[^A-Za-zÀ-ÿ0-9\s&/+.-]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip(" ./,-")
+
+    if text and text not in {"/", "-"}:
+        return text.title()
+
+    fallback_clean = strip_split_bill_phrase(fallback)
+    fallback_clean = re.sub(r"^[\s/.-]+$", "", fallback_clean).strip()
+    if re.match(r"^[\s/.-]*(?:sama|ama|dengan|bareng)\b", fallback_clean, flags=re.IGNORECASE):
+        fallback_clean = ""
+    if fallback_clean.startswith(("/", ".", "-")):
+        fallback_clean = ""
+    return fallback_clean.title() if fallback_clean else "Split Bill"
+
+
 def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     """
     Deteksi input split bill sederhana.
@@ -1472,23 +1745,17 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     share_amount = user_share_amount  # backward compatible field: sekarang berarti bagian user
 
     # Bersihkan deskripsi/subject supaya tidak ikut menyimpan frasa
-    # "bagi/dibagi 2 sama ...".
-    desc = parsed.get("description") or ""
-    clean_desc = strip_split_bill_phrase(desc)
-    # Kalau parser regex sudah menghapus frasa "dibagi 2" lebih dulu, rangkaian
-    # nama teman bisa tersisa di akhir description, misalnya:
-    # "Galon Raka Fajar Bagas". Setelah split_bill valid, semua nama teman
-    # harus hanya masuk field split_bill, bukan description/subject transaksi.
+    # "bagi/dibagi 2 sama ...". Prioritaskan raw input karena parser regex
+    # kadang menyisakan potongan seperti "Dua Sama Budi", "Berdua Sama Budi",
+    # atau "/ Sama Alpat" sebagai deskripsi.
+    clean_desc = build_split_bill_item_description_from_raw(raw, parsed.get("description") or "")
     clean_desc = strip_trailing_split_person_names(clean_desc, person_names)
     parsed["description"] = clean_desc
 
     subject = parsed.get("subject") or ""
     if subject:
-        clean_subject = strip_split_bill_phrase(subject)
+        clean_subject = build_split_bill_item_description_from_raw(raw, subject)
         clean_subject = strip_trailing_split_person_names(clean_subject, person_names)
-        # Subject biasanya mengikuti description. Kalau masih mengandung kata split,
-        # atau nama teman tersisa di ujung, pakai versi bersih agar output/sheet
-        # tidak menjadi "Nasi Kuning Raka" / "Galon Raka Fajar".
         if clean_subject != subject or re.search(split_word, subject, flags=re.IGNORECASE):
             parsed["subject"] = clean_subject or clean_desc
 
@@ -1645,7 +1912,7 @@ def build_mixed_split_bill_queue_prompt(mixed_items: list[dict]) -> str:
     current_index = get_next_mixed_split_bill_index(mixed_items)
 
     if current_index is None:
-        return build_mixed_split_bill_queue_prompt(mixed_items)
+        return build_mixed_preview(mixed_items)
 
     current_pos = split_indexes.index(current_index) + 1 if current_index in split_indexes else 1
     total_split = len(split_indexes)
@@ -2273,6 +2540,88 @@ def build_debt_only_confirm_preview(debt_parsed: dict) -> str:
         f"Mode: `{md_safe(fronting_mode)}`\n\n"
         f"Simpan utang/piutang ini?"
     )
+
+
+def build_debt_initial_preview(debt_parsed: dict) -> str:
+    """Preview awal debt sebelum user lanjut ke pilih rekening/konfirmasi.
+
+    Tujuannya menjaga semua input hutang/piutang tetap melewati tahap review
+    dulu. Data belum disimpan sampai user menekan tombol konfirmasi final.
+    """
+    intent = debt_parsed.get("intent")
+    person = debt_parsed.get("person_name") or "-"
+    amount = debt_parsed.get("amount") or 0
+    description = debt_parsed.get("description") or "-"
+    raw = debt_parsed.get("raw_input") or "-"
+    date = debt_parsed.get("date") or "-"
+    fronting_mode = debt_parsed.get("fronting_mode") or ""
+
+    if intent == "add_receivable":
+        title = "🟢 *Preview Piutang Baru*"
+        effect = f"{md_safe(person)} punya utang ke Anda."
+    elif intent == "add_payable":
+        title = "🔴 *Preview Utang Baru*"
+        effect = f"Anda punya utang ke {md_safe(person)}."
+    elif intent == "add_payment":
+        title = "💸 *Preview Pembayaran Utang/Piutang*"
+        effect = f"Pembayaran terkait saldo aktif dengan {md_safe(person)}."
+    elif intent == "offset_debt":
+        title = "🔁 *Preview Kompensasi Hutang/Piutang*"
+        effect = "Debt akan dikompensasi tanpa uang masuk/keluar rekening."
+    else:
+        title = "💸 *Preview Debt*"
+        effect = "Input debt terdeteksi."
+
+    if debt_uses_cashflow(debt_parsed) and intent != "offset_debt":
+        next_step = "Jika lanjut, bot akan meminta rekening cashflow sebelum konfirmasi simpan."
+    else:
+        next_step = "Jika lanjut, bot akan menampilkan konfirmasi simpan tanpa mengubah saldo rekening."
+
+    lines = [
+        title,
+        "",
+        f"👤 Subjek : {md_safe(person)}",
+        f"💰 Nominal: {format_rupiah(amount)}",
+        f"📅 Tanggal: {md_safe(date)}",
+        f"📝 Detail : {md_safe(description)}",
+        f"🧾 Input  : `{md_safe(raw)}`",
+        "",
+        "*Efek debt:*",
+        effect,
+    ]
+    if fronting_mode:
+        lines.append(f"Mode: `{md_safe(fronting_mode)}`")
+    lines.extend([
+        "",
+        f"ℹ️ {next_step}",
+        "",
+        "Data ini *belum disimpan*.",
+    ])
+    return "\n".join(lines)
+
+
+def build_debt_short_summary(debt_parsed: dict) -> str:
+    """Ringkasan pendek debt untuk transisi setelah edit/preview."""
+    intent = debt_parsed.get("intent") or "debt"
+    person = md_safe(debt_parsed.get("person_name") or "-")
+    amount = float(debt_parsed.get("amount", 0) or 0)
+    description = md_safe(debt_parsed.get("description") or "-")
+    account = md_safe(debt_parsed.get("account") or "-")
+
+    labels = {
+        "add_payable": "Utang baru",
+        "add_receivable": "Piutang baru",
+        "add_payment": "Pembayaran debt",
+        "offset_debt": "Kompensasi debt",
+    }
+    lines = ["💸 *Ringkasan debt:*"]
+    lines.append(f"• Jenis: *{md_safe(labels.get(intent, intent))}*")
+    lines.append(f"• Subjek: *{person}*")
+    lines.append(f"• Nominal: *{format_rupiah(amount)}*")
+    lines.append(f"• Detail: {description}")
+    if account != "-":
+        lines.append(f"• Rekening: *{account}*")
+    return "\n".join(lines)
 
 def build_debt_account_prompt(debt_parsed: dict) -> str:
     """Preview debt sebelum memilih rekening."""

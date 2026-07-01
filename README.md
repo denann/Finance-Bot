@@ -1,6 +1,6 @@
-# Personal Finance Bot
+# Denan Finance Bot
 
-Personal Finance Bot adalah Telegram personal finance assistant untuk mencatat, mengelola, dan menganalisis keuangan pribadi langsung dari chat.
+Denan Finance Bot adalah Telegram personal finance assistant untuk mencatat, mengelola, dan menganalisis keuangan pribadi langsung dari chat.
 
 Project ini dibuat untuk menyelesaikan masalah pencatatan keuangan harian yang sering terasa ribet, tidak konsisten, dan mudah terlupakan. Alih-alih membuka spreadsheet manual setiap kali ada transaksi, user cukup mengetik input natural seperti `beli kopi 25k`, `topup gopay 100k dari bsi`, atau `ditalangin Budi bayar makan 100k`.
 
@@ -10,11 +10,11 @@ Bot akan membaca input tersebut, mem-parse tanggal, nominal, rekening, kategori,
 
 - [Features](#features)
 - [Tech Stack](#tech-stack)
-- [System Architecture](#system-architecture) 
-- [Installation](#installation) 
-- [Usage](#usage) 
-- [Project Structure](#project-structure) 
-- [Limitations](#limitations) 
+- [System Architecture](#system-architecture)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Project Structure](#project-structure)
+- [Limitations](#limitations)
 - [Author](#author)
 
 ## Features
@@ -148,18 +148,64 @@ Contoh penggunaan bot tersedia di bagian [Usage](#usage).
 
 ## Tech Stack
 
-- Python
-- Telegram Bot API
-- FastAPI
-- Google Sheets API
-- Gemini API
-- LangChain
-- APScheduler
-- gspread
-- python-telegram-bot
-- Google Service Account
-- Wispbyte / Webhook Deployment
-- Git & GitHub
+<table style="border-collapse: collapse; width: 100%; border: none;">
+  <thead>
+    <tr>
+      <th align="left" style="border: none; border-bottom: 2px solid #d0d7de; padding: 8px 12px;">Layer</th>
+      <th align="left" style="border: none; border-bottom: 2px solid #d0d7de; padding: 8px 12px;">Tools</th>
+      <th align="left" style="border: none; border-bottom: 2px solid #d0d7de; padding: 8px 12px;">Role in Project</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Core Backend</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Python, FastAPI</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menjalankan parser, business logic, webhook endpoint, routing, preview flow, confirmation flow, dan integrasi antar komponen.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Chat Interface</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Telegram Bot API, python-telegram-bot</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menerima pesan user, command, callback button, dan mengirim respons bot ke Telegram.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>AI Layer</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Gemini API, LangChain</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Digunakan untuk parsing gambar, AI insight, Q&amp;A, audit, dan coach. Saat ini provider LLM yang didukung baru Gemini, sedangkan LangChain dipakai sebagai wrapper/integration layer untuk Gemini.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Data Layer</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Google Sheets API, gspread, Google Service Account</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menyimpan transaksi, account, budget, debt, asset, pending expense, recurring logs, dan data pendukung lain.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Automation</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">APScheduler</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menjalankan recurring reminder, recurring transaction, export, dan summary otomatis secara terjadwal.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Deployment &amp; Versioning</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Wispbyte / Webhook Deployment, Git &amp; GitHub</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Git &amp; GitHub digunakan untuk version control, sedangkan Wispbyte digunakan untuk hosting FastAPI dan menerima Telegram webhook secara 24/7.</td>
+    </tr>
+  </tbody>
+</table>
+
+### Tech Stack Workflow
+
+<p align="center">
+  <img src="assets/tech-stack-workflow-personal-finance-assistant.png" alt="Tech Stack Workflow of Personal Finance Assistant" width="1000">
+</p>
+
+Gambar di atas merangkum hubungan antar tools yang digunakan pada project ini. Supaya lebih jelas, berikut konteks tambahan yang tidak sepenuhnya bisa dijelaskan di dalam diagram:
+
+- **Telegram adalah pintu masuk utama user.** Semua chat, command, dan callback button masuk dari Telegram Bot API, lalu diteruskan ke backend melalui webhook.
+- **FastAPI berperan sebagai request layer.** FastAPI menerima update dari Telegram, menyediakan endpoint webhook, dan meneruskan request ke logic handler di Python.
+- **Python adalah pusat business logic.** Di layer ini berlangsung parser regex, parse safety routing, preview before save, edit flow, debt flow, split bill, pending expense, recurring logic, dan validasi sebelum write ke data layer.
+- **LangChain belum dipakai sebagai multi-LLM orchestration penuh.** Saat ini fungsinya lebih sebagai wrapper untuk integrasi Gemini di beberapa fitur AI.
+- **Gemini tidak menjadi decision maker final untuk transaksi sensitif.** Untuk flow seperti transaksi, utang/piutang, split bill, atau saldo rekening, keputusan simpan tetap dikontrol oleh rule lokal dan konfirmasi user.
+- **Google Sheets adalah operational data store project ini.** Data transaksi dan modul finansial lain disimpan di spreadsheet, sedangkan `gspread` dan service account menangani autentikasi serta proses read/write.
+- **APScheduler menjalankan job di background.** Contohnya recurring reminder, recurring transaction, dan summary otomatis tanpa perlu dipicu manual oleh user.
+- **Wispbyte menangani sisi deployment.** Repository di-pull dari GitHub, lalu aplikasi FastAPI dijalankan agar bot tetap aktif dan bisa menerima webhook Telegram.
 
 ## System Architecture
 
@@ -167,11 +213,9 @@ Contoh penggunaan bot tersedia di bagian [Usage](#usage).
   <img src="assets/workflow-ai-finance-assistant.png" alt="Workflow AI Finance Assistant" width="900">
 </p>
 
-Sistem ini memiliki dua alur utama. Pertama, alur pencatatan transaksi, yaitu input dari Telegram diproses oleh parser, lalu melewati tahap Confidence / Safety Routing sebelum masuk ke preview dan konfirmasi. Pada tahap ini, sistem menentukan apakah hasil parsing sudah aman untuk preview normal, perlu warning, perlu bantuan AI review, atau harus meminta klarifikasi ulang ke user. Setelah user melakukan konfirmasi, data baru disimpan ke Google Sheets sebagai data layer utama.
+Sistem ini memiliki dua alur utama. Pertama, **alur pencatatan transaksi**, yaitu input dari Telegram diproses oleh parser, divalidasi melalui preview, lalu disimpan ke Google Sheets sebagai data layer utama. Kedua, **alur AI insight**, yaitu user dapat bertanya melalui `/ask`, `/audit`, `/coach`, atau `/insight`, lalu backend mengambil konteks data yang relevan sebelum Gemini membantu menyusun penjelasan.
 
-Kedua, alur AI insight, yaitu user dapat bertanya melalui /ask, /audit, /coach, atau /insight. Backend akan mengambil dan menghitung konteks data yang relevan terlebih dahulu, lalu LLM membantu menyusun penjelasan yang lebih natural dan mudah dipahami.
-
-Prinsip utama dari arsitektur ini adalah AI tidak langsung mengambil keputusan finansial sendiri. Business logic tetap dikontrol oleh backend, sedangkan AI digunakan untuk membantu memahami input, membaca gambar, membuat draft parsing saat diperlukan, dan menjelaskan insight berdasarkan data yang sudah tersedia. Dengan pendekatan ini, input tetap praktis, data tetap aman, dan risiko menyimpan output yang salah bisa dikurangi melalui preview, edit dulu, dan safety routing.
+Prinsip utama dari arsitektur ini adalah AI tidak langsung mengambil keputusan finansial sendiri. Business logic tetap dikontrol oleh backend, sedangkan Gemini digunakan untuk membantu memahami input, membaca gambar, dan menjelaskan insight berdasarkan data yang sudah tersedia.
 
 ## Installation
 

@@ -2,6 +2,8 @@
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
+from app.bot.handler_parts.transaction_flow import build_pending_expense_confirm_preview, edit_or_continue_keyboard
+
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
@@ -1317,16 +1319,10 @@ async def pending_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     context.user_data["pending_expense_confirm"] = item
-    lines = ["🕒 *Preview Pending Expense*\n"]
-    lines.extend(build_pending_expense_lines([item], "Detail Pending", float(item.get("amount", 0) or 0))[2:-1])
-    lines.append(
-        "\nCatatan: pending expense tidak mengubah saldo dan belum masuk pengeluaran aktual.\n"
-        "Simpan pending expense ini?"
-    )
     await update.message.reply_text(
-        "\n".join(lines),
+        f"{build_pending_expense_confirm_preview(item, include_question=False)}\n\nMau edit dulu atau lanjut ke simpan?",
         parse_mode="Markdown",
-        reply_markup=confirm_keyboard("pending_expense"),
+        reply_markup=edit_or_continue_keyboard("pending_expense"),
     )
 
 
