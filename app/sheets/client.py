@@ -96,10 +96,16 @@ SHEET_SCHEMAS = {
         "date",
         "note",
     ],
+    # Sheet categories mengikuti format yang sudah dipakai di spreadsheet lama.
+    # category_name = nama kategori utama
+    # type = expense/income
+    # emoji = ikon opsional untuk tampilan
+    # aliases = daftar kata kunci kategori, dipisah koma
     SHEET_CATEGORIES: [
-        "category",
+        "category_name",
         "type",
-        "is_active",
+        "emoji",
+        "aliases",
     ],
     SHEET_MONTHLY_SUMMARY: [
         "month",
@@ -195,21 +201,21 @@ DEFAULT_ACCOUNT_ROWS = [
 
 
 DEFAULT_CATEGORY_ROWS = [
-    ["Food & Beverage", "expense", "TRUE"],
-    ["Transport", "expense", "TRUE"],
-    ["Bills & Utilities", "expense", "TRUE"],
-    ["Entertainment", "expense", "TRUE"],
-    ["Health", "expense", "TRUE"],
-    ["Shopping", "expense", "TRUE"],
-    ["Education", "expense", "TRUE"],
-    ["Housing", "expense", "TRUE"],
-    ["Charity", "expense", "TRUE"],
-    ["Other Expense", "expense", "TRUE"],
-    ["Salary", "income", "TRUE"],
-    ["Bonus", "income", "TRUE"],
-    ["Refund", "income", "TRUE"],
-    ["Cashback", "income", "TRUE"],
-    ["Other Income", "income", "TRUE"],
+    ["Food & Beverage", "expense", "🍽️", "makan,minum,kopi,nasi,donat,galon"],
+    ["Transport", "expense", "🚗", "transport,ojek,bensin,parkir,tol"],
+    ["Bills & Utilities", "expense", "💡", "listrik,air,wifi,pulsa,token,tagihan"],
+    ["Entertainment", "expense", "🎮", "game,ml,netflix,bioskop,hiburan"],
+    ["Health", "expense", "🏥", "obat,dokter,klinik,vitamin"],
+    ["Shopping", "expense", "🛍️", "belanja,shopee,tokopedia,baju"],
+    ["Education", "expense", "🎓", "kuliah,buku,kursus,wisuda,semester"],
+    ["Housing", "expense", "🏠", "kos,kontrakan,sewa,rumah"],
+    ["Charity", "expense", "🤲", "sedekah,donasi,zakat"],
+    ["Other Expense", "expense", "📦", "lainnya,other"],
+    ["Salary", "income", "💼", "gaji,salary"],
+    ["Bonus", "income", "🎁", "bonus,thr"],
+    ["Refund", "income", "↩️", "refund,pengembalian"],
+    ["Cashback", "income", "🏷️", "cashback"],
+    ["Other Income", "income", "💰", "pemasukan lain,other income"],
 ]
 
 
