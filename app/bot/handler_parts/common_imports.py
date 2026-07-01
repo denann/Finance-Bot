@@ -1,7 +1,8 @@
-"""Shared imports for split Telegram handler parts.
+"""Import bersama untuk modul handler Telegram yang sudah dipisah.
 
-Each handler part imports this module with ``from ...common_imports import *``
-to avoid copying a long import block while keeping dependencies visible.
+Setiap handler part mengimpor modul ini dengan ``from ...common_imports import *``
+agar blok import panjang tidak perlu disalin berulang, tetapi dependency tetap
+terlihat jelas di satu tempat.
 """
 
 import re
@@ -153,8 +154,8 @@ from app.services.pending_expense_service import (
 )
 
 # ── Cross-part shared helpers ────────────────────────────────────────────────
-# These are intentionally defined in common_imports so split handler parts can
-# be imported as normal modules without relying on app.bot.handlers globals.
+# Konstanta ini ditaruh di common_imports agar modul handler yang sudah dipisah
+# tetap bisa di-import normal tanpa bergantung pada global variable di handlers.py.
 
 TELEGRAM_SAFE_MESSAGE_LIMIT = 3800
 GEMINI_INTENT_CONFIDENCE_EXECUTE = 0.80
@@ -162,7 +163,7 @@ GEMINI_INTENT_CONFIDENCE_CLARIFY = 0.60
 
 
 def format_rupiah(amount: float) -> str:
-    """Format rupiah, termasuk nominal pecahan dari split bill.
+    """Formatkan rupiah, termasuk nominal pecahan dari split bill.
 
     Contoh:
     - 71387    -> Rp71.387
@@ -220,7 +221,7 @@ def short_txn_id(txn_id: str) -> str:
 
 
 def format_indonesian_date_group_label(date_value) -> str:
-    """Format heading grup tanggal: 🗓️ Senin, 30 Juni 2026:.
+    """Formatkan heading grup tanggal: 🗓️ Senin, 30 Juni 2026:.
 
     Fallback tetap rapi untuk nilai kosong/invalid.
     """
@@ -389,7 +390,7 @@ def append_net_gross_note(lines: list[str], transactions: list[dict] | None = No
 
 
 def format_expense_net_gross(net_amount: float, gross_amount: float, *, always_show_gross: bool = False) -> str:
-    """Format nominal expense: Net (Gross)."""
+    """Formatkan nominal expense: Net (Gross)."""
     net = _safe_float_for_display(net_amount)
     gross = _safe_float_for_display(gross_amount)
     if always_show_gross or abs(net - gross) > 0.0001:

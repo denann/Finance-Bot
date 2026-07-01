@@ -22,8 +22,8 @@ from app.scheduler.jobs import create_scheduler
 from app.sheets.client import get_spreadsheet, ensure_spreadsheet_schema
 
 
-# FastAPI tetap tersedia untuk advanced deployment mode.
-# Untuk penggunaan lokal, default runtime project adalah polling mode.
+# FastAPI tetap tersedia untuk mode deployment lanjutan.
+# Untuk penggunaan lokal dan Wispbyte polling, default runtime project adalah polling mode.
 app = FastAPI(title="Finance Bot")
 app.include_router(webhook_router)
 
@@ -35,7 +35,7 @@ _webhook_telegram_started = False
 
 
 def validate_runtime_config(mode: str = BOT_MODE):
-    """Validate required env variables for the selected runtime mode."""
+    """Validasi env wajib sesuai runtime mode yang dipilih."""
     missing = []
 
     base_required = {
@@ -66,7 +66,7 @@ def validate_runtime_config(mode: str = BOT_MODE):
 
 
 def ensure_schema_on_startup():
-    """Prepare Google Sheets schema if credentials and access are ready."""
+    """Siapkan schema Google Sheets jika credential dan akses sudah benar."""
     try:
         schema_results = ensure_spreadsheet_schema()
         changed = [
@@ -160,8 +160,11 @@ async def test_sheets():
 
 
 # ── Polling mode ──────────────────────────────────────────────────────────────
+# Polling adalah mode default untuk user GitHub/Wispbyte.
+# delete_webhook() dipanggil dulu agar bot yang pernah memakai webhook bisa kembali menerima update lewat polling.
+
 async def run_polling_mode():
-    """Run bot using Telegram long polling for simple local setup."""
+    """Jalankan bot memakai Telegram long polling untuk setup lokal sederhana."""
     validate_runtime_config("polling")
     ensure_schema_on_startup()
 
@@ -186,8 +189,11 @@ async def run_polling_mode():
         await telegram_app.shutdown()
 
 
+# Webhook tetap disediakan untuk deployment advanced.
+# Mode ini membutuhkan public URL dan FastAPI, berbeda dari polling yang cukup menjalankan proses Python.
+
 def run_webhook_mode():
-    """Run FastAPI app for webhook deployment."""
+    """Jalankan FastAPI app untuk deployment webhook."""
     validate_runtime_config("webhook")
     uvicorn.run(
         "main:app",

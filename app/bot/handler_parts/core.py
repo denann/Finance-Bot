@@ -1,4 +1,4 @@
-# Split from app/bot/handlers.py for readability.
+# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
@@ -62,7 +62,7 @@ def split_long_message(text: str, max_len: int = TELEGRAM_SAFE_MESSAGE_LIMIT) ->
 
 
 async def reply_long_markdown(update: Update, text: str):
-    """Kirim Markdown panjang dengan fallback plain text kalau Markdown error."""
+    """Kirim Markdown panjang dengan fallback ke teks biasa kalau Markdown error."""
     for part in split_long_message(text):
         try:
             await update.message.reply_text(part, parse_mode="Markdown")
@@ -154,7 +154,7 @@ async def show_callback_loading(query, text: str = "⏳ *Memproses pilihan...*")
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    """Error handler global agar exception callback tetap diberi tahu ke Telegram."""
+    """Handler error global agar exception callback tetap diberi tahu ke Telegram."""
     error = getattr(context, "error", None)
     err_text = str(error or "Unknown error")
 

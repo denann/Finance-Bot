@@ -1,4 +1,4 @@
-# Split from app/bot/handlers.py for readability.
+# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
@@ -11,7 +11,7 @@ def parse_asset_quantity_input(value: str) -> dict | None:
     - 41 gram @ 2410000
     - 1 buah @ 8000000
 
-    Return dict {quantity, unit, price_per_unit?} atau None.
+    Kembalikan dict {quantity, unit, price_per_unit?} atau None.
     """
     raw = str(value or "").strip().lower()
     raw = raw.replace("@", " @ ")
@@ -48,7 +48,7 @@ def parse_asset_quantity_input(value: str) -> dict | None:
 
 
 def _parse_human_amount_atom(value: str | None) -> float:
-    """Parse satu token nominal: 2410000, 2.41jt, 2,41 juta, 91.457k."""
+    """Parsing satu token nominal: 2410000, 2.41jt, 2,41 juta, 91.457k."""
     raw = str(value or "").strip().lower()
     if not raw:
         return 0.0
@@ -110,7 +110,7 @@ def _safe_eval_amount_expression(expr: str) -> float:
 
 
 def parse_human_amount(value: str | None) -> float:
-    """Parse angka manusia, termasuk ekspresi edit seperti `94k/2`.
+    """Parsing angka manusia, termasuk ekspresi edit seperti `94k/2`.
 
     Contoh:
     - `94k/2` -> 47000
@@ -149,12 +149,12 @@ def parse_human_amount(value: str | None) -> float:
 
 
 def parse_asset_extra_fields(extra_parts: list[str]) -> dict:
-    """Parse optional asset add fields after description.
+    """Parsing field opsional asset add setelah description.
 
-    Supported:
+    Mendukung:
     - harga_beli=2559000 | tanggal_beli=2026-06-10
     - buy_price=2.4 juta | buy_date=10/06/2026
-    - 2559000 | 2026-06-10  (positional fallback)
+    - 2559000 | 2026-06-10  (fallback berdasarkan posisi)
     """
     result = {
         "purchase_price_per_unit": None,
@@ -698,7 +698,7 @@ def build_asset_added_text(asset: dict) -> str:
 
 
 def asset_edit_or_continue_keyboard() -> InlineKeyboardMarkup:
-    """Keyboard preview aset tanpa import transaction_flow agar tidak circular."""
+    """Keyboard preview aset tanpa import transaction_flow agar tidak terjadi circular import."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✏️ Edit dulu", callback_data="editflow:edit:asset"),

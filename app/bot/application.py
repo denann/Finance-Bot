@@ -1,8 +1,8 @@
-"""Telegram Application builder.
+"""Pembuat Telegram Application.
 
-This module owns Telegram handler registration so the same bot logic can be
-reused by multiple runtime modes, especially polling for local use and FastAPI
-webhook for production deployment.
+File ini mengatur registrasi handler Telegram agar logic bot yang sama bisa
+dipakai oleh dua mode runtime: polling untuk setup sederhana dan webhook/FastAPI
+untuk deployment lanjutan.
 """
 from __future__ import annotations
 
@@ -73,8 +73,11 @@ from app.config import ALLOWED_USER_ID, TELEGRAM_BOT_TOKEN
 from app.sheets.client import sheets_transaction
 
 
+# Wrapper ini menjaga setiap aksi Telegram berada dalam satu konteks rollback Sheets.
+# Jika ada error di tengah write, perubahan yang sudah tercatat bisa dibalik secara best-effort.
+
 def atomic_bot_handler(callback):
-    """Run each Telegram handler inside one Sheets all-or-nothing operation."""
+    """Jalankan setiap handler Telegram di dalam transaksi Sheets best-effort."""
 
     @wraps(callback)
     async def wrapped(update, context, *args, **kwargs):
@@ -84,8 +87,11 @@ def atomic_bot_handler(callback):
     return wrapped
 
 
+# Semua handler didaftarkan di satu tempat agar mode polling dan mode webhook memakai logic yang sama.
+# Urutan penting: command spesifik harus didaftarkan sebelum handler pesan umum.
+
 def register_handlers(telegram_app: Application) -> Application:
-    """Register all command, message, and callback handlers on an app."""
+    """Daftarkan semua command, handler pesan, dan handler callback ke Telegram app."""
 
     def add_command(command_name: str, callback):
         telegram_app.add_handler(CommandHandler(command_name, atomic_bot_handler(callback)))
@@ -93,14 +99,14 @@ def register_handlers(telegram_app: Application) -> Application:
     def add_message(message_filter, callback):
         telegram_app.add_handler(MessageHandler(message_filter, atomic_bot_handler(callback)))
 
-    # Basic commands
+    # Command dasar untuk onboarding dan pengecekan bot.
     add_command("start", start_handler)
     add_command("help", help_handler)
     add_command("examples", examples_handler)
     add_command("contoh", examples_handler)
     add_command("health", health_handler)
 
-    # Transaction commands
+    # Command transaksi dan laporan harian yang paling sering dipakai user.
     add_command("saldo", saldo_handler)
     add_command("rekening", rekening_handler)
     add_command("harian", harian_handler)
@@ -112,16 +118,16 @@ def register_handlers(telegram_app: Application) -> Application:
     add_command("delete_txn", delete_txn_handler)
     add_command("edit_txn", edit_txn_handler)
 
-    # Export commands
+    # Command export data untuk backup atau analisis lanjutan.
     add_command("download_data", export_handler)
     add_command("export", export_handler)
 
-    # Budget commands
+    # Command budget. Handler regex dipakai agar user bisa menulis natural: "budget makan 1jt".
     add_command("budget", budget_handler)
     add_command("budget_history", budget_history_handler)
     add_message(filters.Regex(r"(?i)^budget\b"), set_budget_handler)
 
-    # Pending expense commands
+    # Command pending expense untuk rencana/tagihan yang belum dibayar.
     add_command("pending", pending_handler)
     add_command("pending_add", pending_add_handler)
     add_command("rencana", pending_add_handler)
@@ -129,21 +135,21 @@ def register_handlers(telegram_app: Application) -> Application:
     add_command("pending_cancel", pending_cancel_handler)
     add_message(filters.Regex(r"(?i)^(pending|rencana)\b"), pending_add_handler)
 
-    # Debt commands
+    # Command hutang/piutang dan settlement debt.
     add_command("hutang", hutang_handler)
     add_command("ringkasan_hutang", ringkasan_hutang_handler)
     add_command("debt_void", debt_void_handler)
     add_command("debt_edit", debt_edit_handler)
     add_command("debt_settle", debt_settle_handler)
 
-    # Recurring transaction commands
+    # Command recurring untuk transaksi/tagihan berulang.
     add_command("recurring", recurring_handler)
     add_command("recurring_add", recurring_add_handler)
     add_command("recurring_run", recurring_run_handler)
     add_command("recurring_edit", recurring_edit_handler)
     add_command("recurring_off", recurring_off_handler)
 
-    # Net worth commands
+    # Command net worth dan manajemen aset.
     add_command("networth", networth_handler)
     add_command("assets", assets_handler)
     add_command("asset_add", asset_add_handler)
@@ -152,13 +158,13 @@ def register_handlers(telegram_app: Application) -> Application:
     add_command("networth_snapshot", networth_snapshot_handler)
     add_command("networth_history", networth_history_handler)
 
-    # Gemini / RAG finance insight commands
+    # Command AI insight berbasis data transaksi. Semua bersifat read-only.
     add_command("insight", insight_handler)
     add_command("ask", ask_handler)
     add_command("audit", audit_handler)
     add_command("coach", coach_handler)
 
-    # Message and callback handlers
+    # Handler umum ditaruh di akhir supaya command spesifik diproses lebih dulu.
     add_message(filters.COMMAND, unknown_command_handler)
     add_message(filters.PHOTO | filters.Document.IMAGE, image_handler)
     add_message(filters.TEXT & ~filters.COMMAND, message_handler)
@@ -181,7 +187,7 @@ async def scheduled_data_export(context):
 
 
 def register_job_queue_jobs(telegram_app: Application) -> Application:
-    """Register jobs owned by python-telegram-bot JobQueue."""
+    """Daftarkan job yang dijalankan oleh JobQueue milik python-telegram-bot."""
     if telegram_app.job_queue:
         telegram_app.job_queue.run_daily(
             scheduled_data_export,
@@ -194,7 +200,7 @@ def register_job_queue_jobs(telegram_app: Application) -> Application:
 
 
 def build_telegram_app() -> Application:
-    """Build one fully registered Telegram Application instance."""
+    """Buat satu instance Telegram Application yang sudah lengkap dengan handler."""
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN belum diisi di .env.")
 

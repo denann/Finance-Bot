@@ -406,9 +406,9 @@ def normalize_recurring_edit_value(field: str, value):
 
 def edit_recurring_rule(rule_id: str, updates: dict) -> dict:
     """
-    Edit recurring rule by ID.
+    Edit recurring rule berdasarkan ID.
 
-    Return:
+    Output:
     {
         "success": bool,
         "rule_before": dict,
@@ -533,7 +533,7 @@ def mark_recurring_rule_paid(rule_id: str, run_date: date | None = None) -> dict
 
     Efek:
     1. Buat transaksi dari rule recurring.
-    2. Update next_run_date ke periode berikutnya.
+    2. Perbarui next_run_date ke periode berikutnya.
     3. Catat recurring_logs.
     """
     rule = get_recurring_rule_by_id(rule_id)

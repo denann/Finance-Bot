@@ -88,7 +88,7 @@ CATEGORY_HINTS = {
 
 
 def safe_float(value, default: float = 0.0) -> float:
-    """Parse angka rupiah dari Google Sheets tanpa mengalikan numeric float.
+    """Parsing angka rupiah dari Google Sheets tanpa mengalikan numeric float.
 
     Bug lama: nilai numeric dari Sheets seperti 427500.0 diubah menjadi
     4275000 karena titik desimal dianggap pemisah ribuan dan dihapus.
@@ -464,7 +464,7 @@ def get_debt_summary_compact() -> dict:
             continue
         debt_type = str(d.get("type") or d.get("debt_type") or "").strip().lower()
         if not debt_type:
-            # fallback from category/description
+            # fallback dari category/description
             text = normalize_text(" ".join(str(d.get(k, "")) for k in ["category", "description", "catatan"]))
             debt_type = "receivable" if "piutang" in text else "payable" if "utang" in text or "hutang" in text else "unknown"
         totals[debt_type] += remaining
@@ -838,7 +838,7 @@ def should_handle_finance_question(text: str) -> bool:
     # hanya jika kalimatnya jelas minta saran/target/budget.
     if has_amount and not any(k in raw for k in ["nabung", "tabung", "target", "budget", "saran", "coach", "hemat"]):
         return False
-    # Jangan ganggu command-like single token pendek.
+    # Jangan ganggu token pendek yang mirip command.
     if len(raw.split()) == 1 and raw not in {"insight", "audit", "coach"}:
         return False
     return any(k in raw for k in FINANCE_QUESTION_KEYWORDS)

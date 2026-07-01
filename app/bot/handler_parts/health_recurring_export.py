@@ -1,4 +1,4 @@
-# Split from app/bot/handlers.py for readability.
+# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
@@ -14,7 +14,7 @@ def health_warn_icon(ok: bool) -> str:
 def safe_health_check(label: str, check_func):
     """
     Jalankan satu health check dengan aman.
-    Return:
+    Output:
     {
         "label": str,
         "ok": bool,

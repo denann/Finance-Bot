@@ -21,8 +21,8 @@ ASSET_COLUMNS = [
     "is_active",
     "created_at",
     "updated_at",
-    # Optional columns for auto-valued assets such as gold.
-    # Add these headers to the assets sheet to make gold auto valuation work.
+    # Kolom opsional untuk aset yang nilainya bisa dihitung otomatis, misalnya emas.
+    # Tambahkan header ini ke sheet assets agar auto-valuation emas bisa berjalan.
     "asset_type",
     "quantity",
     "unit",
@@ -86,7 +86,7 @@ def safe_float(value) -> float:
 
 
 def safe_float_decimal(value) -> float:
-    """Parse decimal values such as 41, 41.5, 41,5 without treating dot as thousands."""
+    """Parsing nilai desimal seperti 41, 41.5, 41,5 tanpa menganggap titik sebagai ribuan."""
     try:
         raw = str(value or "").strip().lower()
         raw = raw.replace("gram", "").replace("gr", "").replace("g", "")
@@ -103,7 +103,7 @@ def safe_float_decimal(value) -> float:
 
 
 def parse_human_money(value) -> float:
-    """Parse 2420000, 2.42 juta, 2,42jt, 91.457k for manual asset prices."""
+    """Parsing nominal harga aset manual seperti 2420000, 2.42 juta, 2,42jt, atau 91.457k."""
     raw = str(value or "").strip().lower()
     if not raw:
         return 0.0
@@ -129,17 +129,17 @@ def parse_human_money(value) -> float:
 
 
 def normalize_date_value(value) -> str:
-    """Normalize common Indonesian date inputs to YYYY-MM-DD when possible."""
+    """Normalisasi input tanggal Indonesia umum ke format YYYY-MM-DD jika memungkinkan."""
     raw = str(value or "").strip()
     if not raw:
         return ""
 
-    # Keep already valid ISO date.
+    # Pertahankan tanggal ISO yang sudah valid.
     if re.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}", raw):
         y, m, d = raw.split("-")
         return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
 
-    # Convert 10/06/2026 or 10-06-2026 into ISO.
+    # Konversi 10/06/2026 or 10-06-2026 into ISO.
     match = re.fullmatch(r"(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})", raw)
     if match:
         d, m, y = match.groups()
@@ -152,7 +152,7 @@ def normalize_date_value(value) -> str:
 
 
 def calculate_asset_gain(asset: dict) -> dict:
-    """Return acquisition cost, gain/loss, and gain percentage for one asset."""
+    """Hitung acquisition cost, gain/loss, dan persentase gain untuk satu aset."""
     current_value = safe_float(asset.get("current_value", 0))
     quantity = safe_float_decimal(asset.get("quantity"))
     purchase_price = safe_float(asset.get("purchase_price_per_unit", 0))
@@ -180,7 +180,7 @@ def calculate_asset_gain(asset: dict) -> dict:
 
 
 def parse_price_to_float(value) -> float:
-    """Parse Indonesian price strings like Rp 2,594,000 or 2.594.000."""
+    """Parsing string harga Indonesia seperti Rp 2,594,000 atau 2.594.000."""
     try:
         raw = str(value or "").strip()
         raw = re.sub(r"[^0-9]", "", raw)
@@ -191,9 +191,9 @@ def parse_price_to_float(value) -> float:
 
 def fetch_antam_buyback_price() -> dict:
     """
-    Fetch latest Antam buyback price per gram from Logam Mulia.
+    Ambil harga buyback Antam terbaru per gram dari Logam Mulia.
 
-    Return:
+    Output:
     {
         "success": bool,
         "price_per_gram": float,
@@ -203,9 +203,9 @@ def fetch_antam_buyback_price() -> dict:
         "message": str,
     }
 
-    Notes:
-    - Website scraping can break if Logam Mulia changes its HTML.
-    - Caller should keep the last known price when this function fails.
+    Catatan:
+    - Scraping website bisa gagal jika Logam Mulia mengubah struktur HTML.
+    - Pemanggil fungsi sebaiknya tetap memakai harga terakhir yang tersimpan jika fungsi ini gagal.
     """
     url = "https://www.logammulia.com/sell/gold"
 

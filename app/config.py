@@ -1,9 +1,12 @@
+"""Konfigurasi aplikasi yang dibaca dari environment variable dan file .env."""
+
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
 def _parse_int_env(name: str, default: int | None = None) -> int | None:
+    """Ambil environment variable lalu ubah menjadi integer dengan fallback default."""
     raw = os.getenv(name)
     if raw is None or str(raw).strip() == "":
         return default

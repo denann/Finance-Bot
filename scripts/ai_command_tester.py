@@ -1,5 +1,5 @@
 r"""
-AI Command Tester for Personal Finance Telegram Bot.
+Tester command AI untuk Personal Finance Telegram Bot.
 
 Tujuan:
 - Testing parser dan flow command secara lokal, terpisah dari deployment.
@@ -43,7 +43,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Local safe environment + import stubs
+# Environment lokal aman + stub import untuk dependency opsional
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _ensure_test_env() -> None:
@@ -182,7 +182,7 @@ def _install_optional_import_stubs() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Core model
+# Model data inti untuk hasil testing
 # ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -374,7 +374,7 @@ class CommandTester:
                 import_warnings=self.import_warnings,
             )
 
-        # Single input biasa.
+        # Input single biasa.
         raw = parts[0] if parts else raw_text
         mixed = items[0] if items else {"kind": "failed", "parsed": {}, "raw": raw}
         parsed = mixed.get("parsed", {}) or {}
@@ -599,7 +599,7 @@ def evaluate_heuristics(run: CommandRun) -> list[AssertionResult]:
             "Nominal koma seperti 24,7k harus dibaca 24700 dan tidak boleh pecah jadi 24 + 7k." if not ok else "",
         ))
 
-    # Jika input utuh punya decimal koma tetapi parts > 1 dan tidak ada item raw yang masih mengandung koma,
+    # Jika input utuh punya desimal koma tetapi parts > 1 dan tidak ada item raw yang masih mengandung koma,
     # kemungkinan split_user_inputs memecah koma decimal.
     if re.search(r"\d+\s*,\s*\d+\s*k\b", run.input_text, flags=re.IGNORECASE) and not any(
         re.search(r"\d+\s*,\s*\d+\s*k\b", str(item.get("raw", "")), flags=re.IGNORECASE) for item in run.items
@@ -788,7 +788,7 @@ def command_run_to_dict(run: CommandRun) -> dict[str, Any]:
 
 
 def resolve_input_path(path_text: str) -> Path:
-    """Support path Windows (`tests\\input_Test.txt`) maupun relatif root project."""
+    """Dukung path Windows (`tests\\input_Test.txt`) maupun relatif root project."""
     raw = Path(path_text)
     candidates = [raw]
     if not raw.is_absolute():
@@ -812,10 +812,10 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
 
 def load_text_cases(path: Path, *, decision: str | None = None) -> list[dict[str, Any]]:
     """
-    Load input .txt untuk testing chat manual.
+    Parsing input .txt untuk testing chat manual.
 
     Format didukung:
-    - Plain text tanpa `---`: seluruh file dianggap satu input multi-line.
+    - Teks biasa tanpa `---`: seluruh file dianggap satu input multi-line.
     - Banyak case dipisah baris `---`: komentar `#` diabaikan dari input,
       komentar pertama dalam block dipakai sebagai nama case.
     """

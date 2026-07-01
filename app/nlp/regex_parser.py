@@ -879,9 +879,9 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
 
 def parse_explicit_date(date_text: str) -> str | None:
     """
-    Parse tanggal eksplisit ke format YYYY-MM-DD.
+    Parsing tanggal eksplisit ke format YYYY-MM-DD.
 
-    Support:
+    Mendukung:
     - 2026-06-01
     - 2026/06/01
     - 01-06-2026
@@ -918,9 +918,9 @@ def parse_explicit_date(date_text: str) -> str | None:
 
 def parse_day_only_date(day_text: str) -> str | None:
     """
-    Parse tanggal hanya angka hari dan gunakan bulan/tahun hari ini.
+    Parsing tanggal hanya angka hari dan gunakan bulan/tahun hari ini.
 
-    Support:
+    Mendukung:
     - tanggal 1
     - tgl 1
     - tg 01
@@ -1049,9 +1049,9 @@ NUMBER_WORDS_ID = {
 
 def parse_relative_number(value: str) -> int | None:
     """
-    Parse angka relative date.
+    Parsing angka untuk tanggal relatif.
 
-    Support:
+    Mendukung:
     - 2
     - dua
     - tiga
@@ -1069,7 +1069,7 @@ def detect_relative_date(text: str) -> str | None:
     """
     Deteksi tanggal relatif.
 
-    Support:
+    Mendukung:
     - kemarin
     - hari ini
     - minggu lalu
@@ -1099,7 +1099,7 @@ def detect_relative_date(text: str) -> str | None:
         return (today - timedelta(days=1)).strftime("%Y-%m-%d")
 
     # sebulan lalu
-    # Simple approach: 1 bulan = 30 hari untuk relative natural input.
+    # Pendekatan sederhana: 1 bulan = 30 hari untuk input natural relatif.
     if re.search(r"\bsebulan\s+(?:yang\s+)?lalu\b", clean):
         return (today - timedelta(days=30)).strftime("%Y-%m-%d")
 
@@ -1149,8 +1149,8 @@ def detect_date(text: str) -> str:
     """
     Deteksi tanggal transaksi.
 
-    Priority:
-    1. Explicit date: 2026-06-01, 01-06-2026
+    Prioritas:
+    1. Tanggal eksplisit: 2026-06-01, 01-06-2026
     2. Relative date: kemarin, minggu lalu, 2 hari lalu, dua minggu lalu, dll.
     3. Default: hari ini
     """
@@ -1432,7 +1432,7 @@ def parse_with_regex(text: str) -> dict | None:
 
     transaction_type = detect_type(text)
 
-    # Fallback untuk input expense tanpa kata kerja, terutama bulk entry:
+    # Fallback untuk input expense tanpa kata kerja, terutama input bulk:
     # "Nasi kuning 22k 09-05-2026", "Print 6k", "Alquran 80k".
     # Selama ada nominal dan masih ada teks deskripsi setelah nominal/tanggal
     # dibersihkan, anggap sebagai expense agar tidak wajib fallback ke Gemini.

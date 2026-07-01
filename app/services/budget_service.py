@@ -22,15 +22,15 @@ DEBT_CASHFLOW_CATEGORIES = {
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def get_current_month() -> str:
-    """Return bulan ini dalam format YYYY-MM."""
+    """Kembalikan bulan ini dalam format YYYY-MM."""
     return datetime.now().strftime("%Y-%m")
 
 
 def normalize_month(month: str | None = None) -> str:
     """
-    Normalize bulan ke format YYYY-MM.
+    Normalisasi bulan ke format YYYY-MM.
 
-    Support:
+    Mendukung:
     - None          -> bulan sekarang
     - 2026-06
     - 2026/06
@@ -150,7 +150,7 @@ def safe_float(value, default: float = 0.0) -> float:
 
 def set_budget(category: str, amount: float, month: str = None) -> dict:
     """
-    Set atau update budget untuk kategori tertentu pada bulan tertentu.
+    Atur atau perbarui budget untuk kategori tertentu pada bulan tertentu.
 
     Sheet budgets disarankan punya header:
     id | month | category | budget_amount | created_at | updated_at
@@ -330,7 +330,7 @@ def get_actual_expense_breakdown(category: str, month: str = None) -> dict:
 
 
 def get_actual_expense(category: str, month: str = None) -> float:
-    """Return realisasi budget bersih untuk kategori tertentu."""
+    """Kembalikan realisasi budget bersih untuk kategori tertentu."""
     return get_actual_expense_breakdown(category, month).get("net", 0.0)
 
 
@@ -396,7 +396,7 @@ def get_budget_summary(month: str = None) -> list[dict]:
 def check_budget_after_transaction(category: str, month: str = None) -> dict | None:
     """
     Dipanggil setiap kali ada transaksi expense masuk.
-    Return info budget jika ada, None jika kategori tidak punya budget.
+    Kembalikan info budget jika ada, None jika kategori tidak punya budget.
     """
     month = normalize_month(month)
 

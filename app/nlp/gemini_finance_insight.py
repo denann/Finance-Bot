@@ -67,7 +67,7 @@ Konteks JSON:
 
 
 def generate_finance_insight(mode: str, context: dict, question: str = "") -> str:
-    """Generate insight text. Falls back to deterministic text if Gemini fails."""
+    """Buat teks insight. Jika Gemini gagal, gunakan teks fallback deterministic."""
     if not GEMINI_API_KEY:
         if mode == "audit":
             return deterministic_audit_text(context)

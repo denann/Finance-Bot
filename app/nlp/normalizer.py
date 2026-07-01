@@ -46,7 +46,7 @@ def normalize_text(text: str) -> str:
 
 def parse_amount_value(number_str: str, unit: str = "") -> int | None:
     """
-    Parse satu token nominal menjadi integer.
+    Parsing satu token nominal menjadi integer.
 
     Catatan penting untuk kebiasaan input user:
     - 37.5k    -> 37.500  (titik 1-2 digit dianggap desimal)
@@ -94,7 +94,7 @@ def extract_amount_from_text(text: str) -> int | None:
     """
     text = text.lower().strip()
 
-    # Handle ekspresi nominal sederhana: "70.100k - 19k", "100k + 25k".
+    # Tangani ekspresi nominal sederhana: "70.100k - 19k", "100k + 25k".
     # Wajib ada unit pada salah satu sisi agar tidak salah baca tanggal seperti 15-05-2026.
     unit_pattern = r"rb|ribu|k|jt|juta|m|miliar|miliard|milyard"
     token_pattern = rf"(\d+(?:[.,]\d+)?)(?:\s*({unit_pattern})\b)?"
@@ -113,7 +113,7 @@ def extract_amount_from_text(text: str) -> int | None:
                 if result > 0:
                     return int(result)
 
-    # Handle format titik ribuan: "150.000" atau "1.500.000"
+    # Tangani format titik ribuan: "150.000" atau "1.500.000"
     # Deteksi: angka dengan titik yang diikuti tepat 3 digit
     ribuan_pattern = r"\b(\d{1,3}(?:\.\d{3})+)\b"
     ribuan_match = re.search(ribuan_pattern, text)
@@ -121,7 +121,7 @@ def extract_amount_from_text(text: str) -> int | None:
         clean = ribuan_match.group(1).replace(".", "")
         return int(clean)
 
-    # Handle format normal dengan satuan
+    # Tangani format normal dengan satuan
     pattern = r"(\d+(?:[.,]\d+)?)(?:\s*(rb|ribu|k|jt|juta|m|miliar|miliard|milyard)\b)?"
     matches = re.findall(pattern, text)
 
@@ -190,7 +190,7 @@ def apply_split_operation(text: str, base_amount: int) -> int:
         r"(\d+|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh)\s+orang",
     ]
 
-    # Handle kata khusus hanya jika ada konteks pembagian.
+    # Tangani kata khusus hanya jika ada konteks pembagian.
     # Jangan membagi amount hanya karena deskripsi memuat kata seperti "dua".
     word_map = {
         "dua": 2,
@@ -215,7 +215,7 @@ def apply_split_operation(text: str, base_amount: int) -> int:
         if divisor and divisor > 1:
             return base_amount // divisor
 
-    # Handle pola angka/kata yang punya operator pembagian jelas.
+    # Tangani pola angka/kata yang punya operator pembagian jelas.
     for pattern in split_patterns:
         match = re.search(pattern, text_lower)
         if match and match.lastindex:

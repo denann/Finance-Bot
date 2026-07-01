@@ -1,4 +1,4 @@
-# Split from app/bot/handlers.py for readability.
+# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
@@ -309,7 +309,7 @@ def get_session_chat_history(context: ContextTypes.DEFAULT_TYPE, limit: int = 8)
 
 
 def attach_session_history(context: ContextTypes.DEFAULT_TYPE, context_data: dict) -> dict:
-    """Tambahkan chat history session ke context JSON yang dikirim ke Gemini."""
+    """Tambahkan riwayat chat sesi ke context JSON yang dikirim ke Gemini."""
     data = dict(context_data or {})
     history = get_session_chat_history(context)
     if history:
@@ -467,7 +467,7 @@ async def coach_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_natural_finance_question(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
-    """Handle pertanyaan finance natural tanpa command, read-only."""
+    """Tangani pertanyaan finance natural tanpa command. Alur ini hanya read-only."""
     if not should_handle_finance_question(user_text):
         return False
 
@@ -493,7 +493,7 @@ async def handle_natural_finance_question(update: Update, context: ContextTypes.
 
 
 def format_report_delta(delta_info: dict, *, positive_when_up: bool, as_count: bool = False) -> str:
-    """Format delta vs periode sebelumnya dengan indikator hijau/merah berbasis emoji."""
+    """Formatkan delta vs periode sebelumnya dengan indikator hijau/merah berbasis emoji."""
     if not delta_info or delta_info.get("available") is False or delta_info.get("delta") is None:
         return "~"
 
@@ -534,7 +534,7 @@ def append_report_comparison_lines(lines: list[str], report: dict, label: str):
 
 
 def get_report_expense_display(report: dict) -> str:
-    """Format total expense report sebagai Net (Gross) jika ada piutang aktif."""
+    """Formatkan total expense report sebagai Net (Gross) jika ada piutang aktif."""
     gross = float((report or {}).get("total_expense", 0) or 0)
     net = (report or {}).get("total_net_expense_after_receivable")
     if net is None:
@@ -611,7 +611,7 @@ def append_report_category_breakdown_lines(lines: list[str], report: dict, compa
 
 
 def build_top_expense_debt_lines(txn: dict, amount: float) -> list[str]:
-    """Compatibility wrapper. Detail debt sekarang diformat oleh build_transaction_display_lines."""
+    """Pembungkus kompatibilitas. Detail debt sekarang diformat oleh build_transaction_display_lines."""
     return []
 
 def is_category_detail_report(report: dict) -> bool:
@@ -1113,7 +1113,7 @@ async def cari_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def format_budget_net_gross(net_amount: float, gross_amount: float) -> str:
-    """Format budget realisasi sebagai Bersih (Gross)."""
+    """Formatkan budget realisasi sebagai Bersih (Gross)."""
     net = float(net_amount or 0)
     gross = float(gross_amount or 0)
     if abs(net - gross) > 0.0001:
@@ -1626,7 +1626,7 @@ def parse_debt_void_args(args: list[str]) -> dict:
     """
     Parsing argumen /debt_void yang lebih ramah user.
 
-    Support:
+    Mendukung:
     - /debt_void 1
     - /debt_void debt_xxx
     - /debt_void Maya
@@ -2023,7 +2023,7 @@ def debt_detail_sort_key_for_display(debt: dict) -> tuple[str, str, int]:
 # ── Debt Settle Selected Range ───────────────────────────────────────────────
 
 def parse_debt_number_selection(selection: str) -> list[str]:
-    """Parse nomor debt dari detail /hutang <nama>. Support: 1-17, 1 2 3, 1,3,5."""
+    """Parsing nomor debt dari detail /hutang <nama>. Mendukung: 1-17, 1 2 3, 1,3,5."""
     raw = str(selection or "").strip()
     if not raw:
         return []
@@ -2054,7 +2054,7 @@ def parse_debt_number_selection(selection: str) -> list[str]:
 
 
 def parse_debt_settle_command_args(args: list[str]) -> dict:
-    """Parse /debt_settle Raka 1-17 amount=337063 account=DANA."""
+    """Parsing /debt_settle Raka 1-17 amount=337063 account=DANA."""
     args = [str(a or "").strip() for a in (args or []) if str(a or "").strip()]
     result = {"person_name": "", "selection": "", "numbers": [], "amount": None, "account": "", "error": ""}
     if len(args) < 2:
@@ -2092,7 +2092,7 @@ def parse_debt_settle_command_args(args: list[str]) -> dict:
             selection_idx = idx
             break
     if selection_idx is None:
-        # fallback: ambil token terakhir sebagai selection
+        # fallback: ambil token terakhir sebagai pilihan
         selection_idx = len(positional) - 1
 
     person_parts = positional[:selection_idx]
@@ -2124,7 +2124,7 @@ def parse_debt_settle_command_args(args: list[str]) -> dict:
 
 
 def parse_natural_debt_settle_text(text: str) -> dict | None:
-    """Parse natural: Raka bayar hutang 337063 untuk debt 1-17."""
+    """Parsing input natural: Raka bayar hutang 337063 untuk debt 1-17."""
     raw = str(text or "").strip()
     if not raw:
         return None
@@ -2384,7 +2384,7 @@ async def debt_settle_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"❌ {payload.get('message')}", parse_mode="Markdown")
         return
 
-    # Tanpa amount = mode hitung total saja.
+    # Tanpa nominal = mode hitung total saja.
     if payload.get("amount") is None:
         await update.message.reply_text(build_selected_debt_total_text(payload), parse_mode="Markdown")
         return

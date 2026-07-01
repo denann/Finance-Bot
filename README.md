@@ -18,6 +18,7 @@ Prinsip utama project ini: **preview before write**, **user confirmation before 
 - [Installation](#installation)
 - [Usage](#usage)
 - [Project Structure](#project-structure)
+- [Code Documentation](#code-documentation)
 - [Limitations and Troubleshooting](#limitations-and-troubleshooting)
 - [Advanced Deployment](#advanced-deployment)
 - [Author](#author)
@@ -715,6 +716,20 @@ Catatan struktur:
 - `app/nlp/parse_safety.py` mengatur risk flag dan routing preview/clarification untuk hasil parsing yang rawan salah.
 - `scripts/setup_check.py` ditujukan untuk onboarding user baru.
 - `scripts/debug_check.py` ditujukan untuk diagnostic developer yang lebih lengkap.
+
+## Code Documentation
+
+Dokumentasi sintaks dan alur internal project tersedia di folder [`docs/`](docs/README.md).
+
+Mulai dari:
+
+- [`docs/01-project-map.md`](docs/01-project-map.md) untuk memahami struktur folder dan tanggung jawab tiap layer.
+- [`docs/02-runtime-entrypoint.md`](docs/02-runtime-entrypoint.md) untuk memahami polling mode, webhook mode, scheduler, dan startup.
+- [`docs/03-telegram-bot-flow.md`](docs/03-telegram-bot-flow.md) untuk memahami Telegram handler, command, message, dan callback.
+- [`docs/04-parser-nlp-parse-safety.md`](docs/04-parser-nlp-parse-safety.md) untuk memahami regex parser, Gemini parser, dan parse safety routing.
+- [`docs/05-transaction-preview-flow.md`](docs/05-transaction-preview-flow.md) untuk memahami preview, Edit dulu, Lanjut, Batal, debt, split bill, pending expense, dan asset flow.
+- [`docs/06-data-layer-services.md`](docs/06-data-layer-services.md) untuk memahami service layer, Google Sheets, schema bootstrap, dan atomic write.
+- [`docs/09-function-reference.md`](docs/09-function-reference.md) untuk indeks fungsi per file.
 
 ## Limitations and Troubleshooting
 

@@ -1,4 +1,4 @@
-# Split from app/bot/handlers.py for readability.
+# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
@@ -41,8 +41,8 @@ def build_gemini_fallback_text() -> str:
 
 def router_args_to_last_filter(args: dict) -> tuple[int, str | None, str | None, str]:
     """
-    Convert args Gemini ke parameter get_recent_transactions.
-    Return: limit, period, month, title
+    Konversi args Gemini ke parameter get_recent_transactions.
+    Output: limit, period, month, title
     """
     period = args.get("period")
     month = args.get("month")
@@ -437,7 +437,7 @@ def get_similarity_candidates(clean_command: str) -> list[dict]:
 
 def resolve_command_local(command_text: str) -> dict:
     """
-    Resolver command lokal yang deterministic.
+    Resolver command lokal yang deterministik.
 
     Layer:
     1. exact command
@@ -446,7 +446,7 @@ def resolve_command_local(command_text: str) -> dict:
     4. similarity with threshold + margin
     5. unresolved
 
-    Return:
+    Output:
     {
         "status": "exact"|"unavailable"|"alias"|"similarity"|"ambiguous"|"unresolved",
         "input": "minguan",
@@ -468,7 +468,7 @@ def resolve_command_local(command_text: str) -> dict:
             "second_score": None,
         }
 
-    # Layer 1: exact command resmi
+    # Layer 1: command resmi yang cocok persis
     if clean in KNOWN_COMMANDS:
         return {
             "status": "exact",
@@ -626,7 +626,7 @@ def maybe_text_is_command_typo(text: str) -> str | None:
     tokens = clean_text.split()
 
     # Jangan handle multi-token di typo resolver.
-    # Multi-token harusnya masuk local natural intent atau Gemini.
+    # Multi-token seharusnya masuk intent natural lokal atau Gemini.
     if len(tokens) != 1:
         return None
 
@@ -668,7 +668,7 @@ def maybe_text_is_command_typo(text: str) -> str | None:
 
 async def unknown_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Handle slash command yang tidak dikenali.
+    Tangani slash command yang tidak dikenali.
     Contoh:
     /minguan -> saran /mingguan
     /mingguannn -> similarity ke /mingguan
@@ -696,9 +696,9 @@ def short_txn_id(txn_id: str) -> str:
 
 def expand_txn_refs(refs: list[str]) -> list[str]:
     """
-    Expand argumen transaksi.
+    Perluas argumen transaksi.
 
-    Support:
+    Mendukung:
     - 1 3 5 -> 1, 3, 5
     - 1-4   -> 1, 2, 3, 4
     - 4-1   -> 4, 3, 2, 1
@@ -727,9 +727,9 @@ def expand_txn_refs(refs: list[str]) -> list[str]:
 
 def resolve_txn_refs_from_last(context: ContextTypes.DEFAULT_TYPE, refs: list[str]) -> dict:
     """
-    Resolve argumen /delete_txn.
+    Cocokkan argumen /delete_txn.
 
-    Support:
+    Mendukung:
     - angka dari hasil /last terakhir: 1 2 3
       -> resolve ke row_index, bukan transaction_id
 

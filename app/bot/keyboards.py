@@ -1,3 +1,5 @@
+"""Kumpulan helper keyboard Telegram untuk pilihan rekening, konfirmasi, dan pembatalan."""
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 # Daftar rekening

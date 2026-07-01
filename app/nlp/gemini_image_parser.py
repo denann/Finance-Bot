@@ -6,7 +6,7 @@ from app.config import GEMINI_API_KEY
 from app.nlp.gemini_langchain_client import generate_text_from_image_with_gemini
 
 
-# Keep this list aligned with the normal Gemini text parser.
+# Samakan daftar kategori ini dengan Gemini text parser agar hasil gambar/teks konsisten.
 VALID_CATEGORIES = [
     "Food & Beverage", "Transport", "Bills & Utilities", "Shopping",
     "Health", "Entertainment", "Education", "Personal Care",
@@ -18,7 +18,7 @@ VALID_ACCOUNTS = ["Cash", "BRI", "BSI", "DANA", "GoPay"]
 VALID_SPENDING_TYPES = ["Bulanan", "Harian", "Darurat", "Keinginan"]
 
 
-# You may override this in Wispbyte env if your Gemini account uses a different model name.
+# Model bisa di-override dari env Wispbyte kalau akun Gemini memakai nama model berbeda.
 GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash")
 
 
@@ -166,7 +166,7 @@ def normalize_item(item: dict) -> dict | None:
         tipe_pengeluaran = "Harian"
 
     date_value = str(item.get("date") or datetime.now().strftime("%Y-%m-%d")).strip()
-    # Keep bot stable: invalid date from OCR/Gemini falls back to today.
+    # Jaga bot tetap stabil: tanggal invalid dari OCR/Gemini akan fallback ke hari ini.
     try:
         datetime.strptime(date_value, "%Y-%m-%d")
     except Exception:
@@ -194,9 +194,9 @@ def normalize_item(item: dict) -> dict | None:
 
 def parse_transactions_from_image(image_bytes: bytes, mime_type: str = "image/jpeg", caption: str = "") -> dict:
     """
-    Parse foto struk/nota/screenshot transaksi menjadi item transaksi bot.
+    Parsing foto struk/nota/screenshot transaksi menjadi item transaksi bot.
 
-    Return:
+    Output:
     {
       "success": bool,
       "items": list[dict],

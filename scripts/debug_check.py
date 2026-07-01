@@ -1035,7 +1035,7 @@ def check_regression_commands(modules):
             actual="Missing",
         )
 
-    # ── H. Gemini intent router sanity check ──────────────────────────────────
+    # ── H. Sanity check router intent Gemini ──────────────────────────────────
     # Ini tidak memanggil Gemini API. Cuma cek trigger-nya.
     router = modules.get("app.nlp.gemini_intent_router")
 
@@ -1152,7 +1152,7 @@ def check_regression_commands(modules):
             actual="Missing",
         )
 
-    # ── J. Command handler availability untuk semua command besar ─────────────
+    # ── J. Ketersediaan handler untuk semua command besar ─────────────
     command_expectations = [
         ("/start", "start_handler"),
         ("/help", "help_handler"),

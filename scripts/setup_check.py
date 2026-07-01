@@ -1,11 +1,11 @@
-"""Lightweight setup checker for new users.
+"""Setup checker ringan untuk user baru.
 
-Run:
+Jalankan:
     python scripts/setup_check.py
 
-This script is intentionally simpler than scripts/debug_check.py. It focuses on
-onboarding checks: .env, required credentials, service account file, importable
-packages, and Google Sheets access/schema bootstrap when possible.
+Script ini sengaja lebih sederhana dari scripts/debug_check.py. Fokusnya pada
+cek onboarding: .env, credential wajib, file service account, package utama,
+dan akses/schema Google Sheets jika memungkinkan.
 """
 from __future__ import annotations
 

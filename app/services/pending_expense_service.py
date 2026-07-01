@@ -203,7 +203,7 @@ def parse_month_only_from_text(text: str) -> str | None:
 
 
 def detect_pending_due(text: str) -> tuple[str, str, str]:
-    """Return due_date, month, due_precision.
+    """Kembalikan due_date, month, dan due_precision.
 
     due_precision:
     - exact   : due_date pasti
@@ -449,7 +449,7 @@ def build_pending_row(item: dict) -> list:
 
 
 def build_pending_expense_from_text(text: str) -> dict:
-    """Parse input pending expense menjadi item, tanpa menyimpan ke Google Sheets.
+    """Parsing input pending expense menjadi item, tanpa menyimpan ke Google Sheets.
 
     Dipakai untuk preview + tombol Simpan/Batal. Penyimpanan sebenarnya
     dilakukan oleh save_pending_expense() setelah user klik Simpan.
@@ -508,7 +508,7 @@ def save_pending_expense(item: dict) -> dict:
 
 
 def add_pending_expense_from_text(text: str) -> dict:
-    """Parse dan langsung simpan pending expense.
+    """Parsing dan langsung simpan pending expense.
 
     Dipertahankan untuk kompatibilitas internal. Untuk flow Telegram user-facing,
     gunakan build_pending_expense_from_text() + save_pending_expense() agar ada

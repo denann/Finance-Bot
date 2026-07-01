@@ -1,9 +1,8 @@
-"""Telegram handler entrypoint.
+"""Titik masuk handler Telegram.
 
-The original handler module was very large, so the source is split into
-normal Python modules under ``app.bot.handler_parts``. Each part keeps its
-own imports explicit, then selected public handler/helper symbols are
-re-exported here for the rest of the application.
+File handler asli sudah terlalu besar, jadi logic-nya dipisah ke beberapa modul
+di ``app.bot.handler_parts``. Setiap modul menyimpan import-nya sendiri, lalu
+symbol handler/helper penting di-export ulang di sini agar import lama tetap aman.
 """
 from app.bot.handler_parts.core import *
 from app.bot.handler_parts.networth_assets import *

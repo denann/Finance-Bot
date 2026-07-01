@@ -1,4 +1,4 @@
-# Split from app/bot/handlers.py for readability.
+# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
@@ -179,7 +179,7 @@ def append_fronted_split_result_lines(lines: list[str], split_result: dict, *, i
 
 
 def build_edit_txn_preview_text_for_callback(preview: dict, split_parsed: dict | None = None) -> str:
-    """Preview edit transaksi untuk flow split bill di callback_handler."""
+    """Preview edit transaksi untuk alur split bill di callback_handler."""
     old_txn = preview.get("old_txn", {}) or {}
     new_txn = preview.get("new_txn", {}) or {}
     updates = preview.get("updates", {}) or {}
@@ -267,7 +267,7 @@ def build_overpayment_decision_text(parsed: dict, outcome: dict) -> str:
 def resolve_payment_target_type(parsed: dict, debts: list[dict]) -> tuple[str | None, str | None]:
     """Tentukan arah debt untuk pembayaran by person tanpa memblokir mixed arah.
 
-    Return: (target_type, error_message).
+    Output: (target_type, error_message).
     """
     target = str(parsed.get("target_debt_type") or "").strip().lower()
     if target == "auto":
@@ -418,6 +418,9 @@ def build_clarified_fronting(raw: str, parsed: dict | None = None) -> dict | Non
         "fronting_mode": "talangin",
     }
 
+
+# Handler pusat untuk semua tombol inline Telegram.
+# callback_data dipakai untuk mengembalikan user ke flow yang tepat tanpa menyimpan data sebelum konfirmasi.
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
@@ -871,8 +874,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 and parse_sheet_number(d.get("remaining_amount", 0)) > 0
                 for d in debts
             )
-            # Payment selalu dialokasikan global per orang sesuai arah input.
-            # Jangan target 1 debt langsung, supaya output dan edit/delete payment
+            # Pembayaran selalu dialokasikan global per orang sesuai arah input.
+            # Jangan menargetkan 1 debt langsung, supaya output dan edit/delete pembayaran
             # konsisten sebagai ledger per orang.
             debt_parsed["target_debt_id"] = ""
             debt_parsed["debt_type_for_payment"] = debt_type_for_payment
@@ -1130,8 +1133,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Untuk bulk input, paid/unpaid harus diterapkan satu-per-satu.
             # Callback mixed sekarang membawa index item aktif. Ini mencegah bug
-            # double-click/stale callback: klik lama tidak boleh otomatis
-            # memutuskan split bill berikutnya, dan duplicate callback tidak boleh
+            # double-click/callback lama: klik lama tidak boleh otomatis
+            # memutuskan split bill berikutnya, dan callback duplikat tidak boleh
             # menimpa preview akhir dengan pesan "Tidak ada split bill...".
             expected_index = None
             if len(parts) > 3:
@@ -1153,7 +1156,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["pending_mixed"] = mixed_items
 
             if decision_result == "invalid" and not mixed_split_bill_needs_decision(mixed_items):
-                # Semua split bill sudah selesai. Kemungkinan ini callback duplicate
+                # Semua split bill sudah selesai. Kemungkinan ini callback duplikat
                 # dari tombol lama. Jangan tampilkan error; lanjutkan ke preview agar
                 # user tetap bisa menyimpan data.
                 pass

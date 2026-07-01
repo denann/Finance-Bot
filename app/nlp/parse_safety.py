@@ -1,8 +1,8 @@
-"""Parse safety routing for natural finance input.
+"""Routing keamanan parsing untuk input finance natural.
 
-This module does not save anything and does not call Gemini. It only inspects
-raw text + parsed result and returns a routing recommendation for the existing
-preview / edit / confirmation flows.
+Modul ini tidak menyimpan data dan tidak memanggil Gemini. Tugasnya hanya
+mengecek teks mentah + hasil parser, lalu memberi rekomendasi apakah input aman
+masuk preview normal, perlu warning, perlu draft Gemini, atau harus klarifikasi.
 """
 
 from __future__ import annotations
@@ -121,7 +121,7 @@ def _add_reason(reasons: list[str], reason: str) -> None:
 
 
 def extract_person_candidate(text: str) -> str:
-    """Best-effort person extraction for clarification callbacks."""
+    """Ambil kandidat nama orang untuk callback klarifikasi secara best-effort."""
     clean = normalize_text(text)
 
     patterns = [
@@ -144,7 +144,7 @@ def extract_person_candidate(text: str) -> str:
 
 
 def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str]]:
-    """Flags that must be caught before debt/parser execution."""
+    """Deteksi risk flags yang wajib ditangkap sebelum debt parser/transaksi jalan."""
     clean = normalize_text(text)
     flags: list[str] = []
     reasons: list[str] = []
@@ -152,7 +152,8 @@ def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str
     if not clean or not _has_amount(clean):
         return flags, reasons
 
-    # 1) Person + bayar + nominal, but no debt keyword.
+    # 1) Nama orang + bayar + nominal tanpa keyword hutang/piutang.
+    #    Ini ambigu karena bisa berarti debt payment, expense biasa, atau orang lain yang membayar.
     if not _has_debt_keyword(clean):
         person_pays = re.search(
             r"^\s*(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)\s+(?:bayar|byr)\b(?=.*(?:\d|rp|idr))",
@@ -210,7 +211,7 @@ def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str
             "Frasa pinjam uang dari saya sengaja diklarifikasi agar tidak salah arah hutang/piutang.",
         )
 
-    # 3) Set/check balance intent.
+    # 3) Intent cek/set saldo. Jangan sampai diparse sebagai expense biasa.
     if re.search(rf"\bsaldo\s+({ACCOUNT_PATTERN})\b", clean, flags=re.IGNORECASE) and re.search(r"\b(?:minus|-)?\s*(?:\d|rp|idr)", clean):
         _append_unique(flags, "balance_or_set_balance_intent")
         _add_reason(
@@ -242,7 +243,7 @@ def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str
 
 
 def detect_post_parse_flags(text: str, parsed: dict[str, Any] | None) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Return (info_flags, warning_flags, gemini_flags, reasons)."""
+    """Kembalikan tuple: info_flags, warning_flags, gemini_flags, dan reasons."""
     clean = normalize_text(text)
     parsed = parsed or {}
     info_flags: list[str] = []
@@ -254,7 +255,7 @@ def detect_post_parse_flags(text: str, parsed: dict[str, Any] | None) -> tuple[l
     category = str(parsed.get("category") or "").strip()
     parsed_by = str(parsed.get("parsed_by") or "").strip().lower()
 
-    # 4) topup/isi non-wallet target. Parser should classify clear non-wallet targets as expense.
+    # 4) topup/isi non-wallet target. Parser seharusnya mengklasifikasikan target non-wallet yang jelas sebagai expense.
     topup_match = re.search(
         r"\b(?:top\s*up|topup|isi|ngisi)\s+(?P<target>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,25}?)(?=\s*(?:\d|rp|idr|dari|pakai|pake|via|ke|$))",
         clean,
@@ -283,7 +284,7 @@ def detect_post_parse_flags(text: str, parsed: dict[str, Any] | None) -> tuple[l
                     "Isi/top up ke target non-wallet perlu dicek agar tidak salah dianggap transfer.",
                 )
 
-    # 5) Account to account without transfer keyword. If parser already returns transfer, it is safe info.
+    # 5) Rekening ke rekening tanpa kata transfer. Jika parser sudah berhasil menjadi transfer, cukup jadi info.
     has_account_to_account_without_keyword = (
         re.search(rf"\b({ACCOUNT_PATTERN})\s+ke\s+({ACCOUNT_PATTERN})\b", clean, flags=re.IGNORECASE)
         and not re.search(r"\b(?:transfer|tf|trf|pindah|move|tarik|setor|top\s*up|topup|isi|ngisi)\b", clean, flags=re.IGNORECASE)
@@ -305,7 +306,7 @@ def detect_post_parse_flags(text: str, parsed: dict[str, Any] | None) -> tuple[l
         else:
             _add_reason(reasons, "Alias tf/trf dikenali sebagai transfer.")
 
-    # 7) Possible split with word numbers that did not attach to split_bill.
+    # 7) Pola split dengan angka kata yang belum menempel ke field split_bill.
     split_word_number = re.search(
         r"\b(?:bagi|dibagi|di\s*-?\s*bagi|patungan|split|share)\s+(?:dua|tiga|empat|lima|enam|berdua|bertiga|berempat)\b|\b(?:berdua|bertiga|berempat)\s+(?:sama|bareng|dengan)\b",
         clean,
@@ -341,14 +342,17 @@ def detect_post_parse_flags(text: str, parsed: dict[str, Any] | None) -> tuple[l
     return info_flags, warning_flags, gemini_flags, reasons
 
 
-def assess_parse_safety(text: str, parsed: dict | None) -> dict:
-    """Assess parsing safety and choose routing action.
+# Fungsi utama parse safety.
+# Urutan prioritas sengaja konservatif: klarifikasi > Gemini draft > warning > preview normal.
 
-    Return keys:
+def assess_parse_safety(text: str, parsed: dict | None) -> dict:
+    """Nilai keamanan hasil parsing dan tentukan aksi routing.
+
+    Output utama:
     - recommended_action: normal_preview | warning_preview | gemini_draft_preview | clarification
     - risk_level: low | medium | high
-    - risk_flags: list[str]
-    - reasons: list[str]
+    - risk_flags: daftar flag risiko yang terdeteksi
+    - reasons: alasan singkat yang bisa ditampilkan ke user
     """
     parsed = parsed or {}
     pre_flags, pre_reasons = detect_pre_parse_clarification_flags(text)

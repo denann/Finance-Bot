@@ -25,7 +25,7 @@ def _require_api_key() -> str:
 @lru_cache(maxsize=32)
 def get_gemini_llm(model_name: str, temperature: float = 0.0) -> ChatGoogleGenerativeAI:
     """
-    Centralized LangChain Gemini client.
+    Client Gemini terpusat melalui LangChain.
 
     Semua pemanggilan Gemini sebaiknya lewat helper ini supaya:
     - model gampang diganti dari env,
@@ -40,7 +40,7 @@ def get_gemini_llm(model_name: str, temperature: float = 0.0) -> ChatGoogleGener
 
 
 def _extract_text(response: Any) -> str:
-    """Ambil text dari AIMessage LangChain secara aman."""
+    """Ambil teks dari AIMessage LangChain secara aman."""
     content = getattr(response, "content", "")
 
     if isinstance(content, str):
@@ -66,7 +66,7 @@ def generate_text_with_gemini(
     model_name: str | None = None,
     temperature: float = 0.0,
 ) -> str:
-    """Generate text via Gemini using LangChain."""
+    """Buat teks melalui Gemini menggunakan LangChain."""
     llm = get_gemini_llm(model_name or DEFAULT_TEXT_MODEL, float(temperature))
     response = llm.invoke([HumanMessage(content=prompt)])
     return _extract_text(response)
@@ -85,7 +85,7 @@ def generate_text_from_image_with_gemini(
     model_name: str | None = None,
     temperature: float = 0.0,
 ) -> str:
-    """Generate text from image via Gemini Vision using LangChain."""
+    """Buat teks dari gambar melalui Gemini Vision menggunakan LangChain."""
     if not image_bytes:
         raise ValueError("File gambar kosong atau gagal dibaca.")
 

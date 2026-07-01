@@ -34,7 +34,7 @@ EXPORT_TRANSACTION_COLUMNS = [
     "tipe_hutang",
 ]
 
-# 1-based Google Sheets column numbers for transaction debt relation fields.
+# Nomor kolom Google Sheets berbasis 1 untuk field relasi debt pada transaksi.
 HUTANG_ID_COL = 14
 TIPE_HUTANG_COL = 15
 
@@ -45,9 +45,9 @@ def get_current_month_str() -> str:
 
 def normalize_export_period(period: str | None = None) -> dict:
     """
-    Normalize argumen /download_data.
+    Normalisasi argumen /download_data.
 
-    Support:
+    Mendukung:
     - None      -> bulan ini
     - today     -> hari ini
     - week      -> minggu ini
@@ -135,7 +135,7 @@ def get_transactions_for_export(period: str | None = None) -> dict:
     """
     Ambil transaksi untuk export CSV.
 
-    Return:
+    Output:
     {
         "success": bool,
         "records": list[dict],
@@ -233,7 +233,7 @@ def is_skip_account_transaction(parsed: dict) -> bool:
 
 def generate_transaction_id() -> str:
     """
-    Generate transaction ID yang unik.
+    Buat ID transaksi yang unik.
 
     Format:
     txn_YYYYMMDD_HHMMSS_microsecond_uuid8
@@ -247,7 +247,7 @@ def generate_transaction_id() -> str:
 
 def build_transaction_row(parsed: dict, raw_input: str) -> tuple[str, list]:
     """
-    Build row transaksi sesuai header Google Sheets:
+    Bangun row transaksi sesuai header Google Sheets:
 
     id, date, type, amount, category, account, to_account,
     subject, description, catatan, tipe_pengeluaran, raw_input, parsed_by, hutang_id, tipe_hutang
@@ -295,7 +295,7 @@ def update_transaction_debt_relation(
     tipe_hutang: str = "piutang",
 ) -> dict:
     """
-    Update kolom hutang_id dan tipe_hutang di sheet transactions.
+    Perbarui kolom hutang_id dan tipe_hutang di sheet transactions.
 
     Dipakai untuk split bill karena debt_id baru diketahui setelah transaksi utama
     berhasil tersimpan. Relasi balik ini membuat row transactions mudah ditrace
@@ -407,8 +407,8 @@ def get_account_balance(account_name: str) -> float | None:
 
 def update_account_balance(account_name: str, new_balance: float) -> bool:
     """
-    Update saldo rekening di sheet accounts.
-    Return True jika berhasil, False jika rekening tidak ditemukan.
+    Perbarui saldo rekening di sheet accounts.
+    Kembalikan True jika berhasil, False jika rekening tidak ditemukan.
     """
     ACCOUNT_NAME_COL = 1
     BALANCE_COL = 3
@@ -436,7 +436,7 @@ def get_all_accounts() -> list[dict]:
 def get_account_index_map() -> dict:
     """
     Ambil semua account sekali saja.
-    Return:
+    Output:
     {
         "cash": {"row": 2, "name": "Cash", "balance": 100000},
         "bri": {"row": 3, "name": "BRI", "balance": 500000},
@@ -485,7 +485,7 @@ def calculate_account_deltas(parsed_items: list[dict]) -> dict:
     """
     Hitung perubahan saldo per rekening dari banyak transaksi.
 
-    Return:
+    Output:
     {
         "Cash": -50000,
         "BRI": 100000,
@@ -528,10 +528,10 @@ def calculate_account_deltas(parsed_items: list[dict]) -> dict:
 
 def apply_account_deltas(account_deltas: dict) -> dict:
     """
-    Update saldo rekening berdasarkan total delta per account.
+    Perbarui saldo rekening berdasarkan total delta per account.
     Ini lebih cepat daripada update saldo tiap transaksi.
 
-    Return:
+    Output:
     {
         "success": True,
         "new_balances": {"Cash": 50000, "BRI": 1000000},
@@ -830,7 +830,7 @@ def get_transactions_by_date(date_str: str) -> list[dict]:
 def get_expense_by_category(year: int, month: int) -> dict:
     """
     Hitung total pengeluaran per kategori dalam satu bulan.
-    Return: {"Food & Beverage": 250000, "Transport": 150000, ...}
+    Output: {"Food & Beverage": 250000, "Transport": 150000, ...}
     """
     transactions = get_transactions_by_month(year, month)
     result = {}
@@ -1058,7 +1058,7 @@ def calculate_reverse_deltas_for_delete(transactions: list[dict]) -> dict:
 
 
 def parse_transaction_debt_ids(txn: dict) -> list[str]:
-    """Ambil debt/hutang id dari kolom transactions.hutang_id, support comma-separated."""
+    """Ambil debt/hutang id dari kolom transactions.hutang_id, mendukung format comma-separated."""
     raw = str(txn.get("hutang_id", "") or "").strip()
     if not raw:
         return []
@@ -1305,7 +1305,7 @@ def delete_transactions_by_refs(
     txn_ids: list[str] | None = None,
 ) -> dict:
     """
-    Delete transaksi berdasarkan row_index dan/atau transaction_id.
+    Hapus transaksi berdasarkan row_index dan/atau transaction_id.
     """
     preview = preview_delete_transactions_by_refs(row_indices, txn_ids)
 
@@ -1824,13 +1824,13 @@ def _payment_allocation_note(raw: str, allocations: list[dict], overpayment: flo
 
 
 def edit_debt_payment_transaction_amount(preview: dict) -> dict:
-    """Edit nominal transaksi pembayaran debt sambil sync sheet debts.
+    """Edit nominal transaksi pembayaran debt sambil menyinkronkan sheet debts.
 
     Mekanisme:
     1. Reverse alokasi payment lama dari catatan/hutang_id.
     2. Alokasikan ulang payment baru secara global per orang.
-    3. Update saldo rekening sesuai selisih nominal.
-    4. Update row transaksi dengan allocation baru.
+    3. Perbarui saldo rekening sesuai selisih nominal.
+    4. Perbarui row transaksi dengan allocation baru.
 
     Kalau nominal baru overpaid, kelebihan otomatis dicatat sebagai debt lawan arah
     agar tidak hilang. Untuk pilihan bonus/manual, lebih aman delete lalu input ulang.
@@ -1912,8 +1912,8 @@ def edit_transaction_by_ref(
     """
     Edit transaksi:
     1. Preview dan validasi
-    2. Apply net delta saldo
-    3. Update row transaksi
+    2. Terapkan net delta saldo
+    3. Perbarui row transaksi
     """
     preview = preview_edit_transaction_by_ref(
         updates=updates,

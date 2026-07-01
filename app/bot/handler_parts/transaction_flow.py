@@ -1,4 +1,4 @@
-# Split from app/bot/handlers.py for readability.
+# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
@@ -6,7 +6,7 @@ from app.bot.handler_parts.networth_assets import build_asset_confirm_preview
 
 
 def parse_input(text: str) -> dict:
-    """Coba regex dulu, fallback ke Gemini."""
+    """Coba regex dulu. Jika gagal, fallback ke Gemini."""
     result = parse_with_regex(text)
     if result is not None:
         return result
@@ -25,7 +25,7 @@ def split_user_inputs(text: str) -> list[str]:
     """
     Pecah input user menjadi beberapa item.
 
-    Support:
+    Mendukung:
     - newline
     - koma
     - titik koma
@@ -433,9 +433,9 @@ async def handle_pending_missing_amount(update: Update, context: ContextTypes.DE
 
 def parse_mixed_item(line: str) -> dict:
     """
-    Parse satu item sebagai debt dulu, lalu transaksi biasa.
+    Parsing satu item sebagai debt dulu, lalu transaksi biasa.
 
-    Return:
+    Output:
     {
         "kind": "debt"|"transaction"|"missing_amount"|"failed",
         "parsed": dict,
@@ -499,7 +499,7 @@ def edit_or_continue_keyboard(scope: str) -> InlineKeyboardMarkup:
 
 
 def build_parse_safety_notice(assessment: dict, mode: str = "warning") -> str:
-    """Header warning/AI review untuk ditempel di atas preview existing."""
+    """Header warning/AI review untuk ditempel di atas preview yang sudah ada."""
     reasons = [str(r).strip() for r in (assessment or {}).get("reasons", []) if str(r).strip()]
 
     if mode == "gemini":
@@ -808,7 +808,7 @@ def build_mixed_edit_choose_prompt(mixed_items: list[dict]) -> str:
 
 
 def parse_preview_edit_updates(text: str) -> dict:
-    """Parse update sederhana untuk preview sebelum simpan."""
+    """Parsing update sederhana untuk preview sebelum simpan."""
     raw = str(text or "").strip()
     updates: dict = {}
 
@@ -1024,7 +1024,7 @@ async def proceed_after_preview_edit(query, context: ContextTypes.DEFAULT_TYPE, 
 
 
 async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
-    """Handle balasan user untuk edit preview sebelum pilih rekening/simpan."""
+    """Tangani balasan user untuk edit preview sebelum pilih rekening/simpan."""
     state = context.user_data.get("pending_preview_edit")
     if not state:
         return False
@@ -1341,7 +1341,7 @@ def strip_split_bill_phrase(text: str) -> str:
         clean,
         flags=re.IGNORECASE,
     )
-    # Support input tanpa marker "sama":
+    # Dukung input tanpa marker "sama":
     # "Nasi kuning 22k dibagi 2 raka".
     clean = re.sub(
         rf"\b{split_word}\s*(?:jadi\s*)?{participant_token}\s*(?:orang\s+)?{name_chunk}",
@@ -1474,7 +1474,7 @@ def is_split_bill_allocation_token(value: str) -> bool:
 
 
 def parse_split_bill_share_value(value: str, base_share: float) -> float:
-    """Parse nilai share teman: 100%, 80%, 125k, 100000, dst."""
+    """Parsing nilai share teman: 100%, 80%, 125k, 100000, dst."""
     raw = str(value or "").strip().lower().rstrip(".,;)")
     if not raw:
         return 0.0
@@ -1491,9 +1491,9 @@ def parse_split_bill_share_value(value: str, base_share: float) -> float:
 
 def parse_split_bill_people_and_shares(name_text: str, total_amount: float, participants: int) -> dict:
     """
-    Parse nama teman split bill plus custom share opsional.
+    Parsing nama teman split bill plus custom share opsional.
 
-    Support:
+    Mendukung:
     - raka fajar bagas                         -> equal share
     - raka:100% fajar:80% bagas:100%          -> persen dari share normal
     - raka 100% fajar 80% bagas 100%          -> titik dua opsional
@@ -1880,7 +1880,7 @@ def build_mixed_split_bill_prompt(mixed_items: list[dict]) -> str:
 
 
 def get_mixed_split_bill_indexes(mixed_items: list[dict]) -> list[int]:
-    """Return index item transaksi mixed yang memiliki split bill."""
+    """Kembalikan index item transaksi campuran yang memiliki split bill."""
     indexes = []
     for idx, item in enumerate(mixed_items or []):
         if item.get("kind") != "transaction":
@@ -1892,7 +1892,7 @@ def get_mixed_split_bill_indexes(mixed_items: list[dict]) -> list[int]:
 
 
 def get_next_mixed_split_bill_index(mixed_items: list[dict]) -> int | None:
-    """Return index split bill pertama yang belum dipilih paid/unpaid."""
+    """Kembalikan index split bill pertama yang belum dipilih paid/unpaid."""
     for idx in get_mixed_split_bill_indexes(mixed_items):
         parsed = mixed_items[idx].get("parsed", {})
         if split_bill_needs_decision(parsed):
@@ -1955,10 +1955,10 @@ def apply_split_bill_decision_to_current_mixed(mixed_items: list[dict], status: 
 def apply_split_bill_decision_to_mixed_index(mixed_items: list[dict], item_index: int, status: str) -> tuple[list[dict], int | None, str]:
     """Terapkan paid/unpaid ke index split bill tertentu.
 
-    Return: (mixed_items, decided_index, result_status)
+    Output: (mixed_items, decided_index, result_status)
     result_status:
     - applied: keputusan baru berhasil diterapkan
-    - already_decided: callback duplicate/stale untuk item yang sudah diputuskan
+    - already_decided: callback duplikat/lama untuk item yang sudah diputuskan
     - invalid: index tidak valid atau item bukan split bill
     """
     if item_index is None or item_index < 0 or item_index >= len(mixed_items or []):
@@ -1981,6 +1981,9 @@ def apply_split_bill_decision_to_mixed_index(mixed_items: list[dict], item_index
     mixed_items[item_index] = item
     return mixed_items, item_index, "applied"
 
+
+# Bagian ini menentukan efek split bill sebelum transaksi disimpan.
+# paid berarti teman sudah bayar, unpaid berarti user menalangi dan perlu dibuatkan piutang.
 
 def apply_split_bill_decision_to_parsed(parsed: dict, status: str) -> dict:
     """
@@ -2079,7 +2082,7 @@ def create_split_bill_debt(parsed: dict, raw: str = "", source_transaction_id: s
 
 
 def format_split_debt_result_lines(debt_result: dict) -> list[str]:
-    """Format hasil create_split_bill_debt untuk output Telegram."""
+    """Formatkan hasil create_split_bill_debt untuk output Telegram."""
     lines = []
     for item in (debt_result or {}).get("created", []) or []:
         lines.append(
@@ -2153,7 +2156,7 @@ def _fronting_expense_description(debt_parsed: dict) -> str:
 
 
 def _fronting_expense_category(debt_parsed: dict) -> str:
-    """Infer kategori expense untuk ditalangin dari raw input bila memungkinkan."""
+    """Tebak kategori expense untuk ditalangin dari raw input jika memungkinkan."""
     raw = str(debt_parsed.get("raw_input") or "").strip()
     if raw:
         try:
@@ -2467,7 +2470,7 @@ def build_debt_cashflow_transaction(
 
 
 def debt_uses_cashflow(debt_parsed: dict) -> bool:
-    """Return True kalau aktivitas debt perlu dicatat juga sebagai cashflow."""
+    """Kembalikan True kalau aktivitas debt perlu dicatat juga sebagai cashflow."""
     return str(debt_parsed.get("cashflow_mode") or "cashflow") != "debt_only"
 
 

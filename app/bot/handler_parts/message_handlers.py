@@ -1,4 +1,4 @@
-# Split from app/bot/handlers.py for readability.
+# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
@@ -93,7 +93,7 @@ async def send_parse_clarification(update: Update, context: ContextTypes.DEFAULT
 
 
 def try_gemini_draft_for_parse_safety(raw: str, fallback_parsed: dict, assessment: dict) -> tuple[dict, dict, bool]:
-    """Ambil draft Gemini untuk non-sensitive review. Kalau gagal, tetap pakai regex + warning."""
+    """Ambil draft Gemini untuk review non-sensitif. Kalau gagal, tetap pakai regex + warning."""
     if str((fallback_parsed or {}).get("parsed_by") or "").strip().lower() == "gemini":
         draft_assessment = dict(assessment or {})
         reasons = list(draft_assessment.get("reasons") or [])
@@ -125,7 +125,7 @@ def try_gemini_draft_for_parse_safety(raw: str, fallback_parsed: dict, assessmen
 
 async def debt_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Handle input debt dari pesan bebas.
+    Tangani input debt dari pesan bebas.
 
     Debt tidak langsung diproses.
     Bot akan tanya rekening dulu supaya aktivitas debt juga masuk transactions
@@ -194,11 +194,11 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
     """
     Jalankan hasil Gemini intent router.
 
-    Return:
-    - True jika sudah di-handle
-    - False jika harus lanjut fallback biasa
+    Output:
+    - True jika sudah ditangani
+    - False jika perlu lanjut ke fallback biasa
 
-    Safety:
+    Keamanan:
     - delete/edit tetap preview dan butuh tombol Simpan.
     - confidence rendah tidak dieksekusi.
     """
@@ -364,7 +364,7 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
         return True
 
-    # ── Destructive intents: preview only ─────────────────────────────────────
+    # ── Intent destruktif: hanya preview ─────────────────────────────────────
 
     if intent == "delete_txn":
         ref = str(args.get("ref") or "").strip()
@@ -445,7 +445,7 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
             return True
 
         # Fitur ini butuh preview_edit_transaction_by_ref.
-        # Kalau kamu belum pasang Phase edit_txn, bagian ini akan error saat import.
+        # Kalau phase edit_txn belum terpasang, bagian ini akan error saat import.
         resolved = resolve_txn_refs_from_last(context, [ref])
 
         if resolved.get("invalid_refs") and not resolved["row_indices"] and not resolved["txn_ids"]:
@@ -507,7 +507,7 @@ def normalize_text_command(text: str) -> str:
 
 async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
     """
-    Handle natural command sederhana secara lokal tanpa Gemini.
+    Tangani natural command sederhana secara lokal tanpa Gemini.
 
     Tujuan:
     - "cek saldo" jangan perlu Gemini
@@ -515,7 +515,7 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
     - "cari kopi" langsung jadi pencarian
     - "lihat transaksi hari ini" langsung jadi /last today
 
-    Return True kalau sudah di-handle.
+    Kembalikan True kalau input sudah ditangani.
     """
     clean = normalize_text_command(user_text)
 
@@ -790,13 +790,13 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
 
 async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Handle foto struk/nota/screenshot transaksi.
+    Tangani foto struk/nota/screenshot transaksi.
 
-    Flow:
-    - User kirim gambar.
-    - Bot download gambar dari Telegram.
-    - Gemini membaca gambar dan mengembalikan transaksi.
-    - Hasil masuk ke flow preview + pilih rekening yang sama seperti input teks.
+    Alur:
+    - User mengirim gambar.
+    - Bot mengunduh gambar dari Telegram.
+    - Gemini membaca gambar dan mengembalikan data transaksi.
+    - Hasil masuk ke alur preview + pilih rekening yang sama seperti input teks.
     """
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -933,6 +933,9 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Message Handler ──────────────────────────────────────────────────────────
 
+# Handler utama untuk pesan teks natural.
+# Flow-nya dibuat berlapis: command natural, pending, debt, parse safety, transaksi, lalu fallback intent.
+
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -1018,7 +1021,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # - perlu 750k buat bayar wisuda
     # - bakal service motor 300k tanggal 30
     #
-    # Ditaruh sebelum debt/parser transaksi supaya input berkeyword future/planning
+    # Ditaruh sebelum debt/parser transaksi supaya input berkeyword masa depan/rencana
     # tidak tercatat sebagai transaksi aktual. Guard-nya ada di is_pending_expense_text().
     if is_pending_expense_text(user_text):
         try:
@@ -1049,7 +1052,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if selected_debt_settle_handled:
         return
 
-    # ── RAG/Gemini finance question read-only ───────────────────────────────
+    # ── Pertanyaan finance RAG/Gemini read-only ───────────────────────────────
     # Ditaruh sebelum parser transaksi, tapi hanya aktif untuk pertanyaan tanpa nominal.
     finance_question_handled = await handle_natural_finance_question(
         update,
@@ -1060,7 +1063,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if finance_question_handled:
         return
 
-    # ── Parse Safety Routing: clarification yang harus ditangkap sebelum parser debt/transaction.
+    # ── Parse Safety Routing: klarifikasi yang harus ditangkap sebelum parser debt/transaction.
     # Contoh: "Budi bayar makan 100k", "saldo BRI 500k", "uang Budi 50k".
     pre_parse_assessment = assess_parse_safety(user_text, {})
     if pre_parse_assessment.get("recommended_action") == CLARIFICATION:
@@ -1079,7 +1082,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if debt_handled:
                 return
 
-    # Multi / mixed input
+    # Input multi / campuran
     if len(input_lines) > 1:
         mixed_items = []
         failed_lines = []
@@ -1189,7 +1192,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if parsed.get("type") == "pending":
         # Layer 3.5: local natural intent shortcut.
-        # Ini handle kasus sederhana tanpa Gemini:
+        # Ini menangani kasus sederhana tanpa Gemini:
         # - cek saldo
         # - cek hutang
         # - lihat budget bulan ini
@@ -1204,8 +1207,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if local_natural_handled:
             return
 
-        # Layer 4: Gemini intent router.
-        # Dipakai untuk natural command yang lebih fleksibel:
+        # Layer 4: router intent Gemini.
+        # Dipakai untuk command natural yang lebih fleksibel:
         # - hapus transaksi nomor 2
         # - edit transaksi nomor 2 deskripsinya Kopi susu
         gemini_handled = await handle_gemini_intent(update, context, user_text)
@@ -1404,7 +1407,7 @@ def _build_transaksi_prefixed_period_arg(first: str, rest: str, mode: str) -> st
 
 
 def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str | None]:
-    """Parse command /transaksi untuk full list hari/minggu/bulan/rekening tertentu."""
+    """Parsing command /transaksi untuk daftar lengkap hari/minggu/bulan/rekening tertentu."""
     raw = " ".join(args or []).strip()
     low = raw.lower()
 
@@ -1712,7 +1715,7 @@ async def delete_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 def parse_edit_updates(args: list[str]) -> dict:
     """
-    Parse argumen edit.
+    Parsing argumen edit.
 
     Format utama:
     amount=15000
@@ -1754,7 +1757,7 @@ def parse_edit_updates(args: list[str]) -> dict:
         if low in split_words or low.replace("-", "") in {"dibagi"}:
             break
 
-        # Support: amount = 500k
+        # Mendukung: amount = 500k
         if i + 2 < len(args) and args[i + 1] == "=":
             key = arg
             value = str(args[i + 2]).strip()
@@ -1762,7 +1765,7 @@ def parse_edit_updates(args: list[str]) -> dict:
             i += 3
             continue
 
-        # Support: amount=500k dan amount= 500k
+        # Mendukung: amount=500k dan amount= 500k
         if "=" in arg:
             key, value = arg.split("=", 1)
             key = key.strip()
@@ -1801,7 +1804,7 @@ def _normalize_edit_arg_token(token: str) -> str:
 
 
 def parse_edit_debt_payment_conversion_args(args: list[str]) -> dict | None:
-    """Parse /edit_txn untuk mengubah transaksi biasa menjadi pembayaran debt.
+    """Parsing /edit_txn untuk mengubah transaksi biasa menjadi pembayaran debt.
 
     Format yang didukung:
     - /edit_txn 2 bayar_hutang Sapto

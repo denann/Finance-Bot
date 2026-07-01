@@ -31,7 +31,7 @@ def format_rupiah(amount: float) -> str:
 
 
 def safe_float(value, default: float = 0.0) -> float:
-    """Parse amount dari number/string Google Sheets secara aman."""
+    """Parsing amount dari angka/string Google Sheets secara aman."""
     if value is None or value == "":
         return default
 
@@ -111,7 +111,7 @@ def get_known_report_accounts(records: list[dict] | None = None) -> list[str]:
 
 
 def resolve_account_filter(account_query: str | None, records: list[dict] | None = None) -> str | None:
-    """Resolve input rekening user ke nama rekening canonical jika memungkinkan."""
+    """Cocokkan input rekening user ke nama rekening canonical jika memungkinkan."""
     query = str(account_query or "").strip()
     if not query:
         return None
@@ -202,7 +202,7 @@ def split_account_period_arg(value: str | None) -> tuple[str | None, str]:
     """
     Parse argumen /rekening.
 
-    Return: (account_arg, period_arg) dengan period_arg default `month`.
+    Output: (account_arg, period_arg) dengan period_arg default `month`.
     Contoh:
     - `Cash` -> ("Cash", "month")
     - `Cash 2026-06` -> ("Cash", "2026-06")
@@ -305,7 +305,7 @@ def get_known_report_categories(records: list[dict] | None = None) -> list[str]:
 
 
 def resolve_category_filter(category_query: str | None, records: list[dict] | None = None) -> str | None:
-    """Resolve input kategori user ke nama kategori canonical jika memungkinkan."""
+    """Cocokkan input kategori user ke nama kategori canonical jika memungkinkan."""
     query = str(category_query or "").strip()
     if not query:
         return None
@@ -324,7 +324,7 @@ def resolve_category_filter(category_query: str | None, records: list[dict] | No
     if query_key in category_by_key:
         return category_by_key[query_key]
 
-    # Support input pendek seperti `/bulanan food` atau `/bulanan bills`.
+    # Dukung input pendek seperti `/bulanan food` atau `/bulanan bills`.
     partial_matches = [
         cat for cat in categories
         if query_key in normalize_category_key(cat) or normalize_category_key(cat) in query_key
@@ -630,9 +630,9 @@ def build_category_comparison(current: dict, previous: dict, previous_available:
 
 def parse_report_date_arg(value: str | None = None) -> str:
     """
-    Normalize argumen tanggal laporan ke YYYY-MM-DD.
+    Normalisasi argumen tanggal laporan ke YYYY-MM-DD.
 
-    Support:
+    Mendukung:
     - None / kosong -> hari ini
     - today / hariini / hari ini
     - yesterday / kemarin
@@ -680,7 +680,7 @@ def parse_report_date_arg(value: str | None = None) -> str:
 
 
 def parse_report_month_arg(value: str | None = None) -> tuple[int, int]:
-    """Normalize argumen bulan laporan ke (year, month)."""
+    """Normalisasi argumen bulan laporan ke tuple (year, month)."""
     today = datetime.now().date()
 
     if not value:
@@ -727,7 +727,7 @@ def parse_report_month_arg(value: str | None = None) -> tuple[int, int]:
 
 
 def get_week_range(reference_date: str | None = None) -> tuple[str, str]:
-    """Return (monday, sunday) minggu dari reference_date dalam format YYYY-MM-DD."""
+    """Kembalikan (senin, minggu) dari reference_date dalam format YYYY-MM-DD."""
     base_date = datetime.strptime(parse_report_date_arg(reference_date), "%Y-%m-%d").date()
     monday = base_date - timedelta(days=base_date.weekday())
     sunday = monday + timedelta(days=6)
@@ -735,7 +735,7 @@ def get_week_range(reference_date: str | None = None) -> tuple[str, str]:
 
 
 def get_month_range(year: int | None = None, month: int | None = None) -> tuple[str, str]:
-    """Return (first_day, last_day) bulan dalam format YYYY-MM-DD."""
+    """Kembalikan (first_day, last_day) bulan dalam format YYYY-MM-DD."""
     now = datetime.now()
     year = int(year or now.year)
     month = int(month or now.month)
@@ -1050,7 +1050,7 @@ def get_account_report(account: str, period_arg: str | None = "month") -> dict:
 def search_transactions(keyword: str, limit: int = 10) -> list[dict]:
     """
     Cari transaksi berdasarkan keyword di kolom description, subject, category, atau raw_input.
-    Return max `limit` hasil terbaru.
+    Kembalikan maksimal `limit` hasil terbaru.
     """
     keyword_lower = str(keyword or "").strip().lower()
     if not keyword_lower:

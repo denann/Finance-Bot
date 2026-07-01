@@ -13,7 +13,7 @@ from app.config import SHEET_DEBTS, SHEET_DEBT_PAYMENTS
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def parse_sheet_number(value, default: float = 0.0) -> float:
-    """Parse angka dari Google Sheets dengan aman.
+    """Parsing angka dari Google Sheets dengan aman.
 
     Mendukung:
     - 71387.5  (UNFORMATTED_VALUE)
@@ -53,7 +53,7 @@ def parse_sheet_number(value, default: float = 0.0) -> float:
 
 
 def format_rupiah(amount: float) -> str:
-    """Format rupiah tanpa menghilangkan pecahan split bill."""
+    """Formatkan rupiah tanpa menghilangkan pecahan split bill."""
     value = float(amount or 0)
     if abs(value - round(value)) < 1e-9:
         return f"Rp{int(round(value)):,}".replace(",", ".")
@@ -117,7 +117,7 @@ def is_settled_value(value) -> bool:
 def get_debt_row_by_id(debt_id: str) -> tuple[int | None, dict | None]:
     """
     Cari debt berdasarkan ID.
-    Return: (row_index_sheet, record)
+    Output: (row_index_sheet, record)
     row_index_sheet = index 1-based di Google Sheets, termasuk header.
     """
     records = get_all_records(SHEET_DEBTS)
@@ -280,7 +280,7 @@ def add_debt(
             "action": "error",
         }
 
-    # Legacy netting code di bawah dibiarkan sebagai referensi fallback,
+    # Kode netting lama di bawah dibiarkan sebagai referensi fallback,
     # tetapi tidak dieksekusi karena desain debt sekarang granular.
 
     existing_row, existing = get_active_debt_exact_person(person_name)
@@ -450,7 +450,7 @@ def get_active_debts(debt_type: str = None) -> list[dict]:
 def get_debt_by_person(person_name: str) -> list[dict]:
     """
     Cari utang/piutang aktif berdasarkan nama orang.
-    Return sudah membawa _row_index supaya pembayaran FIFO bisa stabil.
+    Hasil pencarian sudah membawa _row_index supaya pembayaran FIFO bisa stabil.
     """
     target = normalize_person_name(person_name)
     result = []
@@ -841,7 +841,7 @@ def estimate_payment_outcome(person_name: str, amount: float, target_debt_type: 
 
 
 def format_debt_net_position_lines(person_name: str, remaining_payable: float, remaining_receivable: float) -> list[str]:
-    """Format posisi akhir hutang-piutang global per orang."""
+    """Formatkan posisi akhir hutang-piutang global per orang."""
     net = float(remaining_receivable or 0) - float(remaining_payable or 0)
     lines = [
         f"📊 Sisa piutang: {format_rupiah(remaining_receivable)}",
@@ -1270,7 +1270,7 @@ def get_debt_person_detail(person_name: str, include_settled: bool = True) -> di
         person_key = normalize_debt_person_group_name(person_raw)
         if not person_key:
             continue
-        # Exact by grouped person first; fuzzy fallback keeps old behavior for data lama.
+        # Cocokkan exact berdasarkan grouped person dulu; fuzzy fallback menjaga data lama tetap terbaca.
         if target != person_key and raw_target not in person_raw and person_raw not in raw_target:
             continue
         if is_voided_debt(debt):
@@ -1529,7 +1529,7 @@ def settle_selected_debt_ids(
 # ── Debt Payment Reversal / Delete Payment Transaction ────────────────────────
 
 def parse_debt_allocation_note(note: str) -> list[dict]:
-    """Parse catatan transaksi: debt_allocations=debt_id:amount;debt_id:amount."""
+    """Parsing catatan transaksi: debt_allocations=debt_id:amount;debt_id:amount."""
     raw = str(note or "")
     m = re.search(r"debt_allocations=([^|]+)", raw)
     if not m:
@@ -1716,9 +1716,9 @@ def build_active_debt_display_map() -> dict[str, dict]:
 
 def resolve_debt_ref(ref: str, last_debt_map: dict | None = None) -> tuple[int | None, dict | None, str | None]:
     """
-    Resolve argumen /debt_void.
+    Cocokkan argumen /debt_void.
 
-    Support:
+    Mendukung:
     - /debt_void 1        -> nomor dari /hutang terakhir
     - /debt_void debt_xxx -> debt ID langsung
     """
@@ -2068,7 +2068,7 @@ def sync_debt_charges_from_transaction_edit(old_txn: dict, new_txn: dict) -> dic
     if not linked_debts:
         return {"success": True, "message": "Tidak ada debt charge terkait.", "updated": [], "overpaid": []}
 
-    # Jangan sync transaksi pembayaran debt. Payment event harus diedit lewat flow
+    # Jangan sync transaksi pembayaran debt. Event pembayaran harus diedit lewat flow
     # pembayaran khusus agar alokasi payment tidak tertukar dengan charge.
     old_category = str(old_txn.get("category", "") or "").strip()
     new_category = str(new_txn.get("category", "") or "").strip()
@@ -2379,9 +2379,9 @@ def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
 
 def resolve_person_debt_targets(person_name: str, detail_ref: str | None = None) -> dict:
     """
-    Resolve target debt dari nama orang.
+    Cocokkan target debt dari nama orang.
 
-    Support:
+    Mendukung:
     - /debt_void Maya      -> semua rincian aktif Maya
     - /debt_void Maya 1    -> rincian nomor 1 dari /hutang Maya
 

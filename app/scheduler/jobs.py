@@ -1,3 +1,5 @@
+"""Definisi job APScheduler untuk recurring transaction, reminder, export, dan summary otomatis."""
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime

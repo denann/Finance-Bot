@@ -38,6 +38,9 @@ _schema_checked_sheets = set()
 _current_transaction = contextvars.ContextVar("sheets_current_transaction", default=None)
 
 
+# Definisi schema pusat untuk semua tab Google Sheets.
+# Saat startup, schema ini dipakai untuk membuat tab/header jika spreadsheet masih kosong.
+
 SHEET_SCHEMAS = {
     SHEET_TRANSACTIONS: [
         "id",
@@ -238,8 +241,11 @@ class SheetsAtomicWriteError(RuntimeError):
         super().__init__(message)
 
 
+# Google Sheets tidak punya transaksi atomic seperti database.
+# Class ini menyimpan snapshot sebelum write agar rollback tetap bisa dicoba kalau ada kegagalan.
+
 class SheetsTransaction:
-    """Best-effort transaction wrapper untuk operasi Google Sheets.
+    """Pembungkus transaksi best-effort untuk operasi Google Sheets.
 
     Google Sheets bukan database transactional. Karena itu atomicity dibuat
     dengan strategi kompensasi:
@@ -679,7 +685,7 @@ def get_all_values(sheet_name: str) -> list[list]:
 
 
 def update_cell(sheet_name: str, row: int, col: int, value):
-    """Update satu cell berdasarkan posisi row & col (1-indexed)."""
+    """Perbarui satu cell berdasarkan posisi row & col (1-indexed)."""
     sheet = get_sheet(sheet_name)
     tx = _current_transaction.get()
 
@@ -703,8 +709,8 @@ def update_cell(sheet_name: str, row: int, col: int, value):
 def find_row_index(sheet_name: str, search_col: int, search_value: str) -> int | None:
     """
     Cari index baris berdasarkan nilai di kolom tertentu.
-    Return None jika tidak ditemukan.
-    Row index 1-indexed (baris 1 = header).
+    Kembalikan None jika tidak ditemukan.
+    Row index memakai format 1-indexed (baris 1 = header).
     """
     sheet = get_sheet(sheet_name)
     col_values = _execute_read(lambda: sheet.col_values(search_col))
@@ -719,7 +725,7 @@ def find_row_index(sheet_name: str, search_col: int, search_value: str) -> int |
 def delete_row(sheet_name: str, row_index: int):
     """
     Hapus satu baris dari worksheet.
-    row_index 1-indexed.
+    row_index memakai format 1-indexed.
     """
     delete_rows(sheet_name, [row_index])
 
@@ -757,8 +763,8 @@ def delete_rows(sheet_name: str, row_indices: list[int]):
 
 def update_row(sheet_name: str, row_index: int, row_values: list):
     """
-    Update satu baris penuh di worksheet.
-    row_index 1-indexed.
+    Perbarui satu baris penuh di worksheet.
+    row_index memakai format 1-indexed.
     """
     sheet = get_sheet(sheet_name)
     tx = _current_transaction.get()
@@ -785,7 +791,7 @@ def update_row(sheet_name: str, row_index: int, row_values: list):
 
 
 def update_range(sheet_name: str, cell_range: str, values: list[list]):
-    """Update range worksheet dengan snapshot rollback."""
+    """Perbarui range worksheet dengan snapshot rollback."""
     sheet = get_sheet(sheet_name)
     tx = _current_transaction.get()
 
