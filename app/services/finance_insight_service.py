@@ -88,15 +88,47 @@ CATEGORY_HINTS = {
 
 
 def safe_float(value, default: float = 0.0) -> float:
+    """Parse angka rupiah dari Google Sheets tanpa mengalikan numeric float.
+
+    Bug lama: nilai numeric dari Sheets seperti 427500.0 diubah menjadi
+    4275000 karena titik desimal dianggap pemisah ribuan dan dihapus.
+    """
+    if value is None or value == "":
+        return default
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    raw = str(value).strip()
+    if not raw:
+        return default
+
+    raw = raw.replace("Rp", "").replace("rp", "").replace("IDR", "").replace("idr", "")
+    raw = raw.replace(" ", "")
+
+    if "," in raw and "." in raw:
+        # Format Indonesia: 427.500,5
+        raw = raw.replace(".", "").replace(",", ".")
+    elif "," in raw:
+        parts = raw.split(",")
+        # 427500,5 atau 427500,50 = desimal; 427,500 = ribuan.
+        if len(parts) == 2 and len(parts[-1]) in {1, 2}:
+            raw = raw.replace(",", ".")
+        else:
+            raw = raw.replace(",", "")
+    elif "." in raw:
+        parts = raw.split(".")
+        # 427.500 atau 1.427.500 = ribuan.
+        # 427500.0 dari numeric float string tetap desimal, jangan hapus titik.
+        if len(parts) > 1 and all(len(part) == 3 for part in parts[1:]):
+            raw = raw.replace(".", "")
+
+    raw = re.sub(r"[^0-9.-]", "", raw)
+
     try:
-        if value is None or value == "":
-            return default
-        return float(str(value).replace("Rp", "").replace(".", "").replace(",", "."))
+        return float(raw)
     except Exception:
-        try:
-            return float(value or 0)
-        except Exception:
-            return default
+        return default
 
 
 def format_rupiah(amount: float) -> str:
@@ -294,7 +326,7 @@ def summarize_transactions(records: list[dict]) -> dict:
 
     def sorted_items(d: dict) -> list[dict]:
         return [
-            {"name": k, "amount": v}
+            {"name": k, "amount": v, "amount_display": format_rupiah(v)}
             for k, v in sorted(d.items(), key=lambda x: x[1], reverse=True)
             if abs(v) > 0.0001
         ]
@@ -303,9 +335,13 @@ def summarize_transactions(records: list[dict]) -> dict:
         "count": len(records),
         "amount_basis": "expense_amount_is_net_after_receivable",
         "total_income": total_income,
+        "total_income_display": format_rupiah(total_income),
         "total_expense": total_expense,
+        "total_expense_display": format_rupiah(total_expense),
         "total_transfer": total_transfer,
+        "total_transfer_display": format_rupiah(total_transfer),
         "net": total_income - total_expense,
+        "net_display": format_rupiah(total_income - total_expense),
         "expense_by_category": sorted_items(expense_by_category),
         "income_by_category": sorted_items(income_by_category),
         "expense_by_account": sorted_items(expense_by_account),
@@ -332,6 +368,7 @@ def compact_transaction(r: dict) -> dict:
         "date": r.get("date", ""),
         "type": r.get("type", ""),
         "amount": amount,
+        "amount_display": format_rupiah(amount),
         "category": r.get("category", ""),
         "account": r.get("account", ""),
         "to_account": r.get("to_account", ""),
@@ -387,8 +424,11 @@ def get_budget_status(month: str, transactions: list[dict]) -> list[dict]:
         result.append({
             "category": category,
             "budget": budget_amount,
+            "budget_display": format_rupiah(budget_amount),
             "actual": actual,
+            "actual_display": format_rupiah(actual),
             "remaining": remaining,
+            "remaining_display": format_rupiah(remaining),
             "usage_pct": round(pct, 1),
             "status": "over" if remaining < 0 else "warning" if pct >= 80 else "ok",
         })
@@ -406,10 +446,11 @@ def get_accounts_summary() -> dict:
         accounts.append({
             "name": acc.get("account_name") or acc.get("name") or "-",
             "balance": balance,
+            "balance_display": format_rupiah(balance),
             "type": acc.get("type", ""),
         })
     accounts.sort(key=lambda x: x["balance"], reverse=True)
-    return {"total": total, "accounts": accounts}
+    return {"total": total, "total_display": format_rupiah(total), "accounts": accounts}
 
 
 def get_debt_summary_compact() -> dict:
@@ -431,13 +472,16 @@ def get_debt_summary_compact() -> dict:
             "person": d.get("person") or d.get("person_name") or d.get("subject") or "-",
             "type": debt_type,
             "remaining_amount": remaining,
+            "remaining_amount_display": format_rupiah(remaining),
             "description": d.get("description", ""),
             "id": d.get("id", ""),
         })
     active.sort(key=lambda x: x["remaining_amount"], reverse=True)
     return {
         "total_payable": totals.get("payable", 0.0),
+        "total_payable_display": format_rupiah(totals.get("payable", 0.0)),
         "total_receivable": totals.get("receivable", 0.0),
+        "total_receivable_display": format_rupiah(totals.get("receivable", 0.0)),
         "active_count": len(active),
         "top_active": active[:8],
     }
@@ -458,18 +502,24 @@ def get_net_worth_compact() -> dict:
         active_assets.append({
             "name": a.get("name", "-"),
             "value": value,
+            "value_display": format_rupiah(value),
             "category": a.get("category", ""),
             "quantity": a.get("quantity", ""),
             "unit": a.get("unit", ""),
             "price_per_unit": safe_float(a.get("price_per_unit")),
+            "price_per_unit_display": format_rupiah(safe_float(a.get("price_per_unit"))),
         })
 
     accounts = get_accounts_summary()
     return {
         "total_accounts": accounts["total"],
+        "total_accounts_display": format_rupiah(accounts["total"]),
         "total_assets": total_assets,
+        "total_assets_display": format_rupiah(total_assets),
         "total_liabilities": 0.0,
+        "total_liabilities_display": format_rupiah(0),
         "net_worth": accounts["total"] + total_assets,
+        "net_worth_display": format_rupiah(accounts["total"] + total_assets),
         "top_assets": sorted(active_assets, key=lambda x: x["value"], reverse=True)[:8],
         "top_liabilities": [],
         "note": "Liabilities sudah dihapus dari fitur net worth; kewajiban antar orang dikelola via /hutang.",
@@ -495,6 +545,7 @@ def detect_anomalies(records: list[dict], month_summary: dict | None = None) -> 
                     "message": "Nominal pengeluaran net jauh lebih besar dari transaksi biasa.",
                     "transaction": compact_transaction(r),
                     "threshold": threshold,
+                    "threshold_display": format_rupiah(threshold),
                     "amount_basis": "net_after_receivable",
                 })
 
@@ -531,6 +582,7 @@ def detect_anomalies(records: list[dict], month_summary: dict | None = None) -> 
                     "message": f"Kategori {item.get('name')} menyumbang {pct:.1f}% dari pengeluaran.",
                     "category": item.get("name"),
                     "amount": amount,
+                    "amount_display": format_rupiah(amount),
                     "contribution_pct": round(pct, 1),
                 })
 
@@ -586,7 +638,15 @@ def compare_summaries(current: dict, previous: dict) -> dict:
         prev = float(previous.get(key, 0) or 0)
         delta = cur - prev
         pct = (delta / prev * 100) if prev else None
-        return {"current": cur, "previous": prev, "delta": delta, "delta_pct": round(pct, 1) if pct is not None else None}
+        return {
+            "current": cur,
+            "current_display": format_rupiah(cur),
+            "previous": prev,
+            "previous_display": format_rupiah(prev),
+            "delta": delta,
+            "delta_display": format_rupiah(delta),
+            "delta_pct": round(pct, 1) if pct is not None else None,
+        }
 
     return {
         "income": diff("total_income"),

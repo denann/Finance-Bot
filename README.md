@@ -1,678 +1,736 @@
-# Finance Bot
+# Denan Finance Bot
 
-Telegram Personal Finance Bot untuk mencatat, mengelola, dan menganalisis keuangan pribadi menggunakan natural language, Google Sheets, dan Gemini.
+Denan Finance Bot adalah Telegram personal finance assistant untuk mencatat, mengelola, dan menganalisis keuangan pribadi langsung dari chat.
 
-Bot ini dirancang sebagai personal finance assistant: user cukup mengetik transaksi seperti `beli kopi 25k`, `gaji masuk 8 juta`, `Tissue 10k bagi 4 sama budi, andi, toni`, atau mengirim gambar struk. Bot akan mem-parse input, meminta konfirmasi, menyimpan data ke Google Sheets, memperbarui saldo, dan menyediakan laporan serta insight keuangan.
+Project ini dibuat untuk menyelesaikan masalah pencatatan keuangan harian yang sering terasa ribet, tidak konsisten, dan mudah terlupakan. Alih-alih membuka spreadsheet manual setiap kali ada transaksi, user cukup mengetik input natural seperti `beli kopi 25k`, `topup gopay 100k dari bsi`, atau `ditalangin Budi bayar makan 100k`.
 
----
+Bot akan membaca input tersebut, mem-parse tanggal, nominal, rekening, kategori, utang/piutang, split bill, hingga transaksi berulang, lalu menyimpannya ke Google Sheets. Selain pencatatan, bot juga menyediakan ringkasan keuangan, budgeting, net worth tracking, export data, dan AI finance insight menggunakan Gemini.
+
+## Outline
+
+- [Features](#features)
+- [Tech Stack](#tech-stack)
+- [System Architecture](#system-architecture)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Project Structure](#project-structure)
+- [Limitations](#limitations)
+- [Author](#author)
+
+## Features
+
+<table style="border-collapse: collapse; width: 100%; border: none;">
+  <thead>
+    <tr>
+      <th align="left" style="border: none; border-bottom: 2px solid #d0d7de; padding: 8px 12px;">Group</th>
+      <th align="left" style="border: none; border-bottom: 2px solid #d0d7de; padding: 8px 12px;">Feature</th>
+      <th align="left" style="border: none; border-bottom: 2px solid #d0d7de; padding: 8px 12px;">Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td rowspan="7" align="center" valign="middle" style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Input</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Single Input</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Mencatat satu transaksi dari pesan natural language.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Multiple Input</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Mencatat beberapa transaksi sekaligus dalam satu pesan.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Parser Tanggal, Nominal, Rekening, dan Kategori</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Membaca tanggal relatif, nominal seperti <code>25k</code>/<code>1.5 juta</code>, rekening, dan kategori transaksi.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Utang, Piutang, Talangin, dan Ditalangin</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Mendukung pencatatan utang/piutang personal, termasuk transaksi yang ditalangin atau menalangi orang lain.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Split Bill</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Membagi transaksi ke beberapa orang dan otomatis membuat piutang terkait.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Pending Expense</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menyimpan transaksi yang belum lengkap untuk dilengkapi kemudian.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Input Gambar</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Membaca struk atau gambar transaksi menggunakan Gemini Vision.</td>
+    </tr>
+    <tr>
+      <td rowspan="2" align="center" valign="middle" style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Manajemen</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Debt Void, Debt Edit, Debt Settle</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Mengelola status utang/piutang, membatalkan debt, mengubah data debt, dan menyelesaikan pembayaran.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Delete Txn dan Edit Txn</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menghapus atau mengedit transaksi yang sudah tersimpan.</td>
+    </tr>
+    <tr>
+      <td rowspan="6" align="center" valign="middle" style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Ringkasan</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Saldo</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menampilkan saldo seluruh rekening.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Rekening</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menampilkan transaksi lengkap dan saldo untuk rekening tertentu.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Harian, Mingguan, Bulanan</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menampilkan laporan transaksi berdasarkan periode.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Cari</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Mencari transaksi berdasarkan keyword.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Last dan Transaksi</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Melihat transaksi terakhir atau daftar transaksi lengkap.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Ringkasan Hutang</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menampilkan total utang dan piutang aktif.</td>
+    </tr>
+    <tr>
+      <td rowspan="2" align="center" valign="middle" style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Budgeting</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Add Budget</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menambahkan budget bulanan per kategori.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Budget History</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Melihat histori budget dan realisasi pengeluaran.</td>
+    </tr>
+    <tr>
+      <td align="center" valign="middle" style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Recurring Transaction</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Recurring Transaction</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Mencatat transaksi berulang seperti wifi, token, langganan, atau iuran.</td>
+    </tr>
+    <tr>
+      <td align="center" valign="middle" style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Export Data</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Export Data</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Export data transaksi untuk backup atau analisis lanjutan.</td>
+    </tr>
+    <tr>
+      <td align="center" valign="middle" style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Net Worth dan Aset</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Net Worth dan Aset</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Melacak aset aktif dan menghitung net worth berdasarkan saldo rekening dan aset.</td>
+    </tr>
+    <tr>
+      <td rowspan="4" align="center" valign="middle" style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Gemini RAG Finance Insight</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Coach</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Memberikan saran keuangan personal berdasarkan data transaksi.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Audit</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Mengecek data quality, anomali, dan potensi kesalahan input.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Ask</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menjawab pertanyaan natural seperti “bulan ini boros di mana?”.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Insight</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Memberikan insight pola pengeluaran dan prioritas perbaikan.</td>
+    </tr>
+    <tr>
+      <td rowspan="2" align="center" valign="middle" style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Supporting</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Typo Handling</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Membantu menangani typo pada command atau input transaksi.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Scheduler</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menjalankan job otomatis seperti recurring transaction dan export terjadwal.</td>
+    </tr>
+  </tbody>
+</table>
+
+Contoh penggunaan bot tersedia di bagian [Usage](#usage).
 
 ## Tech Stack
 
-- **Telegram Bot**: `python-telegram-bot`
-- **Backend/Webhook**: FastAPI
-- **Database**: Google Sheets
-- **AI/NLP**: Gemini via LangChain untuk fallback parser, image receipt parser, dan finance insight
-- **Deployment**: Wispbyte
-- **Version Control**: GitHub
+- Python
+- Telegram Bot API
+- FastAPI
+- Google Sheets API
+- Gemini API
+- LangChain
+- APScheduler
+- gspread
+- python-telegram-bot
+- Google Service Account
+- Wispbyte / Webhook Deployment
+- Git & GitHub
 
----
+## System Architecture
 
-## Main Features
+<p align="center">
+  <img src="assets/workflow-ai-finance-assistant.png" alt="Workflow AI Finance Assistant" width="900">
+</p>
 
-### 1. Transaction Tracking
+Sistem ini memiliki dua alur utama. Pertama, **alur pencatatan transaksi**, yaitu input dari Telegram diproses oleh parser, divalidasi melalui preview, lalu disimpan ke Google Sheets sebagai data layer utama. Kedua, **alur AI insight**, yaitu user dapat bertanya melalui `/ask`, `/audit`, `/coach`, atau `/insight`, lalu backend mengambil konteks data yang relevan sebelum Gemini membantu menyusun penjelasan.
 
-Mendukung pencatatan transaksi:
+Prinsip utama dari arsitektur ini adalah AI tidak langsung mengambil keputusan finansial sendiri. Business logic tetap dikontrol oleh backend, sedangkan Gemini digunakan untuk membantu memahami input, membaca gambar, dan menjelaskan insight berdasarkan data yang sudah tersedia.
 
-- `expense`
-- `income`
-- `transfer`
+## Installation
 
-Contoh input:
+### 1. Clone Repository
+
+```bash
+git clone https://github.com/username/denan-finance-bot.git
+cd denan-finance-bot
+```
+
+Ganti `username` dengan username GitHub kamu.
+
+### 2. Create Virtual Environment
+
+```bash
+python -m venv .venv
+```
+
+Aktifkan virtual environment.
+
+Windows:
+
+```bash
+.venv\Scripts\activate
+```
+
+Mac/Linux:
+
+```bash
+source .venv/bin/activate
+```
+
+### 3. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Create `.env` File
+
+Copy file `.env.example` menjadi `.env`.
+
+```bash
+cp .env.example .env
+```
+
+Jika menggunakan Windows Command Prompt:
+
+```cmd
+copy .env.example .env
+```
+
+Lalu buka file `.env` dan isi semua konfigurasi berikut.
+
+```env
+# Telegram
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_WEBHOOK_SECRET=your_random_secret_here
+ALLOWED_USER_ID=your_telegram_user_id_here
+
+# Google Sheets
+GOOGLE_SHEET_ID=your_spreadsheet_id_here
+GOOGLE_SERVICE_ACCOUNT_JSON=service_account.json
+
+# Gemini
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# App
+WEBHOOK_URL=https://your-domain.com
+APP_PORT=8000
+```
+
+### 5. Setup Telegram Bot Token
+
+`TELEGRAM_BOT_TOKEN` adalah token utama agar aplikasi Python bisa terhubung ke bot Telegram.
+
+Cara mengisinya:
+
+1. Buka Telegram.
+2. Cari `@BotFather`.
+3. Jalankan command:
+
+```text
+/newbot
+```
+
+4. Ikuti instruksi BotFather untuk membuat nama dan username bot.
+5. Setelah bot dibuat, BotFather akan memberikan token.
+6. Copy token tersebut ke `.env`.
+
+Contoh:
+
+```env
+TELEGRAM_BOT_TOKEN=1234567890:AAExampleTelegramBotToken
+```
+
+### 6. Setup Webhook Secret
+
+`TELEGRAM_WEBHOOK_SECRET` digunakan sebagai secret tambahan agar webhook bot tidak mudah ditembak dari luar.
+
+Isi dengan random string bebas.
+
+Contoh:
+
+```env
+TELEGRAM_WEBHOOK_SECRET=denan-finance-secret-2026
+```
+
+Untuk production, gunakan string yang lebih random.
+
+Contoh lebih aman:
+
+```env
+TELEGRAM_WEBHOOK_SECRET=9f1c2b8e7a4d4c0aa123456789xyz
+```
+
+### 7. Setup Allowed Telegram User ID
+
+`ALLOWED_USER_ID` digunakan agar bot hanya bisa dipakai oleh user tertentu.
+
+Cara mendapatkan Telegram user ID:
+
+1. Buka Telegram.
+2. Cari bot pengecek user ID, misalnya `@RawDataBot` atau bot sejenis.
+3. Start bot tersebut.
+4. Copy angka user ID dari field `message.from.id`.
+5. Masukkan angka tersebut ke `.env`.
+
+Contoh output dari bot pengecek user ID:
+
+```json
+{
+  "message": {
+    "from": {
+      "id": 123456789,
+      "is_bot": false,
+      "first_name": "Your First Name",
+      "last_name": "Your Last Name",
+      "username": "your_username"
+    },
+    "chat": {
+      "id": 123456789,
+      "type": "private"
+    },
+    "text": "/start"
+  }
+}
+```
+
+Yang perlu diambil adalah angka ini:
+
+```env
+ALLOWED_USER_ID=123456789
+```
+
+Jika bot ingin dipakai beberapa user, sesuaikan implementasi authorization di project.
+
+### 8. Setup Google Sheets
+
+`GOOGLE_SHEET_ID` adalah ID spreadsheet yang digunakan sebagai database utama bot.
+
+Cara mengisinya:
+
+1. Buat Google Sheets baru.
+2. Copy Spreadsheet ID dari URL.
+
+Contoh URL:
+
+```text
+https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz1234567890/edit#gid=0
+```
+
+Spreadsheet ID-nya adalah bagian ini:
+
+```text
+1AbCdEfGhIjKlMnOpQrStUvWxYz1234567890
+```
+
+Masukkan ke `.env`:
+
+```env
+GOOGLE_SHEET_ID=1AbCdEfGhIjKlMnOpQrStUvWxYz1234567890
+```
+
+### 9. Setup Google Service Account
+
+`GOOGLE_SERVICE_ACCOUNT_JSON` adalah path menuju file credential service account Google Cloud.
+
+Cara setup:
+
+1. Buka Google Cloud Console.
+2. Buat project baru atau gunakan project yang sudah ada.
+3. Aktifkan **Google Sheets API**.
+4. Masuk ke menu **IAM & Admin**.
+5. Buka **Service Accounts**.
+6. Buat service account baru.
+7. Buat key baru dengan format JSON.
+8. Download file JSON tersebut.
+9. Simpan file JSON di root project.
+
+Contoh nama file:
+
+```text
+service_account.json
+```
+
+Lalu isi `.env`:
+
+```env
+GOOGLE_SERVICE_ACCOUNT_JSON=service_account.json
+```
+
+Pastikan file `service_account.json` tidak di-commit ke GitHub.
+
+Tambahkan ke `.gitignore`:
+
+```gitignore
+service_account.json
+.env
+```
+
+### 10. Share Google Sheets ke Service Account
+
+Bot tidak akan bisa membaca atau menulis Google Sheets sebelum spreadsheet dibagikan ke email service account.
+
+Cara share:
+
+1. Buka file `service_account.json`.
+2. Cari field `client_email`.
+
+Contoh:
+
+```json
+{
+  "client_email": "denan-finance-bot@project-id.iam.gserviceaccount.com"
+}
+```
+
+3. Copy email tersebut.
+4. Buka Google Sheets yang dipakai sebagai database.
+5. Klik **Share**.
+6. Paste email service account.
+7. Berikan akses **Editor**.
+8. Klik **Send** atau **Share**.
+
+Tanpa step ini, bot tidak bisa membaca dan menulis data ke Google Sheets.
+
+### 11. Setup Gemini API Key
+
+`GEMINI_API_KEY` digunakan untuk fitur AI parser, image parser, dan finance insight.
+
+Cara mengisinya:
+
+1. Buka Google AI Studio.
+2. Buat API key Gemini.
+3. Copy API key tersebut.
+4. Masukkan ke `.env`.
+
+Contoh:
+
+```env
+GEMINI_API_KEY=AIzaSyExampleGeminiApiKey
+```
+
+### 12. Setup App URL and Port
+
+`APP_PORT` adalah port yang digunakan aplikasi saat berjalan.
+
+Untuk local development, port bisa dibiarkan seperti ini:
+
+```env
+APP_PORT=8000
+```
+
+`WEBHOOK_URL` adalah URL publik yang digunakan Telegram untuk mengirim update ke aplikasi bot.
+
+Untuk local development tanpa webhook publik, kamu bisa isi sementara dengan placeholder:
+
+```env
+WEBHOOK_URL=https://your-domain.com
+```
+
+Untuk production, isi dengan domain deploy yang aktif.
+
+Contoh jika menggunakan custom domain:
+
+```env
+WEBHOOK_URL=https://your-domain.com
+```
+
+Contoh jika menggunakan Wispbyte:
+
+```env
+WEBHOOK_URL=https://your-app-name.wispbyte.com
+```
+
+Pastikan tidak ada slash di akhir URL.
+
+Benar:
+
+```env
+WEBHOOK_URL=https://your-app-name.wispbyte.com
+```
+
+**Hindari:**
+
+```env
+WEBHOOK_URL=https://your-app-name.wispbyte.com/
+```
+
+### 13. Final `.env` Example
+
+Setelah semua step selesai, file `.env` kurang lebih akan terlihat seperti ini:
+
+```env
+# Telegram
+TELEGRAM_BOT_TOKEN=1234567890:AAExampleTelegramBotToken
+TELEGRAM_WEBHOOK_SECRET=9f1c2b8e7a4d4c0aa123456789xyz
+ALLOWED_USER_ID=123456789
+
+# Google Sheets
+GOOGLE_SHEET_ID=1AbCdEfGhIjKlMnOpQrStUvWxYz1234567890
+GOOGLE_SERVICE_ACCOUNT_JSON=service_account.json
+
+# Gemini
+GEMINI_API_KEY=AIzaSyExampleGeminiApiKey
+
+# App
+WEBHOOK_URL=https://your-app-name.wispbyte.com
+APP_PORT=8000
+```
+
+### 14. Run Locally
+
+Jalankan aplikasi:
+
+```bash
+python main.py
+```
+
+Atau menggunakan Uvicorn:
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+Jika berhasil, aplikasi akan berjalan di:
+
+```text
+http://localhost:8000
+```
+
+### 15. Deploy and Run Webhook
+
+Jika menggunakan deployment seperti Wispbyte atau server lain:
+
+1. Upload project ke server.
+2. Pastikan `.env` sudah terisi.
+3. Pastikan `service_account.json` tersedia di server.
+4. Install dependencies.
+5. Jalankan aplikasi.
+6. Pastikan `WEBHOOK_URL` mengarah ke domain aktif.
+7. Cek apakah bot sudah bisa menerima pesan dari Telegram.
+
+## Usage
+
+### Input Transaksi Harian
 
 ```text
 beli kopi 25k
-gaji masuk 8 juta
-transfer 100k dari BRI ke DANA
-beli nasi 10k tanggal 1
-beli vaseline 37.5k tanggal 09-06-2026
+beli nasi padang 17k pakai cash
+gaji masuk 8 juta ke bsi
+topup gopay 100k dari bsi
+transfer 250k dari bsi ke dana
 ```
 
-Saldo rekening otomatis berubah berdasarkan jenis transaksi:
-
-- Expense: saldo rekening berkurang
-- Income: saldo rekening bertambah
-- Transfer: saldo rekening asal berkurang dan rekening tujuan bertambah
-
----
-
-### 2. Multi Input
-
-Bot bisa membaca beberapa transaksi dalam satu pesan.
-
-Contoh:
+### Input Banyak Transaksi
 
 ```text
-beli nasi 17k tanggal 01-06-2026
-beli kopi 21k tanggal 01-06-2026
-beli vaseline 37.5k tanggal 09-06-2026
+beli nasi 17k
+beli kopi 20k
+beli bensin 40k pakai cash
 ```
 
-Bot akan menampilkan preview batch, meminta rekening bila ada item yang belum punya rekening, lalu menyimpan semua item setelah konfirmasi.
-
----
-
-### 3. Date Parser
-
-Support format tanggal:
+### Input dengan Tanggal
 
 ```text
-tanggal 1
-tgl 1
-tg 1
-01-06-2026
-2026-06-01
-kemarin
-dua hari yang lalu
-2 minggu yang lalu
+beli kopi 25k kemarin
+beli bensin 40k tanggal 12
+beli token 100k 2026-06-15
 ```
 
-Untuk `tanggal 1` atau `tgl 1`, bulan dan tahun mengikuti tanggal saat ini.
-
----
-
-### 4. Account & Balance
-
-Command utama:
+### Utang dan Piutang
 
 ```text
-/saldo
+minjem uang ke Budi 100k
+Budi bayar hutang 50k
+pinjemin Raka 75k
+Raka bayar piutang 25k
 ```
 
-Data rekening disimpan di sheet `accounts`.
-
-Untuk saldo awal, disarankan input manual langsung di Google Sheets agar tidak tercampur sebagai pemasukan bulanan.
-
----
-
-### 5. Budget
-
-Command:
+### Talangin dan Ditalangin
 
 ```text
-/budget
-/budget 2026-06
-/budget_history
+talangin Budi beli makan 100k
+ditalangin Raka bayar parkir 20k
 ```
 
-Natural input:
+### Split Bill
+
+```text
+beli galon 24k dibagi 4 sama Budi Raka Dimas
+makan 120k split sama Budi Raka
+```
+
+### Pending Expense
+
+```text
+pending beli token 100k
+```
+
+### Budget
 
 ```text
 budget makan 1.5 juta
-budget transport 300rb 2026-07
-budget jajan 500rb
-budget kebutuhan 2 juta
+budget transport 300k
+/budget
+/budget_history
 ```
 
-Budget dibuat per bulan. Bot bisa mapping budget umum seperti `makan` ke `Food & Beverage`, tetapi juga mendukung budget custom seperti `Jajan` dan `Kebutuhan`.
-
----
-
-### 6. Hutang / Piutang
-
-Bot mendukung utang, piutang, pembayaran, edit/void debt, dan settlement debt terpilih.
-
-Contoh input natural:
-
-```text
-Budi minjem 300k
-minjem uang Ahmad 220k
-hutang ke Budi 300k
-Budi bayar 100k
-bayar hutang Budi 100k
-minjemin ke Dono 100k - 19k 15-05-2026
-saya nitip Raka beli nasi kuning 12k
-saya talangin Raka beli nasi kuning 12k
-Raka bayar hutang 337063 untuk debt 1-17
-```
-
-Mode talangan:
-
-- `saya nitip Raka beli nasi kuning 12k` = Raka membayar dulu untuk Anda. Bot mencatat **utang ke Raka** tanpa cashflow, jadi tidak ada pemasukan palsu.
-- `saya talangin Raka beli nasi kuning 12k` = Anda membayar dulu untuk Raka. Bot mencatat **piutang Raka** dan tetap menanyakan rekening karena ada cash out.
-- `ditalangin Bagas beli minyak 46k dibagi 4 sama Bagas Fajar Raka` = PTPT. Anda hutang full Rp46.000 ke Bagas, lalu Bagas/Fajar/Raka masing-masing punya hutang share Rp11.500 ke Anda.
-
-Command utama:
-
-```text
-/hutang
-/hutang Raka
-/ringkasan_hutang Raka
-/debt_void 1
-/debt_void Raka 1
-/debt_edit 1 nominal 100k
-/debt_settle Raka 1-17
-/debt_settle Raka 1-17 amount=337063 account=DANA
-```
-
-
-Shareable debt summary:
-
-- `/ringkasan_hutang Raka` membuat rekap hutang-piutang yang siap dikirim ke teman.
-- Output tidak menampilkan debt ID, command internal, progress teknis, atau metadata sheet.
-- Rincian dipisah per tanggal dan per arah: `Raka ke Denan` dan `Denan ke Raka`.
-- Subtotal dan total akhir tetap ditampilkan agar teman bisa cek nominal final dengan cepat.
-- Deskripsi debt lama yang bocor seperti `Minyak Dibagi Fajar Raka` atau `Galon Raka Fajar` dibersihkan sebisa mungkin di output shareable.
-
-Selected debt settlement:
-
-- Jalankan `/hutang Raka` dulu agar bot menyimpan mapping nomor debt terbaru.
-- `/debt_settle Raka 1-17` menghitung total piutang, total utang, dan net untuk nomor 1 sampai 17 saja.
-- `/debt_settle Raka 1-17 amount=337063 account=DANA` menyelesaikan hanya debt nomor 1 sampai 17. Debt lain di luar range, misalnya nomor 18, tidak disentuh.
-- Versi natural: `Raka bayar hutang 337063 untuk debt 1-17`.
-- Nomor `1-17` wajib berasal dari output terakhir `/hutang Raka`. Jika mapping terakhir berasal dari orang lain, bot akan menolak.
-- Jika pembayaran lebih besar dari net debt terpilih, bot memberi warning dan pilihan: anggap lunas/bonus atau catat kelebihan sebagai hutang lawan arah.
-- Pembayaran global seperti `Raka bayar hutang 373063` juga dicek terhadap posisi net orang tersebut, bukan hanya satu arah debt. Contoh: piutang Rp415.062,5 dan utang Anda Rp88.000 berarti saldo net yang perlu dibayar Raka adalah Rp327.062,5; input Rp373.063 akan dianggap overpaid Rp46.000,5.
-
-Catatan:
-
-- Gunakan `/debt_void` untuk membatalkan debt yang memang salah input.
-- `/debt_void` mendukung utang dan piutang, termasuk piutang dari split bill.
-- Transaksi pembayaran debt yang salah input bisa dihapus lewat `/delete_txn`; bot akan mencoba membalik efek pembayaran ke sheet `debts` selama relasi payment/debt masih utuh.
-- Transaksi pembayaran debt juga bisa dikoreksi dengan `/edit_txn ... amount=...` agar nominal payment dan sheet `debts` ikut sinkron.
-
----
-
-### 7. Split Bill
-
-Contoh:
-
-```text
-Tissue 10k bagi 4 sama Doni Toni Budi 11-06-2026
-Ayam dcelup 26k bagi 2 sama Doni
-```
-
-Bot akan menghitung bagian per orang dan bertanya apakah teman sudah bayar.
-
-Jika belum, bot akan mencatat piutang per orang tanpa cashflow tambahan.
-
-Contoh expected:
-
-```text
-Tissue 10k bagi 4 sama Doni Toni Budi
-Total: Rp10.000
-Bagian per orang: Rp2.500
-Piutang:
-- Doni Rp2.500
-- Toni Rp2.500
-- Budi Rp2.500
-```
-
----
-
-### 8. Reports & Transaction History
-
-Command saldo dan rekening:
+### Ringkasan dan Laporan
 
 ```text
 /saldo
 /rekening Cash
-/rekening Cash 2026-06
-/rekening Cash all
-```
-
-`/rekening <nama>` sekarang menjadi laporan utama rekening: outputnya berupa daftar transaksi lengkap seperti `/transaksi rekening <nama>`, ditambah saldo rekening saat ini dan ringkasan periode. Jadi untuk cek rekening tertentu, cukup gunakan `/rekening Cash`.
-
-Command ringkasan periode:
-
-```text
 /harian
-/harian 2026-06-11
-/harian 11
-
 /mingguan
-/mingguan 2026-06-11
-/mingguan 11
-
 /bulanan
-/bulanan 2026-06
-/bulanan 6
-```
-
-Command transaksi full:
-
-```text
 /transaksi
-/transaksi hari 2026-06-11
-/transaksi minggu 2026-06-11
-/transaksi bulan 2026-06
-/transaksi rekening Cash
-```
-
-`/transaksi rekening Cash` tetap didukung sebagai alternatif/backward compatible, tetapi `/rekening Cash` lebih direkomendasikan untuk laporan rekening karena lebih singkat dan juga menampilkan saldo saat ini.
-
-Command last:
-
-```text
 /last
-/last 20
-/last today
-/last week
-/last month
-/last 2026-06
+/cari kopi
+/ringkasan_hutang
 ```
 
-Catatan:
-
-- `/last`, `/transaksi`, dan `/rekening <nama>` menyimpan mapping nomor transaksi ke `context.user_data`, sehingga bisa dilanjutkan dengan `/delete_txn` atau `/edit_txn`.
-- Output panjang dipecah otomatis agar tidak terkena limit Telegram.
-
----
-
-### 9. Delete & Edit Transaction
-
-Command:
+### Debt Management
 
 ```text
-/delete_txn 1
-/delete_txn 1 3 5
-/delete_txn 1-4
-/delete_txn txn_id
+/hutang
+/hutang Budi
+/debt_void Budi
+/debt_edit
+/debt_settle
 ```
 
-Command edit:
+### Net Worth dan Aset
 
 ```text
-/edit_txn 2 amount=15000
-/edit_txn 2 description=Kopi susu
-/edit_txn 2 account=BRI category="Food & Beverage"
-/edit_txn 2 date=2026-06-10
-```
-
-Untuk debt yang salah dibuat, gunakan `/debt_void`. Untuk transaksi pembayaran debt yang salah nominal/input, gunakan `/edit_txn ... amount=...` atau `/delete_txn` agar efek payment ke sheet `debts` ikut dibalik bila relasinya masih utuh.
-
----
-
-### 10. Export CSV
-
-Command:
-
-```text
-/download_data
-/download_data today
-/download_data week
-/download_data month
-/download_data 2026-06
-```
-
-Export bersifat read-only dan menghasilkan file CSV transaksi.
-
----
-
-### 11. Recurring Transaction
-
-Command:
-
-```text
-/recurring
-/recurring_add Netflix | expense | 65000 | Entertainment | DANA | monthly | 5 | Langganan Netflix
-/recurring_edit rec_xxx | amount=75000 | day=10
-/recurring_run
-/recurring_off rec_xxx
-```
-
-Sheet terkait:
-
-- `recurring_rules`
-- `recurring_logs`
-
----
-
-### 12. Assets & Net Worth
-
-Command:
-
-```text
-/networth
 /assets
-/networth_snapshot
-/networth_history
-```
-
-Tambah aset mode tanya-jawab:
-
-```text
 /asset_add
+/asset_update
+/networth
 ```
 
-Bot akan bertanya nama aset, jumlah/unit, harga beli, tanggal beli, harga saat ini, kategori, dan deskripsi. Setiap step punya opsi cancel. Tanggal beli boleh dilewati/kosong.
-
-Tambah aset nominal langsung:
+### Export Data
 
 ```text
-/asset_add Laptop | 8000000 | Electronics | Laptop kerja
+/export
 ```
 
-Tambah aset berbasis unit:
+### AI Finance Insight
 
 ```text
-add emas 1000 gram
-add laptop 1 buah
-/asset_add Emas Antam | 41 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10
-```
-
-Flow aset berbasis unit:
-
-```text
-add emas 1000 gram
-→ bot tanya harga 1 gram
-→ user balas 2.41 juta
-→ bot preview Simpan/Batal
-→ current_value = quantity × price_per_unit
-```
-
-Kolom assets terbaru untuk harga beli:
-
-```text
-id, name, category, current_value, description, is_active, created_at, updated_at, asset_type, quantity, unit, price_source, price_per_unit, last_price_update, purchase_price_per_unit, purchase_date
-```
-
-`price_per_unit` = harga sekarang/saat update.
-`purchase_price_per_unit` = harga beli/modal per unit.
-`purchase_date` = tanggal beli.
-
-
-Edit harga satuan:
-
-```text
-/asset_update asset_xxx | unit_price=2420000
-/asset_update asset_xxx | harga_satuan=2.42 juta
-/asset_update asset_xxx | harga_beli=2559000 | tanggal_beli=2026-06-10
-```
-
-Formula net worth:
-
-```text
-Net Worth = total saldo rekening + total aset aktif
-```
-
----
-
-### 13. Image Receipt Parser
-
-Bot dapat menerima gambar struk/nota/screenshot transaksi.
-
-Flow:
-
-```text
-kirim gambar struk
-→ bot download gambar dari Telegram
-→ Gemini membaca gambar
-→ bot ekstrak transaksi
-→ bot tampilkan preview
-→ user pilih rekening dan konfirmasi
-```
-
-Caption opsional:
-
-```text
-pakai BSI
-total aja
-ini pemasukan
-```
-
-Jika struk punya rincian item, default-nya bot mencoba membuat multi-item. Jika ingin satu transaksi total, gunakan caption `total aja`.
-
----
-
-### 14. Gemini / RAG Finance Insight
-
-Command:
-
-```text
-/insight
-/insight 2026-06
-
-/ask bulan ini boros di mana?
-/ask kapan terakhir saya beli kopi?
-/ask budget makan aman gak?
-
-/audit
-/audit 2026-06
-
 /coach
-/coach gimana biar nabung 2 juta?
+/audit
+/insight
+/ask bulan ini boros di mana?
+/ask pengeluaran terbesar bulan ini apa?
 ```
 
-Natural question juga bisa diarahkan ke RAG finance:
+## Project Structure
 
 ```text
-bulan ini boros di mana?
-ada transaksi aneh bulan ini?
-budget saya aman gak?
-kasih saran pengeluaran bulan ini
+.
+├── app/
+│   ├── api/
+│   │   └── webhook.py
+│   ├── bot/
+│   │   ├── handlers.py
+│   │   ├── keyboards.py
+│   │   └── handler_parts/
+│   │       ├── callback_handler.py
+│   │       ├── command_handlers.py
+│   │       ├── command_router.py
+│   │       ├── common_imports.py
+│   │       ├── core.py
+│   │       ├── health_recurring_export.py
+│   │       ├── message_handlers.py
+│   │       ├── networth_assets.py
+│   │       └── transaction_flow.py
+│   ├── nlp/
+│   │   ├── gemini_finance_insight.py
+│   │   ├── gemini_image_parser.py
+│   │   ├── gemini_intent_router.py
+│   │   ├── gemini_langchain_client.py
+│   │   ├── gemini_parser.py
+│   │   ├── normalizer.py
+│   │   └── regex_parser.py
+│   ├── scheduler/
+│   │   └── jobs.py
+│   ├── services/
+│   │   ├── budget_service.py
+│   │   ├── debt_service.py
+│   │   ├── finance_insight_service.py
+│   │   ├── net_worth_service.py
+│   │   ├── pending_expense_service.py
+│   │   ├── recurring_service.py
+│   │   ├── report_service.py
+│   │   └── transaction_service.py
+│   ├── sheets/
+│   │   └── client.py
+│   └── config.py
+├── assets/
+│   └── workflow-ai-finance-assistant.png
+├── scripts/
+│   └── debug_check.py
+├── .env.example
+├── .gitignore
+├── main.py
+├── README.md
+└── requirements.txt
 ```
 
-Desain RAG finance:
+## Limitations
 
-1. Bot membaca data relevan dari Google Sheets.
-2. Python menghitung summary, top categories, budget status, anomaly, dan transaksi relevan.
-3. Gemini hanya menerima context ringkas, bukan seluruh spreadsheet mentah.
-4. Gemini menjelaskan insight, audit, atau saran finansial.
+Beberapa batasan project saat ini:
 
----
+1. **Google Sheets bukan database transaksional penuh**  
+   Project ini menggunakan Google Sheets sebagai database. Sudah ada retry dan rollback handling, tetapi tetap tidak sekuat database seperti PostgreSQL untuk transaksi berskala besar.
 
-### 15. Health Check
+2. **Parsing natural language belum selalu sempurna**  
+   Input yang terlalu ambigu masih bisa salah dibaca, terutama jika nominal, rekening, atau orang yang terlibat tidak jelas.
 
-Command:
+3. **AI insight bergantung pada kualitas data**  
+   Insight dari Gemini akan lebih akurat jika kategori, rekening, tanggal, dan tipe transaksi sudah rapi.
 
-```text
-/health
-```
+4. **Belum multi-user penuh**  
+   Bot ini dirancang sebagai personal finance bot, bukan aplikasi SaaS multi-user.
 
-Cek:
+5. **Google Sheets quota limit**  
+   Jika terlalu banyak operasi read/write dalam waktu singkat, bot dapat terkena limit API Google Sheets.
 
-- Environment variables
-- Google Sheets connection
-- Sheet utama
-- Gemini API key
-- Webhook URL
-- App port
+6. **Image parser bergantung pada kualitas gambar**  
+   Struk yang buram, terpotong, atau terlalu gelap dapat membuat hasil parsing kurang akurat.
 
-Health check tidak melakukan generate content Gemini agar tidak boros token.
+7. **Command dan business logic masih berkembang**  
+   Beberapa fitur seperti recurring, net worth, debt management, dan AI insight masih bisa terus disempurnakan sesuai kebutuhan pemakaian harian.
 
----
+## Author
 
-## Google Sheets Tabs
+**Denanda Aufadlan Tsaqif**
 
-Tab utama yang digunakan:
-
-```text
-transactions
-accounts
-budgets
-debts
-debt_payments
-categories
-monthly_summary
-recurring_rules
-recurring_logs
-assets
-net_worth_snapshots
-```
-
----
-
-## Atomic Google Sheets Write Safety
-
-Semua Telegram handler sekarang dibungkus dalam `sheets_transaction()`. Efeknya:
-
-- setiap write ke Google Sheets lewat `app/sheets/client.py` otomatis retry jika kena 429/quota/transient error;
-- setiap write sukses menyimpan rollback action;
-- jika write berikutnya gagal setelah retry, perubahan sebelumnya di operasi yang sama akan di-rollback;
-- operasi dianggap gagal total, bukan sukses sebagian.
-
-Contoh kasus yang ditangani:
-
-```text
-Raka bayar hutang 373.063k
-```
-
-Jika update debt sukses tetapi append transaksi atau update saldo kena quota 429, perubahan debt yang sudah sempat masuk akan dibatalkan.
-
-Catatan teknis: Google Sheets bukan database transactional, jadi rollback ini bersifat best-effort. Jika quota benar-benar habis, rollback juga bisa gagal; bot akan mengembalikan error yang meminta pengecekan manual.
-
----
-
-## Environment Variables
-
-Contoh `.env`:
-
-```env
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-ALLOWED_USER_ID=your_telegram_user_id
-GOOGLE_SHEET_ID=your_google_sheet_id
-GEMINI_API_KEY=your_gemini_api_key
-WEBHOOK_URL=https://your-wispbyte-domain.app/
-APP_PORT=8000
-TELEGRAM_WEBHOOK_SECRET=your_webhook_secret
-
-GEMINI_MODEL=gemini-2.5-flash
-GEMINI_TEXT_MODEL=gemini-2.5-flash-lite
-GEMINI_INTENT_MODEL=gemini-2.5-flash-lite
-GEMINI_IMAGE_MODEL=gemini-2.5-flash
-GEMINI_INSIGHT_MODEL=gemini-2.5-flash
-```
-
----
-
-## Security Notes
-
-Jangan commit file sensitif:
-
-```gitignore
-.env
-*.env
-service-account.json
-credentials.json
-token.json
-__pycache__/
-*.pyc
-.venv/
-venv/
-Venv/
-.local/
-```
-
-Jika credential sudah terlanjur tracked:
-
-```bash
-git rm --cached .env
-git rm --cached service-account.json
-```
-
----
-
-## Local Checks Before Commit
-
-```bash
-python -m py_compile main.py
-python -m py_compile app/bot/handlers.py
-python -m py_compile app/services/transaction_service.py
-python -m py_compile app/services/budget_service.py
-python -m py_compile app/services/debt_service.py
-python -m py_compile app/services/report_service.py
-python -m py_compile app/services/recurring_service.py
-python -m py_compile app/services/net_worth_service.py
-python -m py_compile app/nlp/regex_parser.py
-python -m py_compile app/nlp/gemini_parser.py
-python -m py_compile app/nlp/gemini_image_parser.py
-python -m py_compile app/nlp/gemini_finance_insight.py
-```
-
-Run debug script:
-
-```bash
-python scripts/debug_check.py
-```
-
----
-
-## Git Workflow
-
-```bash
-git status
-git add .
-git commit -m "Update finance bot"
-git push origin main
-```
-
-Jika push ditolak karena remote lebih baru:
-
-```bash
-git pull --rebase origin main
-git push origin main
-```
-
----
-
-## Build ZIP Release
-
-Cara paling aman:
-
-```powershell
-git archive --format=zip --output financebot_release.zip HEAD
-```
-
-Ini hanya memasukkan file yang sudah tracked Git, sehingga `.env` atau file credential yang tidak di-track tidak ikut.
-
----
-
-## Deployment Notes for Wispbyte
-
-Pastikan:
-
-- Branch deploy adalah `main`
-- `WEBHOOK_URL` adalah public HTTPS URL
-- Requirements sudah kompatibel
-- File baru sudah di-commit dan push
-- Redeploy/rebuild dilakukan, bukan hanya restart
-
-Jika memakai LangChain Gemini, hindari dependency yang konflik. Gunakan versi di `requirements.txt` sebagai source of truth.
-
-## Local Debug / Parser QA
-
-Di zip ini script QA yang tersedia adalah:
-
-```bash
-python scripts/debug_check.py
-```
-
-Catatan: `scripts/ai_command_tester.py` dan `tests/command_cases.json` tidak ada di zip ini, jadi README tidak mengklaim tester tersebut sebagai fitur aktif.
-
-## Debt Offset / Kompensasi Tanpa Rekening
-
-Bot mendukung kompensasi hutang-piutang tanpa cashflow rekening, tetapi tetap mencatat fact row di `transactions`.
-
-Contoh:
-
-```text
-potong piutang Dimas 20k buat badminton
-saya berutang ke Dimas 20k potong dari piutang
-```
-
-Efek:
-
-- Debt ledger Dimas berubah.
-- Tidak ada rekening yang berubah.
-- Row `transactions` tetap dibuat dengan `type = debt_offset` dan `account = Debt Offset`.
-
-## Update V15 — Session History untuk `/ask`
-
-Fitur `/ask`, pertanyaan finance natural, dan `/coach` sekarang memakai session history terbatas dari `context.user_data["finance_chat_history"]`. History ini membantu bot memahami pertanyaan lanjutan seperti "yang tadi" atau "yang food itu transaksi apa aja?" tanpa membuat sheet baru.
-
-Catatan: session history tidak persistent dan akan hilang jika bot restart/redeploy. Data angka utama tetap diambil dari Google Sheets, bukan dari chat history.
-
-
-## Fitur yang Belum Aktif
-
-Fitur laporan kuartalan dan tahunan belum tersedia. Bot hanya memberi pesan bahwa fitur tersebut belum didukung, bukan membuat laporan palsu.
+- LinkedIn: `https://www.linkedin.com/in/your-linkedin`
+- Portfolio: `https://your-portfolio.com`
+- GitHub: `https://github.com/your-username`
