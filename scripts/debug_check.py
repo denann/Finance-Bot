@@ -164,6 +164,7 @@ def check_environment():
     print_header("1. ENVIRONMENT CHECK")
 
     required_envs = [
+        "BOT_MODE",
         "TELEGRAM_BOT_TOKEN",
         "ALLOWED_USER_ID",
         "GOOGLE_SHEET_ID",
@@ -205,6 +206,7 @@ def check_imports():
         "app.services.net_worth_service",
         "app.scheduler.jobs",
         "app.bot.handlers",
+        "app.bot.application",
         "main",
     ]
 
@@ -650,6 +652,7 @@ def check_bot_handlers(modules):
     handler_names = [
         "start_handler",
         "help_handler",
+        "examples_handler",
         "saldo_handler",
         "harian_handler",
         "mingguan_handler",
@@ -1153,6 +1156,7 @@ def check_regression_commands(modules):
     command_expectations = [
         ("/start", "start_handler"),
         ("/help", "help_handler"),
+        ("/examples", "examples_handler"),
         ("/saldo", "saldo_handler"),
         ("/harian", "harian_handler"),
         ("/mingguan", "mingguan_handler"),

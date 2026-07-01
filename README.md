@@ -2,9 +2,13 @@
 
 Denan Finance Bot adalah Telegram personal finance assistant untuk mencatat, mengelola, dan menganalisis keuangan pribadi langsung dari chat.
 
-Project ini dibuat untuk menyelesaikan masalah pencatatan keuangan harian yang sering terasa ribet, tidak konsisten, dan mudah terlupakan. Alih-alih membuka spreadsheet manual setiap kali ada transaksi, user cukup mengetik input natural seperti `beli kopi 25k`, `topup gopay 100k dari bsi`, atau `ditalangin Budi bayar makan 100k`.
+Project ini dibuat untuk menyelesaikan masalah pencatatan keuangan harian yang sering terasa ribet, tidak konsisten, dan mudah terlupakan. User cukup mengetik input natural seperti `beli kopi 25k`, `topup gopay 100k dari bsi`, atau `ditalangin Budi bayar makan 100k`, lalu bot akan membantu membuat preview sebelum data disimpan ke Google Sheets.
 
-Bot akan membaca input tersebut, mem-parse tanggal, nominal, rekening, kategori, utang/piutang, split bill, hingga transaksi berulang, lalu menyimpannya ke Google Sheets. Selain pencatatan, bot juga menyediakan ringkasan keuangan, budgeting, net worth tracking, export data, dan AI finance insight menggunakan Gemini.
+Secara default, bot berjalan menggunakan **polling mode** supaya mudah dicoba: clone repository, isi `.env`, lalu jalankan `python main.py`. Untuk kebutuhan live 24/7, bot tetap bisa dijalankan dengan polling di Wispbyte atau hosting lain tanpa harus memakai webhook.
+
+Project ini cocok untuk pengguna yang ingin mencatat keuangan lewat chat, orang yang merasa spreadsheet manual terlalu ribet, dan developer yang ingin mempelajari integrasi Telegram Bot, Google Sheets, rule-based parser, automation, dan LLM.
+
+Prinsip utama project ini: **preview before write**, **user confirmation before saving**, **local rules for sensitive finance logic**, dan **Gemini as assistant, not final decision maker**.
 
 ## Outline
 
@@ -14,7 +18,8 @@ Bot akan membaca input tersebut, mem-parse tanggal, nominal, rekening, kategori,
 - [Installation](#installation)
 - [Usage](#usage)
 - [Project Structure](#project-structure)
-- [Limitations](#limitations)
+- [Limitations and Troubleshooting](#limitations-and-troubleshooting)
+- [Advanced Deployment](#advanced-deployment)
 - [Author](#author)
 
 ## Features
@@ -158,54 +163,43 @@ Contoh penggunaan bot tersedia di bagian [Usage](#usage).
   </thead>
   <tbody>
     <tr>
-      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Core Backend</strong></td>
-      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Python, FastAPI</td>
-      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menjalankan parser, business logic, webhook endpoint, routing, preview flow, confirmation flow, dan integrasi antar komponen.</td>
-    </tr>
-    <tr>
       <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Chat Interface</strong></td>
       <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Telegram Bot API, python-telegram-bot</td>
-      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menerima pesan user, command, callback button, dan mengirim respons bot ke Telegram.</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menerima pesan, command, gambar, dan callback button dari user.</td>
+    </tr>
+    <tr>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Core Backend</strong></td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Python</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menjalankan parser, business logic, parse safety routing, preview flow, debt flow, split bill, pending expense, dan validasi transaksi.</td>
     </tr>
     <tr>
       <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>AI Layer</strong></td>
       <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Gemini API, LangChain</td>
-      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Digunakan untuk parsing gambar, AI insight, Q&amp;A, audit, dan coach. Saat ini provider LLM yang didukung baru Gemini, sedangkan LangChain dipakai sebagai wrapper/integration layer untuk Gemini.</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Digunakan untuk parsing gambar, AI finance insight, audit, coach, dan Q&amp;A berbasis data. Provider LLM yang saat ini didukung baru Gemini.</td>
     </tr>
     <tr>
       <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Data Layer</strong></td>
       <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Google Sheets API, gspread, Google Service Account</td>
-      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menyimpan transaksi, account, budget, debt, asset, pending expense, recurring logs, dan data pendukung lain.</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menyimpan transaksi, rekening, budget, debt, asset, pending expense, recurring logs, dan data pendukung lain.</td>
     </tr>
     <tr>
       <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Automation</strong></td>
       <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">APScheduler</td>
-      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menjalankan recurring reminder, recurring transaction, export, dan summary otomatis secara terjadwal.</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Menjalankan recurring reminder, recurring transaction, export, dan scheduled jobs.</td>
     </tr>
     <tr>
       <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;"><strong>Deployment &amp; Versioning</strong></td>
-      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Wispbyte / Webhook Deployment, Git &amp; GitHub</td>
-      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Git &amp; GitHub digunakan untuk version control, sedangkan Wispbyte digunakan untuk hosting FastAPI dan menerima Telegram webhook secara 24/7.</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Wispbyte, FastAPI, Git, GitHub</td>
+      <td style="border: none; border-bottom: 1px solid #d0d7de; padding: 8px 12px;">Git &amp; GitHub untuk version control. Wispbyte dapat dipakai untuk menjalankan polling mode 24/7; FastAPI tersedia sebagai opsi advanced untuk webhook deployment.</td>
     </tr>
   </tbody>
 </table>
-
-### Tech Stack Workflow
 
 <p align="center">
   <img src="assets/tech-stack-workflow-personal-finance-assistant.png" alt="Tech Stack Workflow of Personal Finance Assistant" width="1000">
 </p>
 
-Gambar di atas merangkum hubungan antar tools yang digunakan pada project ini. Supaya lebih jelas, berikut konteks tambahan yang tidak sepenuhnya bisa dijelaskan di dalam diagram:
-
-- **Telegram adalah pintu masuk utama user.** Semua chat, command, dan callback button masuk dari Telegram Bot API, lalu diteruskan ke backend melalui webhook.
-- **FastAPI berperan sebagai request layer.** FastAPI menerima update dari Telegram, menyediakan endpoint webhook, dan meneruskan request ke logic handler di Python.
-- **Python adalah pusat business logic.** Di layer ini berlangsung parser regex, parse safety routing, preview before save, edit flow, debt flow, split bill, pending expense, recurring logic, dan validasi sebelum write ke data layer.
-- **LangChain belum dipakai sebagai multi-LLM orchestration penuh.** Saat ini fungsinya lebih sebagai wrapper untuk integrasi Gemini di beberapa fitur AI.
-- **Gemini tidak menjadi decision maker final untuk transaksi sensitif.** Untuk flow seperti transaksi, utang/piutang, split bill, atau saldo rekening, keputusan simpan tetap dikontrol oleh rule lokal dan konfirmasi user.
-- **Google Sheets adalah operational data store project ini.** Data transaksi dan modul finansial lain disimpan di spreadsheet, sedangkan `gspread` dan service account menangani autentikasi serta proses read/write.
-- **APScheduler menjalankan job di background.** Contohnya recurring reminder, recurring transaction, dan summary otomatis tanpa perlu dipicu manual oleh user.
-- **Wispbyte menangani sisi deployment.** Repository di-pull dari GitHub, lalu aplikasi FastAPI dijalankan agar bot tetap aktif dan bisa menerima webhook Telegram.
+Gambar di atas merangkum hubungan antar tools pada project ini. Untuk pemakaian default, jalur utamanya adalah Telegram Bot API → python-telegram-bot → Python business logic → Google Sheets. **FastAPI bukan syarat awal untuk menjalankan bot**, posisinya hanya untuk opsi deployment lanjutan.
 
 ## System Architecture
 
@@ -213,24 +207,19 @@ Gambar di atas merangkum hubungan antar tools yang digunakan pada project ini. S
   <img src="assets/workflow-ai-finance-assistant.png" alt="Workflow AI Finance Assistant" width="900">
 </p>
 
-Sistem ini memiliki dua alur utama. Pertama, **alur pencatatan transaksi**, yaitu input dari Telegram diproses oleh parser, divalidasi melalui preview, lalu disimpan ke Google Sheets sebagai data layer utama. Kedua, **alur AI insight**, yaitu user dapat bertanya melalui `/ask`, `/audit`, `/coach`, atau `/insight`, lalu backend mengambil konteks data yang relevan sebelum Gemini membantu menyusun penjelasan.
+Sistem ini memiliki dua alur utama. Pertama, **alur pencatatan transaksi**, yaitu input dari Telegram diproses oleh parser, dicek dengan parse safety routing, divalidasi melalui preview, lalu disimpan ke Google Sheets setelah user melakukan konfirmasi. Kedua, **alur AI insight**, yaitu user dapat bertanya melalui `/ask`, `/audit`, `/coach`, atau `/insight`, lalu backend mengambil konteks data yang relevan sebelum Gemini membantu menyusun penjelasan.
 
-Prinsip utama dari arsitektur ini adalah AI tidak langsung mengambil keputusan finansial sendiri. Business logic tetap dikontrol oleh backend, sedangkan Gemini digunakan untuk membantu memahami input, membaca gambar, dan menjelaskan insight berdasarkan data yang sudah tersedia.
+Secara runtime, mode default project ini adalah **polling**. Artinya, proses Python mengambil update dari Telegram Bot API secara berkala selama aplikasi berjalan. Pendekatan ini lebih mudah untuk local setup dan tetap bisa dipakai untuk live 24/7 di Wispbyte atau hosting lain selama proses `python main.py` terus berjalan.
+
+AI tidak langsung mengambil keputusan finansial sendiri. Business logic tetap dikontrol oleh backend, sedangkan Gemini digunakan untuk membantu memahami input, membaca gambar, dan menjelaskan insight berdasarkan data yang sudah tersedia.
 
 ## Installation
 
-### 1. Clone Repository
+### 1. Clone dan install dependency
 
 ```bash
 git clone https://github.com/username/denan-finance-bot.git
 cd denan-finance-bot
-```
-
-Ganti `username` dengan username GitHub kamu.
-
-### 2. Create Virtual Environment
-
-```bash
 python -m venv .venv
 ```
 
@@ -248,15 +237,15 @@ Mac/Linux:
 source .venv/bin/activate
 ```
 
-### 3. Install Dependencies
+Install dependency:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Create `.env` File
+### 2. Buat file `.env`
 
-Copy file `.env.example` menjadi `.env`.
+Copy `.env.example` menjadi `.env`.
 
 ```bash
 cp .env.example .env
@@ -268,211 +257,72 @@ Jika menggunakan Windows Command Prompt:
 copy .env.example .env
 ```
 
-Lalu buka file `.env` dan isi semua konfigurasi berikut.
+Isi konfigurasi minimal berikut:
 
 ```env
-# Telegram
+BOT_MODE=polling
+
 TELEGRAM_BOT_TOKEN=your_bot_token_here
-TELEGRAM_WEBHOOK_SECRET=your_random_secret_here
 ALLOWED_USER_ID=your_telegram_user_id_here
 
-# Google Sheets
 GOOGLE_SHEET_ID=your_spreadsheet_id_here
 GOOGLE_SERVICE_ACCOUNT_JSON=service_account.json
 
-# Gemini
 GEMINI_API_KEY=your_gemini_api_key_here
-GEMINI_MODEL=your_gemini_model_here
-GEMINI_TEXT_MODEL=your_gemini_model_here
-GEMINI_INTENT_MODEL=your_gemini_model_here
-GEMINI_IMAGE_MODEL=your_gemini_model_here
-GEMINI_INSIGHT_MODEL=your_gemini_model_here
-
-# App
-WEBHOOK_URL=https://your-domain.com
-APP_PORT=8000
+GEMINI_MODEL=gemini-3.1-flash-lite
+GEMINI_TEXT_MODEL=gemini-3.1-flash-lite
+GEMINI_INTENT_MODEL=gemini-3.1-flash-lite
+GEMINI_IMAGE_MODEL=gemini-3.1-flash-lite
+GEMINI_INSIGHT_MODEL=gemini-3.1-flash-lite
 ```
 
-### 5. Setup Telegram Bot Token
+Keterangan env utama:
 
-`TELEGRAM_BOT_TOKEN` adalah token utama agar aplikasi Python bisa terhubung ke bot Telegram.
+| Variable | Description |
+|---|---|
+| `BOT_MODE` | Gunakan `polling` untuk setup lokal dan setup sederhana. |
+| `TELEGRAM_BOT_TOKEN` | Token bot dari BotFather. |
+| `ALLOWED_USER_ID` | Telegram user ID yang diizinkan memakai bot. |
+| `GOOGLE_SHEET_ID` | ID spreadsheet Google Sheets. |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Path file service account JSON, default `service_account.json`. |
+| `GEMINI_API_KEY` | API key Gemini. |
+| `GEMINI_MODEL` | Default Gemini model. |
 
-Cara mengisinya:
+### 3. Setup Telegram
 
-1. Buka Telegram.
-2. Cari `@BotFather`.
-3. Jalankan command:
+1. Buka Telegram dan cari `@BotFather`.
+2. Buat bot baru, lalu copy token ke `TELEGRAM_BOT_TOKEN`.
+3. Ambil Telegram user ID kamu, lalu isi ke `ALLOWED_USER_ID`.
+
+`ALLOWED_USER_ID` disarankan tetap dipakai karena bot ini berisi data keuangan pribadi.
+
+### 4. Setup Google Sheets
+
+Buat satu file Google Sheets kosong, lalu copy ID spreadsheet dari URL.
 
 ```text
-/newbot
+https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit
 ```
 
-4. Ikuti instruksi BotFather untuk membuat nama dan username bot.
-5. Setelah bot dibuat, BotFather akan memberikan token.
-6. Copy token tersebut ke `.env`.
-
-Contoh:
+Masukkan ID tersebut ke `.env`:
 
 ```env
-TELEGRAM_BOT_TOKEN=1234567890:AAExampleTelegramBotToken
+GOOGLE_SHEET_ID=SPREADSHEET_ID
 ```
 
-### 6. Setup Webhook Secret
+Lalu siapkan service account:
 
-`TELEGRAM_WEBHOOK_SECRET` digunakan sebagai secret tambahan agar webhook bot tidak mudah ditembak dari luar.
+1. Buat service account di Google Cloud.
+2. Download file JSON credential.
+3. Rename menjadi `service_account.json`.
+4. Letakkan file tersebut di root project.
+5. Share Google Sheets ke email `client_email` di file service account dengan akses **Editor**.
 
-Isi dengan random string bebas.
+Contoh struktur file tersedia di `service_account.example.json`. Jangan commit file credential asli ke GitHub.
 
-Contoh:
+Bot akan otomatis mengecek struktur Google Sheets saat startup. Jika spreadsheet masih kosong, tab belum ada, atau header sheet belum lengkap, struktur dasar akan dibuat otomatis.
 
-```env
-TELEGRAM_WEBHOOK_SECRET=denan-finance-secret-2026
-```
-
-Untuk production, gunakan string yang lebih random.
-
-Contoh lebih aman:
-
-```env
-TELEGRAM_WEBHOOK_SECRET=9f1c2b8e7a4d4c0aa123456789xyz
-```
-
-### 7. Setup Allowed Telegram User ID
-
-`ALLOWED_USER_ID` digunakan agar bot hanya bisa dipakai oleh user tertentu.
-
-Cara mendapatkan Telegram user ID:
-
-1. Buka Telegram.
-2. Cari bot pengecek user ID, misalnya `@RawDataBot` atau bot sejenis.
-3. Start bot tersebut.
-4. Copy angka user ID dari field `message.from.id`.
-5. Masukkan angka tersebut ke `.env`.
-
-Contoh output dari bot pengecek user ID:
-
-```json
-{
-  "message": {
-    "from": {
-      "id": 123456789,
-      "is_bot": false,
-      "first_name": "Your First Name",
-      "last_name": "Your Last Name",
-      "username": "your_username"
-    },
-    "chat": {
-      "id": 123456789,
-      "type": "private"
-    },
-    "text": "/start"
-  }
-}
-```
-
-Yang perlu diambil adalah angka ini:
-
-```env
-ALLOWED_USER_ID=123456789
-```
-
-Jika bot ingin dipakai beberapa user, sesuaikan implementasi authorization di project.
-
-### 8. Setup Google Sheets
-
-`GOOGLE_SHEET_ID` adalah ID spreadsheet yang digunakan sebagai database utama bot.
-
-Cara mengisinya:
-
-1. Buat Google Sheets baru.
-2. Copy Spreadsheet ID dari URL.
-
-Contoh URL:
-
-```text
-https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz1234567890/edit#gid=0
-```
-
-Spreadsheet ID-nya adalah bagian ini:
-
-```text
-1AbCdEfGhIjKlMnOpQrStUvWxYz1234567890
-```
-
-Masukkan ke `.env`:
-
-```env
-GOOGLE_SHEET_ID=1AbCdEfGhIjKlMnOpQrStUvWxYz1234567890
-```
-
-### 9. Setup Google Service Account
-
-`GOOGLE_SERVICE_ACCOUNT_JSON` adalah path menuju file credential service account Google Cloud.
-
-Cara setup:
-
-1. Buka Google Cloud Console.
-2. Buat project baru atau gunakan project yang sudah ada.
-3. Aktifkan **Google Sheets API**.
-4. Masuk ke menu **IAM & Admin**.
-5. Buka **Service Accounts**.
-6. Buat service account baru.
-7. Buat key baru dengan format JSON.
-8. Download file JSON tersebut.
-9. Simpan file JSON di root project.
-
-Contoh nama file:
-
-```text
-service_account.json
-```
-
-Lalu isi `.env`:
-
-```env
-GOOGLE_SERVICE_ACCOUNT_JSON=service_account.json
-```
-
-Pastikan file `service_account.json` tidak di-commit ke GitHub.
-
-Tambahkan ke `.gitignore`:
-
-```gitignore
-service_account.json
-.env
-```
-
-### 10. Share Google Sheets ke Service Account
-
-Bot tidak akan bisa membaca atau menulis Google Sheets sebelum spreadsheet dibagikan ke email service account.
-
-Cara share:
-
-1. Buka file `service_account.json`.
-2. Cari field `client_email`.
-
-Contoh:
-
-```json
-{
-  "client_email": "denan-finance-bot@project-id.iam.gserviceaccount.com"
-}
-```
-
-3. Copy email tersebut.
-4. Buka Google Sheets yang dipakai sebagai database.
-5. Klik **Share**.
-6. Paste email service account.
-7. Berikan akses **Editor**.
-8. Klik **Send** atau **Share**.
-
-Tanpa step ini, bot tidak bisa membaca dan menulis data ke Google Sheets.
-
-#### Setup Struktur Spreadsheet Otomatis
-
-Setelah `GOOGLE_SHEET_ID` dan akses service account benar, bot akan mengecek struktur Google Sheets saat startup dan saat endpoint `/test-sheets` dipanggil. Jika spreadsheet masih kosong, tab belum ada, atau header sheet belum lengkap, struktur dasar akan dibuat otomatis oleh aplikasi.
-
-Tab yang disiapkan otomatis meliputi:
+Tab yang disiapkan otomatis:
 
 ```text
 transactions
@@ -489,148 +339,201 @@ pending_expenses
 net_worth_snapshots
 ```
 
-Sheet `accounts` juga akan diberi rekening awal dengan saldo 0 agar bot langsung bisa membaca rekening umum seperti `Cash`, `BRI`, `BSI`, `BCA`, `DANA`, `GoPay`, dan `Seabank`. Saldo awalnya bisa kamu edit manual di Google Sheets setelah struktur dibuat.
+Sheet `accounts` juga akan diberi rekening awal dengan saldo 0:
 
-Kalau sebuah sheet sudah berisi data tetapi urutan header-nya benar-benar berbeda dari format bot, aplikasi tidak akan memaksa migrasi otomatis karena berisiko menggeser makna data lama. Untuk case seperti itu, rapikan header manual sesuai pesan error atau pindahkan data lama ke backup dulu.
+```text
+Cash, BRI, BSI, BCA, DANA, GoPay, Seabank
+```
 
-### 11. Setup Gemini API Key
+Saldo awal bisa diedit manual langsung di Google Sheets setelah struktur dibuat.
 
-`GEMINI_API_KEY` digunakan untuk fitur AI parser, image parser, dan finance insight.
+### 5. Setup Gemini
 
-Cara mengisinya:
+`GEMINI_API_KEY` digunakan untuk fitur AI parser, image parser, audit, coach, dan finance insight.
+
+Cara setup:
 
 1. Buka Google AI Studio.
 2. Buat API key Gemini.
-3. Copy API key tersebut.
+3. Copy API key.
 4. Masukkan ke `.env`.
 
-Contoh:
+Catatan:
 
-```env
-GEMINI_API_KEY=AIzaSyExampleGeminiApiKey
-GEMINI_MODEL=gemini-model-yang-kamu-pakai
-GEMINI_TEXT_MODEL=gemini-model-yang-kamu-pakai
-GEMINI_INTENT_MODEL=gemini-model-yang-kamu-pakai
-GEMINI_IMAGE_MODEL=gemini-model-yang-kamu-pakai
-GEMINI_INSIGHT_MODEL=gemini-model-yang-kamu-pakai
+- Project ini saat ini baru mendukung Gemini sebagai provider LLM.
+- Nama model Gemini bisa diganti melalui `.env`.
+- Provider lain seperti Llama, OpenAI, Groq, Ollama, atau OpenRouter belum didukung out of the box dan membutuhkan adapter/client baru.
+
+### 6. Cek setup dan jalankan bot
+
+Jalankan setup check:
+
+```bash
+python scripts/setup_check.py
 ```
 
-Catatan LLM support saat ini:
+Script ini mengecek file `.env`, env wajib, format `ALLOWED_USER_ID`, keberadaan `service_account.json`, package Python utama, akses Google Sheets, dan auto-setup schema jika credential sudah benar.
 
-- Project ini saat ini **baru mendukung Gemini** sebagai provider LLM.
-- Nama model Gemini bisa dikonfigurasi lewat `.env`.
-- `GEMINI_MODEL` digunakan sebagai default model.
-- `GEMINI_TEXT_MODEL`, `GEMINI_INTENT_MODEL`, `GEMINI_IMAGE_MODEL`, dan `GEMINI_INSIGHT_MODEL` bisa dipakai jika ingin membedakan model untuk parsing teks, intent routing, image parser, dan finance insight.
-- Provider lain seperti Llama, OpenAI, Groq, Ollama, atau OpenRouter belum didukung out of the box. Untuk provider selain Gemini, perlu menambahkan adapter/client LLM baru di kode.
+Untuk diagnostic yang lebih lengkap:
 
-Dengan kata lain, model Gemini-nya fleksibel lewat `.env`, tetapi provider LLM-nya masih Gemini.
-
-### 12. Setup App URL and Port
-
-`APP_PORT` adalah port yang digunakan aplikasi saat berjalan.
-
-Untuk local development, port bisa dibiarkan seperti ini:
-
-```env
-APP_PORT=8000
+```bash
+python scripts/debug_check.py
 ```
 
-`WEBHOOK_URL` adalah URL publik yang digunakan Telegram untuk mengirim update ke aplikasi bot.
-
-Untuk local development tanpa webhook publik, kamu bisa isi sementara dengan placeholder:
-
-```env
-WEBHOOK_URL=https://your-domain.com
-```
-
-Untuk production, isi dengan domain deploy yang aktif.
-
-Contoh jika menggunakan custom domain:
-
-```env
-WEBHOOK_URL=https://your-domain.com
-```
-
-Contoh jika menggunakan Wispbyte:
-
-```env
-WEBHOOK_URL=https://your-app-name.wispbyte.com
-```
-
-Pastikan tidak ada slash di akhir URL.
-
-Benar:
-
-```env
-WEBHOOK_URL=https://your-app-name.wispbyte.com
-```
-
-**Hindari:**
-
-```env
-WEBHOOK_URL=https://your-app-name.wispbyte.com/
-```
-
-### 13. Final `.env` Example
-
-Setelah semua step selesai, file `.env` kurang lebih akan terlihat seperti ini:
-
-```env
-# Telegram
-TELEGRAM_BOT_TOKEN=1234567890:AAExampleTelegramBotToken
-TELEGRAM_WEBHOOK_SECRET=9f1c2b8e7a4d4c0aa123456789xyz
-ALLOWED_USER_ID=123456789
-
-# Google Sheets
-GOOGLE_SHEET_ID=1AbCdEfGhIjKlMnOpQrStUvWxYz1234567890
-GOOGLE_SERVICE_ACCOUNT_JSON=service_account.json
-
-# Gemini
-GEMINI_API_KEY=AIzaSyExampleGeminiApiKey
-GEMINI_MODEL=gemini-model-yang-kamu-pakai
-GEMINI_TEXT_MODEL=gemini-model-yang-kamu-pakai
-GEMINI_INTENT_MODEL=gemini-model-yang-kamu-pakai
-GEMINI_IMAGE_MODEL=gemini-model-yang-kamu-pakai
-GEMINI_INSIGHT_MODEL=gemini-model-yang-kamu-pakai
-
-# App
-WEBHOOK_URL=https://your-app-name.wispbyte.com
-APP_PORT=8000
-```
-
-### 14. Run Locally
-
-Jalankan aplikasi:
+Jalankan bot secara lokal:
 
 ```bash
 python main.py
 ```
 
-Atau menggunakan Uvicorn:
+Selama proses Python masih berjalan, bot akan aktif menerima pesan dari Telegram.
 
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
-```
 
-Jika berhasil, aplikasi akan berjalan di:
+
+### 7. Deploy 24/7 dengan Wispbyte (Opsional)
+
+> Catatan: bagian ini opsional. Kalau hanya ingin mencoba bot secara lokal, cukup berhenti di langkah 6. Gunakan bagian ini jika ingin bot tetap hidup 24/7 tanpa perlu menyalakan laptop terus-menerus.
+
+Kalau ingin bot tetap aktif 24/7, kamu bisa menjalankan mode polling yang sama di Wispbyte atau hosting lain. Ini masih termasuk setup sederhana karena tidak membutuhkan webhook URL, webhook secret, public domain, atau konfigurasi FastAPI.
+
+Ada dua cara mudah untuk deploy ke Wispbyte:
 
 ```text
-http://localhost:8000
+Opsi A: GitHub Repository
+Project di-push ke GitHub → Wispbyte pull dari repo → app jalan
+
+Opsi B: Upload Manual
+Project di-upload/import langsung ke Wispbyte → app jalan
 ```
 
-### 15. Deploy and Run Webhook
+Keduanya tetap memakai start command yang sama:
 
-Jika menggunakan deployment seperti Wispbyte atau server lain:
+```bash
+python main.py
+```
 
-1. Upload project ke server.
-2. Pastikan `.env` sudah terisi.
-3. Pastikan `service_account.json` tersedia di server.
-4. Install dependencies.
-5. Jalankan aplikasi.
-6. Pastikan `WEBHOOK_URL` mengarah ke domain aktif.
-7. Cek apakah bot sudah bisa menerima pesan dari Telegram.
+##### Opsi A: Deploy Wispbyte melalui GitHub
+
+Opsi ini cocok kalau project kamu sudah rapi di GitHub dan kamu ingin update deployment dengan cara push commit.
+
+Alur sederhananya:
+
+```text
+GitHub Repository
+→ Wispbyte App
+→ Install dependencies
+→ Run python main.py
+→ Bot aktif 24/7 menggunakan polling
+```
+
+Langkah setup:
+
+1. Push project ini ke GitHub.
+2. Buat app/project baru di Wispbyte.
+3. Hubungkan app tersebut ke repository GitHub project ini.
+4. Pilih runtime Python sesuai versi yang kamu gunakan secara lokal.
+5. Isi environment variables yang sama seperti `.env.example`.
+6. Pastikan file `service_account.json` tersedia di environment deployment.
+7. Isi install command:
+
+```bash
+pip install -r requirements.txt
+```
+
+8. Isi start command:
+
+```bash
+python main.py
+```
+
+##### Opsi B: Deploy Wispbyte dengan upload manual
+
+Opsi ini cocok kalau kamu ingin cara paling cepat tanpa menghubungkan GitHub terlebih dahulu.
+
+Alur sederhananya:
+
+```text
+Project folder / ZIP
+→ Upload atau import manual ke Wispbyte
+→ Install dependencies
+→ Run python main.py
+→ Bot aktif 24/7 menggunakan polling
+```
+
+Langkah setup:
+
+1. Siapkan folder project di lokal.
+2. Pastikan file yang di-upload berisi kode project dan `requirements.txt`.
+3. Jangan upload file sensitif ke tempat publik.
+4. Upload folder atau ZIP project ke Wispbyte.
+5. Isi environment variables yang sama seperti `.env.example`.
+6. Pastikan `service_account.json` tersedia di environment deployment atau upload melalui fitur file/secret yang disediakan.
+7. Isi install command:
+
+```bash
+pip install -r requirements.txt
+```
+
+8. Isi start command:
+
+```bash
+python main.py
+```
+
+Kalau kamu memakai upload manual, setiap ada update kode kamu perlu upload ulang file terbaru. Kalau memakai GitHub, update biasanya lebih enak karena cukup push commit lalu redeploy.
+
+Environment variable utama yang perlu diisi di Wispbyte:
+
+```env
+BOT_MODE=polling
+
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+ALLOWED_USER_ID=your_telegram_user_id_here
+
+GOOGLE_SHEET_ID=your_spreadsheet_id_here
+GOOGLE_SERVICE_ACCOUNT_JSON=service_account.json
+
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-3.1-flash-lite
+GEMINI_TEXT_MODEL=gemini-3.1-flash-lite
+GEMINI_INTENT_MODEL=gemini-3.1-flash-lite
+GEMINI_IMAGE_MODEL=gemini-3.1-flash-lite
+GEMINI_INSIGHT_MODEL=gemini-3.1-flash-lite
+```
+
+Catatan penting untuk credential Google:
+
+- Jangan commit `service_account.json` asli ke GitHub.
+- Jika memakai GitHub deployment, simpan credential melalui fitur secret/file manager dari Wispbyte jika tersedia.
+- Jika memakai upload manual, `service_account.json` boleh disediakan di environment Wispbyte, tetapi tetap jangan dibagikan ke repository publik.
+- Jika platform deployment meminta path file credential, pastikan nilai `GOOGLE_SERVICE_ACCOUNT_JSON` sesuai dengan lokasi file tersebut.
+- Google Sheets tetap harus di-share ke email `client_email` dari service account dengan akses **Editor**.
+
+Catatan operasional:
+
+- Jangan menjalankan bot dengan token yang sama di dua tempat sekaligus, misalnya laptop dan Wispbyte bersamaan.
+- Jika sebelumnya bot pernah memakai webhook, mode polling akan menghapus webhook lama saat startup agar update Telegram bisa diterima melalui polling.
+- Selama proses `python main.py` tetap hidup di Wispbyte, bot akan terus mengambil update dari Telegram Bot API.
 
 ## Usage
+
+### Example Inputs
+
+| Input | Expected Behavior |
+|---|---|
+| `beli kopi 20k dari Cash` | Expense preview |
+| `bayar listrik 150k dari BRI` | Expense preview |
+| `gaji masuk 8jt ke BCA` | Income preview |
+| `BCA ke DANA 200k` | Transfer preview |
+| `tf gopay 100k dari BRI` | Transfer preview |
+| `Budi minjem 50k` | Debt preview |
+| `Budi bayar hutang 100k Cash` | Debt payment flow |
+| `galon 24k dibagi 4` | Split bill flow |
+| `makanan ikan 10k` | Warning preview |
+| `Budi bayar makan 100k` | Clarification prompt |
+| `/ask bulan ini boros di mana?` | AI finance Q&A berbasis data sheet |
+
+Di dalam bot, user juga bisa mengetik `/examples` untuk melihat contoh input cepat.
 
 ### Input Transaksi Harian
 
@@ -753,6 +656,7 @@ budget transport 300k
 │   ├── api/
 │   │   └── webhook.py
 │   ├── bot/
+│   │   ├── application.py
 │   │   ├── handlers.py
 │   │   ├── keyboards.py
 │   │   └── handler_parts/
@@ -772,6 +676,7 @@ budget transport 300k
 │   │   ├── gemini_langchain_client.py
 │   │   ├── gemini_parser.py
 │   │   ├── normalizer.py
+│   │   ├── parse_safety.py
 │   │   └── regex_parser.py
 │   ├── scheduler/
 │   │   └── jobs.py
@@ -788,43 +693,116 @@ budget transport 300k
 │   │   └── client.py
 │   └── config.py
 ├── assets/
-│   └── workflow-ai-finance-assistant.png
+│   ├── workflow-ai-finance-assistant.png
+│   └── tech-stack-workflow-personal-finance-assistant.png
 ├── scripts/
+│   ├── setup_check.py
 │   └── debug_check.py
 ├── .env.example
+├── .env.webhook.example
+├── service_account.example.json
 ├── .gitignore
 ├── main.py
 ├── README.md
 └── requirements.txt
 ```
 
-## Limitations
+Catatan struktur:
 
-Beberapa batasan project saat ini:
+- `main.py` adalah runtime entrypoint. Default-nya menjalankan polling mode.
+- `app/bot/application.py` berisi builder Telegram application dan registrasi handler agar tidak duplikatif antara mode lokal dan deployment.
+- `app/bot/handler_parts/` memecah handler besar menjadi modul yang lebih mudah dirawat.
+- `app/nlp/parse_safety.py` mengatur risk flag dan routing preview/clarification untuk hasil parsing yang rawan salah.
+- `scripts/setup_check.py` ditujukan untuk onboarding user baru.
+- `scripts/debug_check.py` ditujukan untuk diagnostic developer yang lebih lengkap.
 
-1. **Google Sheets bukan database transaksional penuh**  
-   Project ini menggunakan Google Sheets sebagai database. Sudah ada retry dan rollback handling, tetapi tetap tidak sekuat database seperti PostgreSQL untuk transaksi berskala besar.
+## Limitations and Troubleshooting
 
-2. **Parsing natural language belum selalu sempurna**  
-   Input yang terlalu ambigu masih bisa salah dibaca, terutama jika nominal, rekening, atau orang yang terlibat tidak jelas.
+### Limitations
 
-3. **AI insight bergantung pada kualitas data**  
-   Insight dari Gemini akan lebih akurat jika kategori, rekening, tanggal, dan tipe transaksi sudah rapi.
-
-4. **LLM provider saat ini baru Gemini**  
+1. **LLM provider saat ini baru Gemini**  
    Model Gemini bisa diganti melalui `.env`, tetapi provider selain Gemini seperti Llama, OpenAI, Groq, Ollama, atau OpenRouter belum didukung tanpa penambahan adapter/client baru.
 
-5. **Belum multi-user penuh**  
-   Bot ini dirancang sebagai personal finance bot, bukan aplikasi SaaS multi-user.
+2. **Google Sheets bukan database transaksional penuh**  
+   Project ini menggunakan Google Sheets sebagai data store utama. Sudah ada retry dan rollback handling, tetapi tetap tidak sekuat database seperti PostgreSQL untuk transaksi berskala besar atau multi-user berat.
 
-6. **Google Sheets quota limit**  
-   Jika terlalu banyak operasi read/write dalam waktu singkat, bot dapat terkena limit API Google Sheets.
+3. **Bot didesain untuk personal use**  
+   Bot ini belum dirancang sebagai aplikasi SaaS multi-user penuh. `ALLOWED_USER_ID` tetap disarankan agar data finance pribadi tidak terbuka untuk orang lain.
 
-7. **Image parser bergantung pada kualitas gambar**  
-   Struk yang buram, terpotong, atau terlalu gelap dapat membuat hasil parsing kurang akurat.
+4. **Parsing natural language tetap bisa ambigu**  
+   Project sudah memakai parse safety routing, warning preview, dan clarification flow, tetapi input yang terlalu ambigu tetap membutuhkan koreksi user.
 
-8. **Command dan business logic masih berkembang**  
-   Beberapa fitur seperti recurring, net worth, debt management, dan AI insight masih bisa terus disempurnakan sesuai kebutuhan pemakaian harian.
+5. **AI insight bergantung pada kualitas data**  
+   Insight dari Gemini akan lebih akurat jika kategori, rekening, tanggal, dan tipe transaksi sudah rapi.
+
+### Troubleshooting
+
+**Bot tidak merespons**
+
+- Pastikan `python main.py` masih berjalan.
+- Pastikan `TELEGRAM_BOT_TOKEN` benar.
+- Pastikan kamu mengirim pesan dari Telegram user ID yang sama dengan `ALLOWED_USER_ID`.
+- Jalankan `python scripts/setup_check.py` untuk mengecek setup dasar.
+
+**Google Sheets error**
+
+- Pastikan `GOOGLE_SHEET_ID` benar.
+- Pastikan file `service_account.json` ada di root project.
+- Pastikan Google Sheets sudah di-share ke email `client_email` service account dengan akses Editor.
+- Jika spreadsheet kosong, biarkan bot membuat tab dan header otomatis saat startup.
+
+**Gemini error**
+
+- Pastikan `GEMINI_API_KEY` benar.
+- Pastikan model Gemini yang ditulis di `.env` tersedia untuk API key kamu.
+- Ingat bahwa provider LLM yang saat ini didukung baru Gemini.
+
+**Package import error**
+
+Jalankan ulang instalasi dependency:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Advanced Deployment
+
+Bagian ini opsional. Untuk mencoba bot secara lokal atau menjalankannya 24/7 di Wispbyte, cukup gunakan polling mode pada bagian Installation.
+
+### Optional FastAPI webhook mode
+
+FastAPI tetap tersedia jika kamu ingin memakai webhook deployment. Mode ini bersifat advanced dan tidak wajib untuk menjalankan bot.
+
+Gunakan `.env.webhook.example` sebagai referensi:
+
+```env
+BOT_MODE=webhook
+APP_PORT=8000
+
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_WEBHOOK_SECRET=your_random_secret_here
+ALLOWED_USER_ID=your_telegram_user_id_here
+
+WEBHOOK_URL=https://your-domain.com
+
+GOOGLE_SHEET_ID=your_spreadsheet_id_here
+GOOGLE_SERVICE_ACCOUNT_JSON=service_account.json
+
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-3.1-flash-lite
+```
+
+Run webhook mode:
+
+```bash
+BOT_MODE=webhook python main.py
+```
+
+Atau pada platform yang menjalankan ASGI server:
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
 
 ## Author
 

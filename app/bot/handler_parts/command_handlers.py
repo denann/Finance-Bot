@@ -40,7 +40,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 *Analisis Gemini / RAG Finance*\n"
         "`/insight`, `/ask`, `/audit`, `/coach`\n\n"
 
-        "Ketik `/help` untuk panduan lengkap."
+        "Ketik `/examples` untuk contoh input cepat, atau `/help` untuk panduan lengkap."
     )
 
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -338,6 +338,38 @@ async def send_finance_insight_reply(
         add_session_chat_history(context, "assistant", answer)
 
     await update.message.reply_text(f"{prefix}\n\n{answer}")
+
+
+
+async def examples_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    text = (
+        "🧪 *Contoh Input Cepat*\n\n"
+        "Coba kirim salah satu contoh ini:\n\n"
+        "*Transaksi biasa*\n"
+        "• `beli kopi 20k dari Cash`\n"
+        "• `bayar listrik 150k dari BRI`\n"
+        "• `gaji masuk 8jt ke BCA`\n\n"
+        "*Transfer*\n"
+        "• `BCA ke DANA 200k`\n"
+        "• `tf gopay 100k dari BRI`\n\n"
+        "*Utang, piutang, dan talangan*\n"
+        "• `Budi minjem 50k`\n"
+        "• `Budi bayar hutang 100k Cash`\n"
+        "• `saya talangin Rina beli makan 40k`\n\n"
+        "*Split bill*\n"
+        "• `galon 24k dibagi 4`\n"
+        "• `makan 80k bagi dua sama Budi`\n\n"
+        "*AI finance insight*\n"
+        "• `/ask bulan ini boros di mana?`\n"
+        "• `/audit`\n"
+        "• `/coach`\n\n"
+        "Catatan: input yang ambigu akan diminta klarifikasi atau ditampilkan sebagai warning preview sebelum disimpan."
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def insight_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):

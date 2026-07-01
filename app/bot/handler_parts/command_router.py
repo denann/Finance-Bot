@@ -113,6 +113,14 @@ KNOWN_COMMANDS = {
         "description": "Lihat panduan lengkap penggunaan bot.",
         "destructive": False,
     },
+    "examples": {
+        "description": "Lihat contoh input cepat untuk mencoba bot.",
+        "destructive": False,
+    },
+    "contoh": {
+        "description": "Alias /examples untuk contoh input cepat.",
+        "destructive": False,
+    },
     "saldo": {
         "description": "Lihat saldo semua rekening.",
         "destructive": False,
@@ -177,6 +185,14 @@ KNOWN_COMMANDS = {
         "description": "Lihat transaksi lengkap untuk hari/minggu/bulan/rekening tertentu.",
         "destructive": False,
     },
+    "export": {
+        "description": "Export data transaksi untuk backup atau analisis lanjutan.",
+        "destructive": False,
+    },
+    "download_data": {
+        "description": "Alias export data transaksi.",
+        "destructive": False,
+    },
     "delete_txn": {
         "description": "Hapus transaksi dari hasil /last atau berdasarkan ID.",
         "destructive": True,
@@ -221,6 +237,12 @@ KNOWN_COMMANDS = {
 
 
 COMMAND_ALIASES = {
+    "examples": "examples",
+    "contoh": "examples",
+    "sample": "examples",
+    "export": "export",
+    "download_data": "download_data",
+    "download": "download_data",
     # laporan
     "hari": "harian",
     "hariini": "harian",
