@@ -1,14 +1,10 @@
 # Personal Finance Bot
 
-Personal Finance Bot adalah Telegram personal finance assistant untuk mencatat, mengelola, dan menganalisis keuangan pribadi langsung dari chat.
+Personal Finance Bot adalah Telegram personal finance assistant untuk mencatat, mengelola, dan menganalisis keuangan pribadi secara langsung melalui chat.
 
-Project ini dibuat untuk menyelesaikan masalah pencatatan keuangan harian yang sering terasa ribet, tidak konsisten, dan mudah terlupakan. User cukup mengetik input natural seperti `beli kopi 25k`, `topup gopay 100k dari bsi`, atau `ditalangin Budi bayar makan 100k`, lalu bot akan membantu membuat preview sebelum data disimpan ke Google Sheets.
+Project ini dibuat untuk menyelesaikan masalah pencatatan keuangan harian yang sering terasa ribet, tidak konsisten, dan mudah terlupakan. User cukup mengetik input sehari-hari seperti `beli kopi 25k`, `topup gopay 100k dari bsi`, atau `ditalangin Budi bayar makan 100k`, lalu bot akan membantu membuat preview sebelum data disimpan ke Google Sheets.
 
-Secara default, bot berjalan menggunakan **polling mode** supaya mudah dicoba: clone repository, isi `.env`, lalu jalankan `python main.py`. Untuk kebutuhan live 24/7, bot tetap bisa dijalankan dengan polling di Wispbyte atau hosting lain tanpa harus memakai webhook.
-
-Project ini cocok untuk pengguna yang ingin mencatat keuangan lewat chat, orang yang merasa spreadsheet manual terlalu ribet, dan developer yang ingin mempelajari integrasi Telegram Bot, Google Sheets, rule-based parser, automation, dan LLM.
-
-Prinsip utama project ini: **preview before write**, **user confirmation before saving**, **local rules for sensitive finance logic**, dan **Gemini as assistant, not final decision maker**.
+Project ini cocok untuk pengguna yang ingin mencatat keuangan lewat chat, terutama bagi orang yang merasa menginput melalui spreadsheet secara manual terlalu ribet, dan developer yang ingin mempelajari integrasi Telegram Bot, Google Sheets, rule-based parser, automation, dan LLM.
 
 ## Outline
 
@@ -200,7 +196,7 @@ Contoh penggunaan bot tersedia di bagian [Usage](#usage).
   <img src="assets/tech-stack-workflow-personal-finance-assistant.png" alt="Tech Stack Workflow of Personal Finance Assistant" width="1000">
 </p>
 
-Gambar di atas merangkum hubungan antar tools pada project ini. Untuk pemakaian default, jalur utamanya adalah Telegram Bot API → python-telegram-bot → Python business logic → Google Sheets. **FastAPI bukan syarat awal untuk menjalankan bot**, posisinya hanya untuk opsi deployment lanjutan.
+Gambar di atas merangkum hubungan antar tools pada project ini. Untuk pemakaian default, jalur utamanya adalah Telegram Bot API → python-telegram-bot → Python business logic → Google Sheets. **FastAPI merupakan langkah yang opsional untuk menjalankan bot**, posisinya hanya untuk opsi deployment lanjutan.
 
 ## System Architecture
 
