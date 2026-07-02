@@ -1,3 +1,5 @@
+"""Google Sheets client with gspread connection, schema bootstrap, atomic write, retry, rollback, and read/write helpers."""
+
 import contextvars
 import os
 import random
@@ -25,7 +27,7 @@ from app.config import (
     SHEET_TRANSACTIONS,
 )
 
-# Scope yang dibutuhkan untuk baca + tulis Sheets
+# Required scopes for reading and writing Sheets
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.file",
@@ -38,8 +40,7 @@ _schema_checked_sheets = set()
 _current_transaction = contextvars.ContextVar("sheets_current_transaction", default=None)
 
 
-# Definisi schema pusat untuk semua tab Google Sheets.
-# Saat startup, schema ini dipakai untuk membuat tab/header jika spreadsheet masih kosong.
+# Central schema definition for all required Google Sheets tabs.
 
 SHEET_SCHEMAS = {
     SHEET_TRANSACTIONS: [
@@ -96,11 +97,8 @@ SHEET_SCHEMAS = {
         "date",
         "note",
     ],
-    # Sheet categories mengikuti format yang sudah dipakai di spreadsheet lama.
-    # category_name = nama kategori utama
-    # type = expense/income
-    # emoji = ikon opsional untuk tampilan
-    # aliases = daftar kata kunci kategori, dipisah koma
+    # categories uses the existing spreadsheet format: category_name, type, emoji, aliases.
+    # aliases is a comma-separated keyword list used as category metadata.
     SHEET_CATEGORIES: [
         "category_name",
         "type",
@@ -220,9 +218,10 @@ DEFAULT_CATEGORY_ROWS = [
 
 
 class SheetsAtomicWriteError(RuntimeError):
-    """Error write Sheets yang sudah melewati retry dan memicu rollback."""
+    """Raised when a Google Sheets write fails after retry and rollback handling is needed."""
 
     def __init__(self, original_error, rollback_ok: bool | None = None, rollback_errors: list[str] | None = None):
+        """Helper for init in the Google Sheets data layer."""
         self.original_error = original_error
         self.rollback_ok = rollback_ok
         self.rollback_errors = rollback_errors or []
@@ -247,22 +246,14 @@ class SheetsAtomicWriteError(RuntimeError):
         super().__init__(message)
 
 
-# Google Sheets tidak punya transaksi atomic seperti database.
-# Class ini menyimpan snapshot sebelum write agar rollback tetap bisa dicoba kalau ada kegagalan.
+# Schema compatibility note for Google Sheets headers and rows.
+# Implementation note for this project-specific finance flow.
 
 class SheetsTransaction:
-    """Pembungkus transaksi best-effort untuk operasi Google Sheets.
-
-    Google Sheets bukan database transactional. Karena itu atomicity dibuat
-    dengan strategi kompensasi:
-    - setiap write sukses mendaftarkan aksi rollback;
-    - kalau write berikutnya gagal setelah retry, rollback dijalankan dari aksi
-      terakhir ke aksi pertama;
-    - kalau rollback juga gagal karena quota, error tetap dinaikkan agar user
-      tidak mengira operasi sukses.
-    """
+    """Best-effort transaction wrapper for Google Sheets operations."""
 
     def __init__(self, label: str | None = None):
+        """Helper for init in the Google Sheets data layer."""
         self.label = label or "sheets_operation"
         self.rollback_actions = []
         self.rollback_errors = []
@@ -270,11 +261,13 @@ class SheetsTransaction:
         self.failed = False
 
     def add_rollback(self, description: str, action):
+        """Helper for add rollback in the Google Sheets data layer."""
         if self.rolled_back:
             return
         self.rollback_actions.append((description, action))
 
     def rollback(self) -> bool:
+        """Helper for rollback in the Google Sheets data layer."""
         if self.rolled_back:
             return len(self.rollback_errors) == 0
 
@@ -292,10 +285,10 @@ class SheetsTransaction:
 
 @contextmanager
 def sheets_transaction(label: str | None = None):
-    """Aktifkan rollback otomatis untuk semua write Sheets di dalam blok ini."""
+    """Create a best-effort transaction context for multiple Google Sheets writes."""
     parent = _current_transaction.get()
     if parent is not None:
-        # Nested operation tetap ikut transaksi paling luar.
+        # Implementation note for this project-specific finance flow.
         yield parent
         return
 
@@ -313,7 +306,7 @@ def sheets_transaction(label: str | None = None):
 
 
 def rollback_current_sheets_transaction() -> bool:
-    """Rollback transaksi Sheets aktif, dipakai untuk logical failure non-exception."""
+    """Helper for rollback current sheets transaction in the Google Sheets data layer."""
     tx = _current_transaction.get()
     if tx is None:
         return False
@@ -323,10 +316,12 @@ def rollback_current_sheets_transaction() -> bool:
 
 
 def get_current_sheets_transaction() -> SheetsTransaction | None:
+    """Retrieve data needed for current sheets transaction."""
     return _current_transaction.get()
 
 
 def _is_quota_or_transient_error(exc: Exception) -> bool:
+    """Check a boolean condition for is quota or transient error."""
     msg = str(exc).lower()
     return any(
         marker in msg
@@ -346,6 +341,7 @@ def _is_quota_or_transient_error(exc: Exception) -> bool:
 
 
 def _call_with_retry(fn, *, max_retries: int | None = None):
+    """Helper for call with retry in the Google Sheets data layer."""
     retries = max_retries if max_retries is not None else int(os.getenv("SHEETS_MAX_RETRIES", "5"))
     base_delay = float(os.getenv("SHEETS_RETRY_BASE_DELAY", "1.0"))
 
@@ -362,6 +358,7 @@ def _call_with_retry(fn, *, max_retries: int | None = None):
 
 
 def _execute_write(fn):
+    """Helper for execute write in the Google Sheets data layer."""
     tx = _current_transaction.get()
 
     if tx is not None and tx.failed:
@@ -386,10 +383,12 @@ def _execute_write(fn):
 
 
 def _execute_read(fn):
+    """Helper for execute read in the Google Sheets data layer."""
     return _call_with_retry(fn)
 
 
 def _get_column_letter(col_number: int) -> str:
+    """Retrieve data needed for column letter."""
     result = ""
     number = int(col_number)
     while number:
@@ -399,6 +398,7 @@ def _get_column_letter(col_number: int) -> str:
 
 
 def _extract_updated_row_index(response) -> int | None:
+    """Extract the important part of the input for updated row index."""
     text = str(response or "")
     match = re.search(r"![A-Z]+(\d+)(?::[A-Z]+(\d+))?", text)
     if match:
@@ -407,6 +407,7 @@ def _extract_updated_row_index(response) -> int | None:
 
 
 def _extract_updated_row_range(response) -> tuple[int, int] | None:
+    """Extract the important part of the input for updated row range."""
     text = str(response or "")
     match = re.search(r"![A-Z]+(\d+):[A-Z]+(\d+)", text)
     if match:
@@ -419,6 +420,7 @@ def _extract_updated_row_range(response) -> tuple[int, int] | None:
 
 
 def _pad_row(row: list, width: int) -> list:
+    """Helper for pad row in the Google Sheets data layer."""
     values = list(row or [])
     if len(values) < width:
         values += [""] * (width - len(values))
@@ -426,42 +428,50 @@ def _pad_row(row: list, width: int) -> list:
 
 
 def _clean_header(values: list) -> list[str]:
+    """Clean and standardize clean header."""
     return [str(value or "").strip() for value in values]
 
 
 def _has_data_rows(values: list[list]) -> bool:
+    """Check a boolean condition for has data rows."""
     return any(any(str(cell or "").strip() for cell in row) for row in values[1:])
 
 
 def _is_blank_header(header: list[str]) -> bool:
+    """Check a boolean condition for is blank header."""
     return not header or not any(str(cell or "").strip() for cell in header)
 
 
 def _header_has_expected_prefix(header: list[str], expected_header: list[str]) -> bool:
+    """Helper for header has expected prefix in the Google Sheets data layer."""
     return header[:len(expected_header)] == expected_header
 
 
 def _header_is_safe_prefix(header: list[str], expected_header: list[str]) -> bool:
-    # Safe untuk sheet yang header-nya versi lama tetapi urutannya masih prefix
-    # dari schema baru. Contoh: assets lama tanpa kolom asset_type dst.
+    # Safe for old headers whose column order is still a prefix of the new schema.
+    # of the new schema. Example: old assets sheets without asset_type columns.
+    """Helper for header is safe prefix in the Google Sheets data layer."""
     if len(header) > len(expected_header):
         return False
     return header == expected_header[:len(header)]
 
 
 def _resize_columns_if_needed(sheet, width: int):
+    """Helper for resize columns if needed in the Google Sheets data layer."""
     current_cols = int(getattr(sheet, "col_count", 0) or 0)
     if current_cols < width:
         _call_with_retry(lambda: sheet.add_cols(width - current_cols))
 
 
 def _write_header(sheet, header: list[str]):
+    """Helper for write header in the Google Sheets data layer."""
     _resize_columns_if_needed(sheet, len(header))
     end_col = _get_column_letter(len(header))
     _call_with_retry(lambda: sheet.update(f"A1:{end_col}1", [header], value_input_option="RAW"))
 
 
 def _default_rows_for_sheet(sheet_name: str) -> list[list]:
+    """Helper for default rows for sheet in the Google Sheets data layer."""
     if sheet_name == SHEET_ACCOUNTS:
         return DEFAULT_ACCOUNT_ROWS
     if sheet_name == SHEET_CATEGORIES:
@@ -470,6 +480,7 @@ def _default_rows_for_sheet(sheet_name: str) -> list[list]:
 
 
 def _seed_default_rows_if_empty(sheet_name: str, sheet, values: list[list]) -> list[str]:
+    """Helper for seed default rows if empty in the Google Sheets data layer."""
     default_rows = _default_rows_for_sheet(sheet_name)
     if not default_rows or _has_data_rows(values):
         return []
@@ -479,6 +490,7 @@ def _seed_default_rows_if_empty(sheet_name: str, sheet, values: list[list]) -> l
 
 
 def _get_or_create_worksheet(spreadsheet, sheet_name: str):
+    """Retrieve data needed for or create worksheet."""
     try:
         return _call_with_retry(lambda: spreadsheet.worksheet(sheet_name))
     except WorksheetNotFound:
@@ -494,11 +506,7 @@ def _get_or_create_worksheet(spreadsheet, sheet_name: str):
 
 
 def ensure_sheet_schema(sheet_name: str, sheet=None) -> dict:
-    """Pastikan tab dan header Google Sheets siap dipakai bot.
-
-    Fungsi ini idempotent dan sengaja tidak ikut rollback transaksi Telegram.
-    Schema spreadsheet adalah bagian setup aplikasi, bukan bagian dari satu input user.
-    """
+    """Ensure one worksheet has the expected header without rewriting existing data unsafely."""
     global _worksheets, _schema_checked_sheets
 
     clean_name = str(sheet_name or "").strip()
@@ -519,6 +527,7 @@ def ensure_sheet_schema(sheet_name: str, sheet=None) -> dict:
         _worksheets[clean_name] = sheet
 
     actions = []
+    # Read the whole sheet first because schema repair must be conservative when old data already exists.
     values = _call_with_retry(lambda: sheet.get_all_values())
     header = _clean_header(values[0]) if values else []
     header_trimmed = header[:len(expected_header)]
@@ -528,22 +537,25 @@ def ensure_sheet_schema(sheet_name: str, sheet=None) -> dict:
         _write_header(sheet, expected_header)
         actions.append("header_created")
     elif _header_has_expected_prefix(header, expected_header):
-        # Header sudah sesuai. Extra columns setelah schema utama tetap dibiarkan.
+        # The header already matches. Extra columns after the main schema are left untouched.
         pass
     elif _header_is_safe_prefix(header_trimmed, expected_header):
+        # Extend old-but-compatible headers, for example when a sheet is missing newly added optional columns.
         _write_header(sheet, expected_header)
         actions.append("header_extended")
     elif not has_data:
         _write_header(sheet, expected_header)
         actions.append("header_repaired_empty_sheet")
     else:
+        existing_header = ", ".join([h for h in header if h]) or "-"
         raise ValueError(
             f"Format header sheet '{clean_name}' tidak cocok dan sheet sudah berisi data. "
             "Bot tidak mengubah urutan kolom otomatis agar data lama tidak rusak. "
+            f"Header yang ada: {existing_header}. "
             f"Header yang dibutuhkan: {', '.join(expected_header)}"
         )
 
-    # Re-read setelah header dibuat supaya seed memakai kondisi terbaru.
+    # Re-read after header changes so default seeding uses the latest state.
     if actions:
         values = _call_with_retry(lambda: sheet.get_all_values())
 
@@ -558,7 +570,7 @@ def ensure_sheet_schema(sheet_name: str, sheet=None) -> dict:
 
 
 def ensure_spreadsheet_schema() -> list[dict]:
-    """Buat semua tab wajib dan header jika spreadsheet masih kosong/belum siap."""
+    """Ensure all required worksheets exist and have compatible headers."""
     spreadsheet = get_spreadsheet()
     results = []
 
@@ -571,10 +583,7 @@ def ensure_spreadsheet_schema() -> list[dict]:
 
 
 def get_spreadsheet():
-    """
-    Singleton pattern — koneksi dibuat sekali, dipakai ulang.
-    Mencegah autentikasi berulang setiap request.
-    """
+    """Retrieve data needed for spreadsheet."""
     global _client, _spreadsheet
 
     if _spreadsheet is None:
@@ -589,13 +598,7 @@ def get_spreadsheet():
 
 
 def get_sheet(sheet_name: str):
-    """Ambil worksheet berdasarkan nama tab.
-
-    Worksheet object di-cache supaya setiap append/update tidak memanggil
-    lookup worksheet berulang. Ini penting untuk mengurangi read request
-    Google Sheets, terutama pada flow debt/split bill yang menulis beberapa
-    sheet sekaligus.
-    """
+    """Retrieve data needed for sheet."""
     global _worksheets
 
     clean_name = str(sheet_name or "").strip()
@@ -613,7 +616,7 @@ def get_sheet(sheet_name: str):
 
 
 def append_row(sheet_name: str, row: list):
-    """Tambah satu baris baru di akhir sheet dengan retry + rollback."""
+    """Append data or text to row."""
     sheet = get_sheet(sheet_name)
     response = _execute_write(lambda: sheet.append_row(row, value_input_option="USER_ENTERED"))
 
@@ -629,12 +632,7 @@ def append_row(sheet_name: str, row: list):
 
 
 def append_row_raw(sheet_name: str, row: list):
-    """Tambah satu baris baru tanpa auto-format Google Sheets.
-
-    Dipakai untuk field yang harus tetap persis sebagai text, misalnya
-    budgets.month = `YYYY-MM`. Kalau pakai USER_ENTERED, Sheets bisa
-    mengubah `2026-06` menjadi date/serial number.
-    """
+    """Append data or text to row raw."""
     sheet = get_sheet(sheet_name)
     response = _execute_write(lambda: sheet.append_row(row, value_input_option="RAW"))
 
@@ -650,10 +648,7 @@ def append_row_raw(sheet_name: str, row: list):
 
 
 def append_rows(sheet_name: str, rows: list[list]):
-    """
-    Tambah banyak baris sekaligus.
-    Ini lebih cepat daripada append_row berkali-kali.
-    """
+    """Append data or text to rows."""
     if not rows:
         return None
 
@@ -675,23 +670,19 @@ def append_rows(sheet_name: str, rows: list[list]):
 
 
 def get_all_records(sheet_name: str) -> list[dict]:
-    """Ambil semua data sebagai list of dict (header = key).
-
-    Gunakan UNFORMATTED_VALUE supaya angka decimal dari locale Indonesia
-    tidak salah dibaca oleh gspread. Contoh nilai sheet 71387,5
-    harus terbaca 71387.5, bukan 713875.
-    """
+    """Retrieve data needed for all records."""
     sheet = get_sheet(sheet_name)
     return _execute_read(lambda: sheet.get_all_records(value_render_option="UNFORMATTED_VALUE"))
 
 
 def get_all_values(sheet_name: str) -> list[list]:
+    """Retrieve data needed for all values."""
     sheet = get_sheet(sheet_name)
     return _execute_read(lambda: sheet.get_all_values())
 
 
 def update_cell(sheet_name: str, row: int, col: int, value):
-    """Perbarui satu cell berdasarkan posisi row & col (1-indexed)."""
+    """Update cell while keeping related data consistent."""
     sheet = get_sheet(sheet_name)
     tx = _current_transaction.get()
 
@@ -713,11 +704,7 @@ def update_cell(sheet_name: str, row: int, col: int, value):
 
 
 def find_row_index(sheet_name: str, search_col: int, search_value: str) -> int | None:
-    """
-    Cari index baris berdasarkan nilai di kolom tertentu.
-    Kembalikan None jika tidak ditemukan.
-    Row index memakai format 1-indexed (baris 1 = header).
-    """
+    """Helper for find row index in the Google Sheets data layer."""
     sheet = get_sheet(sheet_name)
     col_values = _execute_read(lambda: sheet.col_values(search_col))
 
@@ -729,18 +716,12 @@ def find_row_index(sheet_name: str, search_col: int, search_value: str) -> int |
 
 
 def delete_row(sheet_name: str, row_index: int):
-    """
-    Hapus satu baris dari worksheet.
-    row_index memakai format 1-indexed.
-    """
+    """Delete row with validation for related data."""
     delete_rows(sheet_name, [row_index])
 
 
 def delete_rows(sheet_name: str, row_indices: list[int]):
-    """
-    Hapus banyak baris dari worksheet.
-    Hapus dari bawah ke atas supaya index row tidak bergeser.
-    """
+    """Delete rows with validation for related data."""
     if not row_indices:
         return None
 
@@ -768,10 +749,7 @@ def delete_rows(sheet_name: str, row_indices: list[int]):
 
 
 def update_row(sheet_name: str, row_index: int, row_values: list):
-    """
-    Perbarui satu baris penuh di worksheet.
-    row_index memakai format 1-indexed.
-    """
+    """Update row while keeping related data consistent."""
     sheet = get_sheet(sheet_name)
     tx = _current_transaction.get()
     width = len(row_values)
@@ -797,7 +775,7 @@ def update_row(sheet_name: str, row_index: int, row_values: list):
 
 
 def update_range(sheet_name: str, cell_range: str, values: list[list]):
-    """Perbarui range worksheet dengan snapshot rollback."""
+    """Update range while keeping related data consistent."""
     sheet = get_sheet(sheet_name)
     tx = _current_transaction.get()
 

@@ -1,18 +1,12 @@
-# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
+"""Handlers for assets and net worth, including asset creation, value updates, deactivation, snapshots, and history."""
+
+# Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
 
 def parse_asset_quantity_input(value: str) -> dict | None:
-    """
-    Deteksi input aset berbasis satuan:
-    - 41g / 41 gr / 41 gram
-    - 1 buah / 2 unit
-    - 41 gram @ 2410000
-    - 1 buah @ 8000000
-
-    Kembalikan dict {quantity, unit, price_per_unit?} atau None.
-    """
+    """Parse input into structured data for the Telegram bot flow."""
     raw = str(value or "").strip().lower()
     raw = raw.replace("@", " @ ")
     raw = re.sub(r"\s+", " ", raw).strip()
@@ -48,7 +42,7 @@ def parse_asset_quantity_input(value: str) -> dict | None:
 
 
 def _parse_human_amount_atom(value: str | None) -> float:
-    """Parsing satu token nominal: 2410000, 2.41jt, 2,41 juta, 91.457k."""
+    """Parse input into structured data for the Telegram bot flow."""
     raw = str(value or "").strip().lower()
     if not raw:
         return 0.0
@@ -61,7 +55,7 @@ def _parse_human_amount_atom(value: str | None) -> float:
 
     raw = re.sub(r"(jt|juta|rb|ribu|k)\b", "", raw).strip()
 
-    # Kalau ada suffix k/juta, titik/koma dianggap desimal: 2.41jt -> 2.41 * 1jt.
+    # Implementation note for this project-specific finance flow.
     if multiplier != 1:
         raw = raw.replace(",", ".")
         raw = re.sub(r"[^0-9.]", "", raw)
@@ -70,16 +64,13 @@ def _parse_human_amount_atom(value: str | None) -> float:
             raw = first + "." + "".join(rest)
         return float(raw or 0) * multiplier
 
-    # Tanpa suffix, titik/koma dianggap pemisah ribuan.
+    # Implementation note for this project-specific finance flow.
     raw = re.sub(r"[^0-9]", "", raw)
     return float(raw or 0)
 
 
 def _safe_eval_amount_expression(expr: str) -> float:
-    """Evaluasi ekspresi nominal sederhana seperti 94k/2 atau 37.5k x 3.
-
-    Hanya operator +, -, *, / yang diizinkan. Tidak memakai eval langsung.
-    """
+    """Helper for safe eval amount expression in the Telegram bot flow."""
     allowed_ops = {
         ast.Add: operator.add,
         ast.Sub: operator.sub,
@@ -90,6 +81,7 @@ def _safe_eval_amount_expression(expr: str) -> float:
     }
 
     def _eval(node):
+        """Helper for eval in the Telegram bot flow."""
         if isinstance(node, ast.Expression):
             return _eval(node.body)
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
@@ -110,27 +102,22 @@ def _safe_eval_amount_expression(expr: str) -> float:
 
 
 def parse_human_amount(value: str | None) -> float:
-    """Parsing angka manusia, termasuk ekspresi edit seperti `94k/2`.
-
-    Contoh:
-    - `94k/2` -> 47000
-    - `37.5k` -> 37500
-    - `2.41jt` -> 2410000
-    """
+    """Parse input into structured data for the Telegram bot flow."""
     raw = str(value or "").strip().lower()
     if not raw:
         return 0.0
 
-    # Jangan perlakukan tanggal seperti 01-05-2026 sebagai ekspresi matematika.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     if re.fullmatch(r"\d{1,2}[-/]\d{1,2}[-/]\d{2,4}", raw):
         return _parse_human_amount_atom(raw)
 
     has_math_operator = bool(re.search(r"[+*/x×:]|(?<=\s)-(?:\s|\d)", raw))
     if has_math_operator:
-        # Ubah token nominal bersuffix menjadi angka penuh sebelum dievaluasi.
+        # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
         token_pattern = re.compile(r"\d+(?:[.,]\d+)?\s*(?:jt|juta|rb|ribu|k)?", re.IGNORECASE)
 
         def repl(match: re.Match) -> str:
+            """Helper for repl in the Telegram bot flow."""
             token = match.group(0)
             return str(_parse_human_amount_atom(token))
 
@@ -149,13 +136,7 @@ def parse_human_amount(value: str | None) -> float:
 
 
 def parse_asset_extra_fields(extra_parts: list[str]) -> dict:
-    """Parsing field opsional asset add setelah description.
-
-    Mendukung:
-    - harga_beli=2559000 | tanggal_beli=2026-06-10
-    - buy_price=2.4 juta | buy_date=10/06/2026
-    - 2559000 | 2026-06-10  (fallback berdasarkan posisi)
-    """
+    """Parse input into structured data for the Telegram bot flow."""
     result = {
         "purchase_price_per_unit": None,
         "purchase_date": "",
@@ -196,6 +177,7 @@ def parse_asset_extra_fields(extra_parts: list[str]) -> dict:
 
 
 def format_asset_gain_lines(asset: dict, indent: str = "   ") -> list[str]:
+    """Format asset gain lines into readable text."""
     gain = calculate_asset_gain(asset)
     if not gain.get("has_purchase_info"):
         return []
@@ -223,6 +205,7 @@ def format_asset_gain_lines(asset: dict, indent: str = "   ") -> list[str]:
 
 
 def guess_asset_category_and_name(name: str, category: str | None = None) -> tuple[str, str]:
+    """Helper for guess asset category and name in the Telegram bot flow."""
     name_clean = str(name or "").strip()
     category_clean = str(category or "").strip()
     low = name_clean.lower()
@@ -234,6 +217,7 @@ def guess_asset_category_and_name(name: str, category: str | None = None) -> tup
 
 
 def build_asset_unit_price_prompt(data: dict) -> str:
+    """Build the data structure or message text for asset unit price prompt."""
     return (
         "💰 *Isi harga satuan aset*\n\n"
         f"📦 Nama: *{data.get('name')}*\n"
@@ -247,13 +231,7 @@ def build_asset_unit_price_prompt(data: dict) -> str:
     )
 
 def parse_pipe_add_args(args: list[str], item_type: str) -> dict:
-    """
-    Format:
-    /asset_add Nama | value | category | description
-    /asset_add Emas Antam | 41 gram | Gold | Tabungan emas
-    /asset_add Laptop | 1 buah | Electronics | Laptop kerja
-    /liability_add Nama | balance | category | description
-    """
+    """Parse input into structured data for the Telegram bot flow."""
     raw = " ".join(args).strip()
 
     if not raw:
@@ -321,13 +299,7 @@ def parse_pipe_add_args(args: list[str], item_type: str) -> dict:
 
 
 def parse_natural_asset_add(text: str) -> dict | None:
-    """
-    Natural asset input sederhana:
-    - add emas 41 gram
-    - add laptop 1 buah
-    - tambah aset emas 41 gram
-    - tambah laptop 1 unit
-    """
+    """Parse input into structured data for the Telegram bot flow."""
     raw = str(text or "").strip()
     match = re.fullmatch(
         r"(?:add|tambah)(?:\s+aset)?\s+(.+?)\s+(\d+(?:[.,]\d+)?)\s*(g|gr|gram|grams|buah|unit|pcs|pc|lembar|kg|kilogram)",
@@ -368,11 +340,7 @@ def parse_natural_asset_add(text: str) -> dict | None:
     }
 
 def parse_pipe_update_args(args: list[str], command_name: str) -> tuple[str, dict]:
-    """
-    Format:
-    /asset_update asset_xxx | value=9000000 | category=Electronics
-    /liability_update liab_xxx | balance=1000000
-    """
+    """Parse input into structured data for the Telegram bot flow."""
     raw = " ".join(args).strip()
 
     if not raw:
@@ -413,6 +381,7 @@ def parse_pipe_update_args(args: list[str], command_name: str) -> tuple[str, dic
 
 
 def short_networth_id(record_id: str) -> str:
+    """Helper for short networth id in the Telegram bot flow."""
     record_id = str(record_id or "")
     if len(record_id) <= 18:
         return record_id
@@ -420,6 +389,7 @@ def short_networth_id(record_id: str) -> str:
 
 
 def build_networth_text(summary: dict) -> str:
+    """Build the data structure or message text for networth text."""
     total_accounts = summary.get("total_accounts", 0)
     total_assets = summary.get("total_assets", 0)
     net_worth = summary.get("net_worth", 0)
@@ -485,6 +455,7 @@ def build_networth_text(summary: dict) -> str:
 
 
 def build_assets_text(assets: list[dict]) -> str:
+    """Build the data structure or message text for assets text."""
     if not assets:
         return (
             "📭 Belum ada aset aktif.\n\n"
@@ -545,6 +516,7 @@ def build_assets_text(assets: list[dict]) -> str:
     return "\n".join(lines)
 
 def build_liabilities_text(liabilities: list[dict]) -> str:
+    """Build the data structure or message text for liabilities text."""
     if not liabilities:
         return (
             "📭 Belum ada liabilitas aktif.\n\n"
@@ -573,6 +545,7 @@ def build_liabilities_text(liabilities: list[dict]) -> str:
 
 
 def build_update_result_text(result: dict, label: str) -> str:
+    """Build the data structure or message text for update result text."""
     before = result.get("before", {}) or {}
     after = result.get("after", {}) or {}
     updates = result.get("updates", {}) or {}
@@ -597,6 +570,7 @@ def build_update_result_text(result: dict, label: str) -> str:
 
 
 def build_snapshots_text(snapshots: list[dict]) -> str:
+    """Build the data structure or message text for snapshots text."""
     if not snapshots:
         return "📭 Belum ada snapshot net worth."
 
@@ -613,9 +587,7 @@ def build_snapshots_text(snapshots: list[dict]) -> str:
     return "\n".join(lines)
 
 async def networth_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /networth — lihat net worth summary
-    """
+    """Handle the Telegram request for networth."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -629,9 +601,7 @@ async def networth_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def assets_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /assets — lihat daftar aset aktif
-    """
+    """Handle the Telegram request for assets."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -645,9 +615,7 @@ async def assets_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def liabilities_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /liabilities — lihat daftar liabilitas aktif
-    """
+    """Handle the Telegram request for liabilities."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -661,6 +629,7 @@ async def liabilities_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def build_asset_added_text(asset: dict) -> str:
+    """Build the data structure or message text for asset added text."""
     quantity = asset.get("quantity", "")
     unit = asset.get("unit", "")
     price = float(asset.get("price_per_unit", 0) or 0)
@@ -698,7 +667,7 @@ def build_asset_added_text(asset: dict) -> str:
 
 
 def asset_edit_or_continue_keyboard() -> InlineKeyboardMarkup:
-    """Keyboard preview aset tanpa import transaction_flow agar tidak terjadi circular import."""
+    """Helper for asset edit or continue keyboard in the Telegram bot flow."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✏️ Edit dulu", callback_data="editflow:edit:asset"),
@@ -709,7 +678,7 @@ def asset_edit_or_continue_keyboard() -> InlineKeyboardMarkup:
 
 
 def build_asset_confirm_preview(data: dict) -> str:
-    """Preview tambah aset sebelum disimpan."""
+    """Build the data structure or message text for asset confirm preview."""
     quantity = data.get("quantity")
     unit = data.get("unit", "") or ""
     price = float(data.get("price_per_unit", 0) or 0)
@@ -775,14 +744,17 @@ ASSET_ADD_CANCEL_WORDS = {"cancel", "batal", "/cancel"}
 
 
 def _asset_flow_is_skip(text: str) -> bool:
+    """Helper for asset flow is skip in the Telegram bot flow."""
     return str(text or "").strip().lower() in ASSET_ADD_SKIP_WORDS
 
 
 def _asset_flow_is_cancel(text: str) -> bool:
+    """Helper for asset flow is cancel in the Telegram bot flow."""
     return str(text or "").strip().lower() in ASSET_ADD_CANCEL_WORDS
 
 
 def _asset_flow_prompt(step: str, data: dict | None = None) -> str:
+    """Helper for asset flow prompt in the Telegram bot flow."""
     data = data or {}
 
     prompts = {
@@ -852,6 +824,7 @@ def _asset_flow_prompt(step: str, data: dict | None = None) -> str:
 
 
 def start_asset_add_flow(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Helper for start asset add flow in the Telegram bot flow."""
     context.user_data.pop("pending_asset_price", None)
     context.user_data.pop("pending_asset_confirm", None)
     context.user_data[ASSET_ADD_FLOW_KEY] = {
@@ -861,6 +834,7 @@ def start_asset_add_flow(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def _build_asset_data_from_flow(data: dict) -> dict:
+    """Build the data structure or message text for asset data from flow."""
     name = str(data.get("name") or "").strip()
     category = str(data.get("category") or "").strip()
     name, category = guess_asset_category_and_name(name, category)
@@ -897,6 +871,7 @@ def _build_asset_data_from_flow(data: dict) -> dict:
 
 
 async def handle_pending_asset_add_flow(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
+    """Helper for handle pending asset add flow in the Telegram bot flow."""
     flow = context.user_data.get(ASSET_ADD_FLOW_KEY)
     if not flow:
         return False
@@ -1024,9 +999,7 @@ async def handle_pending_asset_add_flow(update: Update, context: ContextTypes.DE
 
 
 async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /asset_add Nama | nominal | kategori | deskripsi
-    """
+    """Handle the Telegram request for asset add."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1073,9 +1046,7 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def liability_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /liability_add Nama | nominal | kategori | deskripsi
-    """
+    """Handle the Telegram request for liability add."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1111,9 +1082,7 @@ async def liability_add_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def asset_update_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /asset_update asset_id | value=9000000 | category=Electronics
-    """
+    """Handle the Telegram request for asset update."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1149,9 +1118,7 @@ async def asset_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def liability_update_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /liability_update liab_id | balance=1000000
-    """
+    """Handle the Telegram request for liability update."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1185,9 +1152,7 @@ async def liability_update_handler(update: Update, context: ContextTypes.DEFAULT
 
 
 async def asset_off_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /asset_off asset_id
-    """
+    """Handle the Telegram request for asset off."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1215,9 +1180,7 @@ async def asset_off_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def liability_off_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /liability_off liab_id
-    """
+    """Handle the Telegram request for liability off."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1245,9 +1208,7 @@ async def liability_off_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def networth_snapshot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /networth_snapshot — simpan snapshot net worth hari ini
-    """
+    """Handle the Telegram request for networth snapshot."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1271,9 +1232,7 @@ async def networth_snapshot_handler(update: Update, context: ContextTypes.DEFAUL
 
 
 async def networth_history_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /networth_history — lihat snapshot terakhir
-    """
+    """Handle the Telegram request for networth history."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return

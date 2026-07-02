@@ -1,3 +1,5 @@
+"""Application entry point. This module selects polling or webhook runtime, initializes the Telegram app, scheduler, and Google Sheets schema."""
+
 from __future__ import annotations
 
 import asyncio
@@ -22,8 +24,8 @@ from app.scheduler.jobs import create_scheduler
 from app.sheets.client import get_spreadsheet, ensure_spreadsheet_schema
 
 
-# FastAPI tetap tersedia untuk mode deployment lanjutan.
-# Untuk penggunaan lokal dan Wispbyte polling, default runtime project adalah polling mode.
+# Implementation note for this project-specific finance flow.
+# Implementation note for this project-specific finance flow.
 app = FastAPI(title="Finance Bot")
 app.include_router(webhook_router)
 
@@ -35,7 +37,7 @@ _webhook_telegram_started = False
 
 
 def validate_runtime_config(mode: str = BOT_MODE):
-    """Validasi env wajib sesuai runtime mode yang dipilih."""
+    """Validate required environment variables for the selected runtime mode."""
     missing = []
 
     base_required = {
@@ -66,7 +68,7 @@ def validate_runtime_config(mode: str = BOT_MODE):
 
 
 def ensure_schema_on_startup():
-    """Siapkan schema Google Sheets jika credential dan akses sudah benar."""
+    """Prepare Google Sheets tabs and headers during application startup."""
     try:
         schema_results = ensure_spreadsheet_schema()
         changed = [
@@ -80,18 +82,20 @@ def ensure_schema_on_startup():
             f" Perubahan: {len(changed)}."
         )
     except Exception as exc:
-        # Jangan matikan bot hanya karena Sheets belum siap.
-        # Handler pertama yang butuh Sheets tetap akan mengangkat error yang jelas.
+        # Schema compatibility note for Google Sheets headers and rows.
+        # Schema compatibility note for Google Sheets headers and rows.
         print(f"⚠️ Google Sheets schema belum bisa dipastikan: {exc}")
 
 
 def start_scheduler_once():
+    """Start the scheduler only if it is not already running."""
     if not scheduler.running:
         scheduler.start()
         print(f"✅ Scheduler started. Jobs: {[job.name for job in scheduler.get_jobs()]}")
 
 
 def shutdown_scheduler_once():
+    """Stop the scheduler safely if it is running."""
     if scheduler.running:
         scheduler.shutdown()
 
@@ -99,6 +103,7 @@ def shutdown_scheduler_once():
 # ── FastAPI startup & shutdown, hanya aktif saat webhook mode dijalankan ──────
 @app.on_event("startup")
 async def startup():
+    """FastAPI startup hook used when webhook mode is active."""
     global _webhook_telegram_started
 
     if BOT_MODE != "webhook":
@@ -123,6 +128,7 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
+    """FastAPI shutdown hook that stops the Telegram app and scheduler safely."""
     global _webhook_telegram_started
 
     shutdown_scheduler_once()
@@ -135,11 +141,13 @@ async def shutdown():
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health_check():
+    """Return a simple runtime health status for deployment checks."""
     return {"status": "ok", "mode": BOT_MODE}
 
 
 @app.get("/test-sheets")
 async def test_sheets():
+    """Run a quick Google Sheets connectivity and schema check."""
     try:
         schema_results = ensure_spreadsheet_schema()
         spreadsheet = get_spreadsheet()
@@ -160,11 +168,11 @@ async def test_sheets():
 
 
 # ── Polling mode ──────────────────────────────────────────────────────────────
-# Polling adalah mode default untuk user GitHub/Wispbyte.
-# delete_webhook() dipanggil dulu agar bot yang pernah memakai webhook bisa kembali menerima update lewat polling.
+# Implementation note for this project-specific finance flow.
+# Date parsing note: keep explicit and relative Indonesian date formats predictable.
 
 async def run_polling_mode():
-    """Jalankan bot memakai Telegram long polling untuk setup lokal sederhana."""
+    """Run the bot using Telegram polling for local usage and simple 24/7 deployment."""
     validate_runtime_config("polling")
     ensure_schema_on_startup()
 
@@ -189,11 +197,11 @@ async def run_polling_mode():
         await telegram_app.shutdown()
 
 
-# Webhook tetap disediakan untuk deployment advanced.
-# Mode ini membutuhkan public URL dan FastAPI, berbeda dari polling yang cukup menjalankan proses Python.
+# Implementation note for this project-specific finance flow.
+# Implementation note for this project-specific finance flow.
 
 def run_webhook_mode():
-    """Jalankan FastAPI app untuk deployment webhook."""
+    """Run the FastAPI server for advanced webhook deployment."""
     validate_runtime_config("webhook")
     uvicorn.run(
         "main:app",

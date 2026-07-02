@@ -1,4 +1,6 @@
-# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
+"""Preview and state helpers for transactions, edit-before-save, split bill, debt preview, pending expense, and confirmation flows."""
+
+# Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
@@ -6,7 +8,7 @@ from app.bot.handler_parts.networth_assets import build_asset_confirm_preview
 
 
 def parse_input(text: str) -> dict:
-    """Coba regex dulu. Jika gagal, fallback ke Gemini."""
+    """Parse input into structured data for the Telegram bot flow."""
     result = parse_with_regex(text)
     if result is not None:
         return result
@@ -15,56 +17,39 @@ def parse_input(text: str) -> dict:
 
 
 def build_progress_bar(pct: float, length: int = 10) -> str:
-    """Buat progress bar teks. Contoh: [████░░░░░░] 40%"""
+    """Build the data structure or message text for progress bar."""
     filled = int(min(float(pct or 0), 100) / 100 * length)
     empty = length - filled
     return f"[{'█' * filled}{'░' * empty}]"
 
 
 def split_user_inputs(text: str) -> list[str]:
-    """
-    Pecah input user menjadi beberapa item.
-
-    Mendukung:
-    - newline
-    - koma
-    - titik koma
-    - "dan" sebelum item baru
-    - transaksi biasa berulang:
-      beli kopi 10k beli nasi 20k
-    - campuran transaksi + debt:
-      beli kopi 10k minjem joko 10k
-      beli kopi 10k hutang ke joko 10k
-
-    Catatan penting:
-    - "Budi minjem 300k" jangan dipecah.
-    - "bayar hutang Joko 200k" jangan dipecah jadi bayar/hutang.
-    """
+    """Helper for split user inputs in the Telegram bot flow."""
     if not text:
         return []
 
     raw = text.strip()
 
-    # Separator eksplisit harus diproses SEBELUM normalisasi whitespace.
-    # Kalau `re.sub(r"\s+", " ", raw)` dijalankan dulu, newline ikut
-    # berubah jadi spasi dan input multi-baris akan dianggap 1 transaksi panjang.
+    # Transaction flow note for preview, split bill, or debt handling.
+    # Transaction flow note for preview, split bill, or debt handling.
+    # Transaction flow note for preview, split bill, or debt handling.
     raw = re.sub(r"[\n\r;]+", " ||| ", raw)
     raw = re.sub(r"\s*,\s*", " ||| ", raw)
     raw = re.sub(r"[ \t]+", " ", raw)
 
-    # Starter transaksi biasa
+    # Starter transaction biasa
     transaction_starters = [
         "beli", "bayar", "byr", "jajan", "makan", "minum",
         "transfer", "top up", "topup", "isi", "ngisi",
         "gaji", "dapat", "dapet", "terima",
-        # Jangan masukkan "masuk" sebagai starter split.
-        # Contoh yang harus tetap satu item:
-        # "gajian 5000k masuk BCA 01-06-2026".
-        # Kata "masuk" tetap dikenali sebagai income di regex_parser.detect_type().
+        # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+        # Transaction flow note for preview, split bill, or debt handling.
+        # Transaction flow note for preview, split bill, or debt handling.
+        # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
         "hutang", "utang",
     ]
 
-    # Starter debt yang boleh jadi item baru jika muncul setelah item lain
+    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
     # Contoh: "beli kopi 10k minjem joko 10k"
     debt_starters = [
         "minjem", "pinjem", "pinjam",
@@ -97,8 +82,8 @@ def split_user_inputs(text: str) -> list[str]:
     if protected_debt_payment and "|||" not in raw:
         return [raw.strip(" .,-;")]
 
-    # Split item baru jika sebelum keyword ada nominal.
-    # Ini mencegah "Budi minjem 300k" terpecah karena sebelum "minjem" bukan nominal.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     amount_before_pattern = r"(?:\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta)?|\d{4,})"
 
     raw = re.sub(
@@ -108,11 +93,11 @@ def split_user_inputs(text: str) -> list[str]:
         flags=re.IGNORECASE,
     )
 
-    # Tidak lagi memecah sebelum starter tanpa nominal di depannya.
-    # Versi lama memecah "saya talangin Raka beli nasi 12k" menjadi
-    # "saya talangin Raka" + "beli nasi 12k" karena kata "beli" dianggap
-    # starter baru. Sekarang pemecahan otomatis cukup mengandalkan separator
-    # eksplisit atau pola nominal-sebelum-starter di atas.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
+    # Fronting-money note: distinguish actual account cashflow from payable or receivable records.
+    # Fronting-money note: distinguish actual account cashflow from payable or receivable records.
+    # Transaction flow note for preview, split bill, or debt handling.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
 
     parts = []
     for part in raw.split("|||"):
@@ -123,13 +108,7 @@ def split_user_inputs(text: str) -> list[str]:
     return parts
 
 def needs_account(parsed: dict) -> bool:
-    """
-    Transaksi expense/income wajib punya account.
-    Transfer wajib punya account asal dan to_account.
-
-    Catatan: account keyboard hanya mengisi account asal. Jika to_account
-    belum terdeteksi, service layer akan menolak saat simpan agar data aman.
-    """
+    """Helper for needs account in the Telegram bot flow."""
     txn_type = parsed.get("type")
 
     if parsed.get("skip_account") and txn_type in ["expense", "income"]:
@@ -144,15 +123,17 @@ def needs_account(parsed: dict) -> bool:
     return False
 
 def is_debt_item(parsed: dict) -> bool:
+    """Check a boolean condition for is debt item."""
     return parsed.get("kind") == "debt"
 
 
 def is_transaction_item(parsed: dict) -> bool:
+    """Check a boolean condition for is transaction item."""
     return parsed.get("kind") == "transaction"
 
 
 def build_mixed_preview(mixed_items: list[dict]) -> str:
-    """Preview untuk campuran transaksi biasa + debt."""
+    """Build the data structure or message text for mixed preview."""
     lines = [f"🧾 *Ditemukan {len(mixed_items)} item:*\n"]
 
     total_expense = 0
@@ -246,25 +227,17 @@ def build_mixed_preview(mixed_items: list[dict]) -> str:
     return "\n".join(lines)
 
 def parse_income_missing_amount(line: str) -> dict | None:
-    """Deteksi income masuk dari orang yang belum punya nominal.
-
-    Contoh yang harus ditanya nominalnya:
-    - Transfer dari Raka tgl 6
-    - Transaksi dari Maya
-
-    Ini sengaja tidak dianggap debt/payment. Debt hanya dari keyword utang/piutang/minjem
-    atau split bill eksplisit.
-    """
+    """Parse input into structured data for the Telegram bot flow."""
     raw = str(line or "").strip()
     if not raw:
         return None
 
-    # Kalau setelah frasa tanggal dibuang masih ada nominal, biarkan parser normal yang handle.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     without_date = strip_date_phrases(raw)
     if parse_human_amount(without_date) > 0 and re.search(r"\d", without_date):
         return None
 
-    # Jangan ambil internal transfer rekening: transfer dari BSI ke DANA.
+    # Account balance note: avoid partial balance updates when validation fails.
     low = raw.lower()
     if re.search(r"\bdari\s+[^\n]+?\s+ke\s+", low):
         return None
@@ -278,7 +251,7 @@ def parse_income_missing_amount(line: str) -> dict | None:
         return None
 
     person_raw = match.group(1).strip()
-    # Buang frasa tanggal dari nama orang.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     person_raw = re.sub(r"\b(?:tgl|tanggal)\s*\d{1,2}(?:[-/]\d{1,2}(?:[-/]\d{2,4})?)?\b", " ", person_raw, flags=re.IGNORECASE)
     person_raw = re.sub(r"\b(?:hari\s+ini|kemarin|besok)\b", " ", person_raw, flags=re.IGNORECASE)
     person = re.sub(r"\s+", " ", person_raw).strip(" .,-;")
@@ -307,6 +280,7 @@ def parse_income_missing_amount(line: str) -> dict | None:
 
 
 def build_missing_amount_prompt(raw: str, parsed: dict, current: int | None = None, total: int | None = None) -> str:
+    """Build the data structure or message text for missing amount prompt."""
     prefix = ""
     if current is not None and total is not None and total > 1:
         prefix = f"🧩 *Nominal kurang {current}/{total}*\n\n"
@@ -323,6 +297,7 @@ def build_missing_amount_prompt(raw: str, parsed: dict, current: int | None = No
 
 
 def finalize_missing_amount_item(item: dict, amount: float) -> dict:
+    """Helper for finalize missing amount item in the Telegram bot flow."""
     parsed = dict(item.get("parsed") or {})
     parsed["amount"] = amount
     parsed.pop("needs_amount", None)
@@ -335,6 +310,7 @@ def finalize_missing_amount_item(item: dict, amount: float) -> dict:
 
 
 async def continue_after_missing_amount_mixed(update: Update, context: ContextTypes.DEFAULT_TYPE, mixed_items: list[dict]) -> None:
+    """Helper for continue after missing amount mixed in the Telegram bot flow."""
     context.user_data["pending_mixed"] = mixed_items
     context.user_data.pop("pending_parsed", None)
     context.user_data.pop("pending_raw", None)
@@ -362,6 +338,7 @@ async def continue_after_missing_amount_mixed(update: Update, context: ContextTy
 
 
 async def handle_pending_missing_amount(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
+    """Helper for handle pending missing amount in the Telegram bot flow."""
     state = context.user_data.get("pending_missing_amount")
     if not state:
         return False
@@ -432,16 +409,7 @@ async def handle_pending_missing_amount(update: Update, context: ContextTypes.DE
 
 
 def parse_mixed_item(line: str) -> dict:
-    """
-    Parsing satu item sebagai debt dulu, lalu transaksi biasa.
-
-    Output:
-    {
-        "kind": "debt"|"transaction"|"missing_amount"|"failed",
-        "parsed": dict,
-        "raw": str
-    }
-    """
+    """Parse input into structured data for the Telegram bot flow."""
     debt_parsed = parse_debt_input(line)
     if debt_parsed:
         debt_parsed = enrich_ditalangin_split_bill_if_any(debt_parsed, line)
@@ -475,6 +443,7 @@ def parse_mixed_item(line: str) -> dict:
     }
 
 def mixed_needs_account(mixed_items: list[dict]) -> bool:
+    """Helper for mixed needs account in the Telegram bot flow."""
     for item in mixed_items:
         parsed = item["parsed"]
 
@@ -488,7 +457,7 @@ def mixed_needs_account(mixed_items: list[dict]) -> bool:
 
 
 def edit_or_continue_keyboard(scope: str) -> InlineKeyboardMarkup:
-    """Keyboard setelah preview: edit dulu atau lanjut ke rekening/simpan."""
+    """Helper for edit or continue keyboard in the Telegram bot flow."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✏️ Edit dulu", callback_data=f"editflow:edit:{scope}"),
@@ -499,7 +468,7 @@ def edit_or_continue_keyboard(scope: str) -> InlineKeyboardMarkup:
 
 
 def build_parse_safety_notice(assessment: dict, mode: str = "warning") -> str:
-    """Header warning/AI review untuk ditempel di atas preview yang sudah ada."""
+    """Build the data structure or message text for parse safety notice."""
     reasons = [str(r).strip() for r in (assessment or {}).get("reasons", []) if str(r).strip()]
 
     if mode == "gemini":
@@ -516,15 +485,12 @@ def build_parse_safety_notice(assessment: dict, mode: str = "warning") -> str:
 
 
 def build_preview_with_parse_safety(parsed: dict, assessment: dict, mode: str = "warning") -> str:
+    """Build the data structure or message text for preview with parse safety."""
     return f"{build_parse_safety_notice(assessment, mode)}\n\n{build_preview(parsed)}"
 
 
 def build_pending_expense_confirm_preview(item: dict, include_question: bool = True) -> str:
-    """Preview pending expense sebelum user lanjut ke confirm save.
-
-    Dibuat di transaction_flow supaya natural pending dan /pending_add bisa
-    memakai flow Edit dulu -> Lanjut -> Simpan yang sama.
-    """
+    """Build the data structure or message text for pending expense confirm preview."""
     item = dict(item or {})
     due_date = str(item.get("due_date") or "").strip()
     due_precision = str(item.get("due_precision") or "unknown").strip().lower()
@@ -560,6 +526,7 @@ def build_pending_expense_confirm_preview(item: dict, include_question: bool = T
 
 
 def parse_clarification_keyboard() -> InlineKeyboardMarkup:
+    """Parse input into structured data for the Telegram bot flow."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("1️⃣ Debt payment", callback_data="clarify_parse:debt_payment")],
         [InlineKeyboardButton("2️⃣ Expense saya", callback_data="clarify_parse:expense")],
@@ -571,6 +538,7 @@ def parse_clarification_keyboard() -> InlineKeyboardMarkup:
 
 
 def build_parse_clarification_prompt(raw: str, assessment: dict | None = None) -> str:
+    """Build the data structure or message text for parse clarification prompt."""
     safe_raw = md_safe(raw)
     lines = [
         "🤔 *Saya belum yakin maksud input ini:*",
@@ -597,6 +565,7 @@ def build_parse_clarification_prompt(raw: str, assessment: dict | None = None) -
 
 
 def parse_participant_count(value: str) -> int | None:
+    """Parse input into structured data for the Telegram bot flow."""
     clean = str(value or "").strip().lower()
     mapping = {
         "dua": 2, "2": 2, "berdua": 2,
@@ -619,7 +588,7 @@ def parse_participant_count(value: str) -> int | None:
 
 
 def build_account_delta_summary_from_transaction_items(items: list[dict]) -> str:
-    """Ringkasan dampak saldo per rekening dari item transaksi yang sudah punya account."""
+    """Build the data structure or message text for account delta summary from transaction items."""
     transaction_items = []
     for item in items or []:
         parsed = item.get("parsed", item) if isinstance(item, dict) else {}
@@ -638,7 +607,7 @@ def build_account_delta_summary_from_transaction_items(items: list[dict]) -> str
 
 
 def build_mixed_short_summary(mixed_items: list[dict]) -> str:
-    """Ringkasan pendek untuk transisi setelah preview panjang sudah pernah ditampilkan."""
+    """Build the data structure or message text for mixed short summary."""
     total_expense = 0.0
     total_income = 0.0
     total_transfer = 0.0
@@ -684,7 +653,7 @@ def build_mixed_short_summary(mixed_items: list[dict]) -> str:
 
 
 def build_single_short_summary(parsed: dict) -> str:
-    """Ringkasan pendek untuk single transaction setelah preview awal sudah tampil."""
+    """Build the data structure or message text for single short summary."""
     if not isinstance(parsed, dict):
         return "🧾 *Ringkasan transaksi:* -"
 
@@ -711,7 +680,7 @@ def build_single_short_summary(parsed: dict) -> str:
 
 
 def build_updated_item_summary(item: dict, index: int | None = None) -> str:
-    """Ringkasan pendek item yang baru diedit."""
+    """Build the data structure or message text for updated item summary."""
     prefix = f"Item {index}" if index else "Item"
     kind = item.get("kind") if isinstance(item, dict) else None
     parsed = item.get("parsed", {}) if isinstance(item, dict) else {}
@@ -743,6 +712,7 @@ def build_updated_item_summary(item: dict, index: int | None = None) -> str:
 
 
 def build_preview_edit_help(scope: str = "single") -> str:
+    """Build the data structure or message text for preview edit help."""
     if scope == "pending_expense":
         return (
             "✏️ *Mau edit pending expense apa?*\n\n"
@@ -789,6 +759,7 @@ def build_preview_edit_help(scope: str = "single") -> str:
 
 
 def build_mixed_edit_choose_prompt(mixed_items: list[dict]) -> str:
+    """Build the data structure or message text for mixed edit choose prompt."""
     lines = ["✏️ *Mau edit item nomor berapa?*\n"]
     for i, item in enumerate(mixed_items or [], 1):
         kind = item.get("kind")
@@ -808,7 +779,7 @@ def build_mixed_edit_choose_prompt(mixed_items: list[dict]) -> str:
 
 
 def parse_preview_edit_updates(text: str) -> dict:
-    """Parsing update sederhana untuk preview sebelum simpan."""
+    """Parse input into structured data for the Telegram bot flow."""
     raw = str(text or "").strip()
     updates: dict = {}
 
@@ -883,6 +854,7 @@ def parse_preview_edit_updates(text: str) -> dict:
 
 
 def apply_preview_edit_updates_to_parsed(parsed: dict, updates: dict) -> dict:
+    """Apply changes for preview edit updates to parsed."""
     if not isinstance(parsed, dict):
         return parsed
 
@@ -903,7 +875,7 @@ def apply_preview_edit_updates_to_parsed(parsed: dict, updates: dict) -> dict:
 
 
 async def proceed_after_preview_edit(query, context: ContextTypes.DEFAULT_TYPE, scope: str):
-    """Lanjutkan flow setelah user memilih 'Lanjut'."""
+    """Helper for proceed after preview edit in the Telegram bot flow."""
     context.user_data.pop("pending_preview_edit", None)
 
     if scope == "mixed":
@@ -1024,7 +996,7 @@ async def proceed_after_preview_edit(query, context: ContextTypes.DEFAULT_TYPE, 
 
 
 async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
-    """Tangani balasan user untuk edit preview sebelum pilih rekening/simpan."""
+    """Helper for handle pending preview edit in the Telegram bot flow."""
     state = context.user_data.get("pending_preview_edit")
     if not state:
         return False
@@ -1098,8 +1070,8 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
         debt_updates = dict(updates)
         if "subject" in debt_updates:
             debt_updates["person_name"] = debt_updates.pop("subject")
-        # Field type dari editor transaksi tidak dipakai untuk debt agar intent debt
-        # tidak berubah menjadi income/expense secara tidak sengaja.
+        # Transaction flow note for preview, split bill, or debt handling.
+        # Transaction flow note for preview, split bill, or debt handling.
         debt_updates.pop("type", None)
         debt_parsed.update(debt_updates)
         context.user_data["pending_debt"] = debt_parsed
@@ -1198,6 +1170,7 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
 
 
 def format_split_bill_preview_line(parsed: dict) -> str:
+    """Format split bill preview line into readable text."""
     split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
     if not split_bill:
         return ""
@@ -1225,7 +1198,7 @@ def format_split_bill_preview_line(parsed: dict) -> str:
     )
 
 def build_preview(parsed: dict) -> str:
-    """Buat teks preview transaksi sebelum disimpan."""
+    """Build the data structure or message text for preview."""
     type_label = {
         "expense": "❌ Pengeluaran",
         "income": "✅ Pemasukan",
@@ -1266,7 +1239,7 @@ def build_preview(parsed: dict) -> str:
 
 
 def build_batch_preview(parsed_items: list[dict]) -> str:
-    """Buat preview untuk banyak transaksi sekaligus."""
+    """Build the data structure or message text for batch preview."""
     lines = [f"🧾 *Ditemukan {len(parsed_items)} transaksi:*\n"]
 
     total_expense = 0
@@ -1318,11 +1291,12 @@ def build_batch_preview(parsed_items: list[dict]) -> str:
 
 
 def strip_split_bill_phrase(text: str) -> str:
+    """Helper for strip split bill phrase in the Telegram bot flow."""
     clean = str(text or "")
 
-    # Dipanggil setelah split bill terdeteksi, jadi aman membersihkan frasa
-    # "bagi/dibagi ... sama ..." dari description. Description dari parser
-    # sering sudah kehilangan angka pembagi, misalnya:
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # sering already kehilangan angka pembagi, misalnya:
     # "Nasi Kuning Dibagi Sama Raka".
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
@@ -1341,7 +1315,7 @@ def strip_split_bill_phrase(text: str) -> str:
         clean,
         flags=re.IGNORECASE,
     )
-    # Dukung input tanpa marker "sama":
+    # Transaction flow note for preview, split bill, or debt handling.
     # "Nasi kuning 22k dibagi 2 raka".
     clean = re.sub(
         rf"\b{split_word}\s*(?:jadi\s*)?{participant_token}\s*(?:orang\s+)?{name_chunk}",
@@ -1349,9 +1323,9 @@ def strip_split_bill_phrase(text: str) -> str:
         clean,
         flags=re.IGNORECASE,
     )
-    # Fallback setelah split valid: kalau parser sebelumnya sudah membuang angka
-    # pembagi, sisa deskripsi bisa tinggal "Minyak Dibagi" atau
-    # "Minyak Dibagi Fajar Raka". Semua frasa split harus dibuang dari item.
+    # Legacy compatibility note for older records or older in-memory state.
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # Split bill parsing note: separate the paid transaction from each person share.
     clean = re.sub(
         rf"\b{split_word}\b.*$",
         " ",
@@ -1363,18 +1337,12 @@ def strip_split_bill_phrase(text: str) -> str:
 
 
 def strip_trailing_split_person_names(text: str, person_names: list[str]) -> str:
-    """Buang rangkaian nama teman split bill yang bocor di akhir deskripsi/subject.
-
-    Parser regex bisa lebih dulu menghapus token nominal dan "dibagi 4",
-    sehingga input seperti "beli galon 24k dibagi 4 raka fajar bagas"
-    sementara menjadi "Galon Raka Fajar Bagas". Setelah split bill valid,
-    nama-nama itu harus hanya hidup di split_bill.person_names, bukan di item.
-    """
+    """Helper for strip trailing split person names in the Telegram bot flow."""
     clean = str(text or "").strip(" .,-")
     if not clean or not person_names:
         return clean
 
-    # Urutkan yang panjang dulu supaya nama multi-token tidak kalah oleh token pendek.
+    # Command routing note: exact commands and aliases are checked before similarity-based typo handling.
     ordered_names = sorted(
         [str(name or "").strip() for name in person_names if str(name or "").strip()],
         key=len,
@@ -1386,7 +1354,7 @@ def strip_trailing_split_person_names(text: str, person_names: list[str]) -> str
         changed = False
         clean = clean.strip(" .,-")
 
-        # Buang konektor yang mungkin tersisa setelah nama-nama teman dihapus.
+        # Split bill parsing note: separate the paid transaction from each person share.
         new_clean = re.sub(r"\b(?:sama|ama|dengan|bareng|dan)\s*$", "", clean, flags=re.IGNORECASE).strip(" .,-")
         if new_clean != clean:
             clean = new_clean
@@ -1403,23 +1371,55 @@ def strip_trailing_split_person_names(text: str, person_names: list[str]) -> str
     return clean
 
 
-def split_split_bill_person_names(name_text: str) -> list[str]:
-    """
-    Ambil daftar nama teman dari frasa split bill.
+SPLIT_BILL_ACCOUNT_TAIL_PATTERN = (
+    r"\s+\b(?:via|pakai|pake|menggunakan|lewat|dari|from|using)\s+"
+    r"(?:cash|bri|bsi|bca|dana|gopay|go\s*pay|seabank|sea\s*bank)\b.*$"
+)
 
-    Contoh:
-    - "Raka" -> ["Raka"]
-    - "fajar bagas raka" -> ["Fajar", "Bagas", "Raka"]
-    - "fajar, bagas, dan raka" -> ["Fajar", "Bagas", "Raka"]
 
-    Catatan: untuk mode tanpa pemisah koma/dan, nama diasumsikan satu kata per orang.
-    Ini sesuai gaya input user seperti: "bagi 4 sama fajar bagas raka".
+def strip_split_bill_account_tail(name_text: str) -> str:
+    """Remove account/payment tail from split bill friend names.
+
+    Example: `Budi via Dana` should be read as friend `Budi`, while
+    `DANA` remains handled by the account parser.
     """
     clean = str(name_text or "").strip()
+    clean = re.sub(SPLIT_BILL_ACCOUNT_TAIL_PATTERN, "", clean, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", clean).strip(" ,;&")
 
-    # Stop sebelum frasa tanggal/status agar tidak ikut jadi nama.
+
+def limit_split_bill_friends_to_participants(
+    person_names: list[str],
+    person_shares: dict,
+    participants: int,
+    base_share_amount: float,
+) -> tuple[list[str], dict]:
+    """Keep friend count consistent with the total participant count.
+
+    In this bot, `dibagi 2` means 2 total participants: user + 1 friend.
+    Extra words after the friend name are usually account/payment tails, so they
+    must not become additional friends.
+    """
+    max_friends = max(int(participants or 0) - 1, 0)
+    clean_names = [str(name or "").strip().title() for name in person_names or [] if str(name or "").strip()]
+
+    if max_friends and len(clean_names) > max_friends:
+        clean_names = clean_names[:max_friends]
+
+    clean_shares = {}
+    for name in clean_names:
+        clean_shares[name] = float((person_shares or {}).get(name, base_share_amount) or 0)
+
+    return clean_names, clean_shares
+
+
+def split_split_bill_person_names(name_text: str) -> list[str]:
+    """Helper for split split bill person names in the Telegram bot flow."""
+    clean = strip_split_bill_account_tail(name_text)
+
+    # Stop before date/status words so they do not become friend names.
     clean = re.split(
-        r"\b(tanggal|tgl|tg|pada|date|kemarin|hari|minggu|bulan|udah|sudah|belum|dibayar|bayar|lunas|dari|ke)\b",
+        r"\b(tanggal|tgl|tg|pada|date|kemarin|hari|minggu|bulan|udah|sudah|belum|dibayar|bayar|lunas|ke)\b",
         clean,
         flags=re.IGNORECASE,
     )[0]
@@ -1429,16 +1429,16 @@ def split_split_bill_person_names(name_text: str) -> list[str]:
     if not clean:
         return []
 
-    # Kalau ada separator eksplisit, pakai itu.
+    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
     if re.search(r"[,;&]|\bdan\b|\band\b", clean, flags=re.IGNORECASE):
         raw_parts = re.split(r"\s*(?:,|;|&|\bdan\b|\band\b)\s*", clean, flags=re.IGNORECASE)
     else:
-        # Tanpa separator, treat setiap token sebagai nama orang.
+        # Split bill parsing note: separate the paid transaction from each person share.
         raw_parts = clean.split()
 
     names = []
     seen = set()
-    noise = {"sama", "ama", "dengan", "bareng", "dan", "and"}
+    noise = {"sama", "ama", "dengan", "bareng", "dan", "and", "via", "pakai", "pake", "menggunakan", "lewat"}
 
     for part in raw_parts:
         part = re.sub(r"[^A-Za-zÀ-ÿ\s]", " ", str(part or ""))
@@ -1456,10 +1456,10 @@ def split_split_bill_person_names(name_text: str) -> list[str]:
 
 
 def strip_split_bill_name_tail(name_text: str) -> str:
-    """Potong bagian setelah nama teman, misalnya tanggal/status pembayaran."""
-    clean = str(name_text or "").strip()
+    """Cut non-name tail from a split bill friend segment."""
+    clean = strip_split_bill_account_tail(name_text)
     clean = re.split(
-        r"\b(tanggal|tgl|tg|pada|date|kemarin|hari|minggu|bulan|udah|sudah|belum|dibayar|bayar|lunas|dari|ke)\b",
+        r"\b(tanggal|tgl|tg|pada|date|kemarin|hari|minggu|bulan|udah|sudah|belum|dibayar|bayar|lunas|ke)\b",
         clean,
         flags=re.IGNORECASE,
     )[0]
@@ -1467,6 +1467,7 @@ def strip_split_bill_name_tail(name_text: str) -> str:
 
 
 def is_split_bill_allocation_token(value: str) -> bool:
+    """Check a boolean condition for is split bill allocation token."""
     raw = str(value or "").strip().lower().rstrip(".,;)")
     if not raw:
         return False
@@ -1474,7 +1475,7 @@ def is_split_bill_allocation_token(value: str) -> bool:
 
 
 def parse_split_bill_share_value(value: str, base_share: float) -> float:
-    """Parsing nilai share teman: 100%, 80%, 125k, 100000, dst."""
+    """Parse input into structured data for the Telegram bot flow."""
     raw = str(value or "").strip().lower().rstrip(".,;)")
     if not raw:
         return 0.0
@@ -1490,16 +1491,7 @@ def parse_split_bill_share_value(value: str, base_share: float) -> float:
 
 
 def parse_split_bill_people_and_shares(name_text: str, total_amount: float, participants: int) -> dict:
-    """
-    Parsing nama teman split bill plus custom share opsional.
-
-    Mendukung:
-    - raka fajar bagas                         -> equal share
-    - raka:100% fajar:80% bagas:100%          -> persen dari share normal
-    - raka 100% fajar 80% bagas 100%          -> titik dua opsional
-    - raka:125k fajar:100k bagas:125k         -> nominal langsung
-    - raka 125k fajar 100k bagas 125k         -> titik dua opsional
-    """
+    """Parse input into structured data for the Telegram bot flow."""
     base_share = float(total_amount or 0) / int(participants or 1)
     clean = strip_split_bill_name_tail(name_text)
     clean = clean.replace("=", ":")
@@ -1516,7 +1508,7 @@ def parse_split_bill_people_and_shares(name_text: str, total_amount: float, part
         }
 
     tokens = [t.strip(" ,;&") for t in clean.split() if t.strip(" ,;&")]
-    noise = {"sama", "ama", "dengan", "bareng", "dan", "and"}
+    noise = {"sama", "ama", "dengan", "bareng", "dan", "and", "via", "pakai", "pake", "menggunakan", "lewat"}
     entries = []
     has_custom_share = False
     i = 0
@@ -1554,7 +1546,7 @@ def parse_split_bill_people_and_shares(name_text: str, total_amount: float, part
                 has_custom_share = True
                 i += 1
         elif is_split_bill_allocation_token(token):
-            # Token angka tanpa nama, abaikan supaya tidak jadi nama orang.
+            # Split bill parsing note: separate the paid transaction from each person share.
             i += 1
             continue
         else:
@@ -1590,6 +1582,7 @@ def parse_split_bill_people_and_shares(name_text: str, total_amount: float, part
 
 
 def format_split_bill_person_shares(split_bill: dict) -> str:
+    """Format split bill person shares into readable text."""
     shares = (split_bill or {}).get("person_shares") or {}
     person_names = (split_bill or {}).get("person_names") or []
     if not shares and person_names:
@@ -1606,18 +1599,13 @@ def format_split_bill_person_shares(split_bill: dict) -> str:
     return ", ".join(parts)
 
 def clean_split_person_name(name: str) -> str:
+    """Clean and standardize clean split person name."""
     names = split_split_bill_person_names(name)
     return " ".join(names).title() if names else ""
 
 
 def build_split_bill_item_description_from_raw(raw: str, fallback: str = "") -> str:
-    """Ambil nama item split bill dari raw input, bukan dari sisa parser.
-
-    Ini memperbaiki kasus seperti:
-    - "makan 80k bagi dua sama Budi" -> "Makan"
-    - "makan 80k berdua sama Budi" -> "Makan"
-    - "46k/4 sama Alpat Opik Sapto" -> fallback aman, bukan "/"
-    """
+    """Build the data structure or message text for split bill item description from raw."""
     text = normalize_slash_split_syntax(str(raw or ""))
     text = strip_date_phrases(text)
     text = re.sub(r"\b(?:rp|idr)?\s*\d[\d.,]*\s*(?:rb|ribu|k|jt|juta|m|miliar)?\b", " ", text, flags=re.IGNORECASE)
@@ -1654,18 +1642,7 @@ def build_split_bill_item_description_from_raw(raw: str, fallback: str = "") -> 
 
 
 def detect_split_bill(parsed: dict, raw: str) -> dict | None:
-    """
-    Deteksi input split bill sederhana.
-
-    Contoh:
-    - Ayam dcelup 26k bagi 2 sama Raka
-    - Tissue 10k bagi 4 sama fajar bagas raka
-
-    Desain cashflow:
-    - Transaksi utama tetap disimpan sebesar total yang kamu bayarkan.
-    - Kalau teman belum bayar, dibuat piutang per orang sebesar amount / jumlah peserta
-      TANPA cashflow tambahan.
-    """
+    """Helper for detect split bill in the Telegram bot flow."""
     if not parsed or parsed.get("type") != "expense":
         return None
 
@@ -1675,9 +1652,9 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     if amount <= 0:
         return None
 
-    # Normalisasi shorthand "46k/4 sama Raka" agar dianggap sama dengan
-    # "46k dibagi 4 sama Raka". Tanpa ini parser bisa membaca amount sebagai
-    # 11.5k dan split bill tidak terdeteksi.
+    # Transaction flow note for preview, split bill, or debt handling.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
+    # Split bill parsing note: separate the paid transaction from each person share.
     text = normalize_slash_split_syntax(str(raw or ""))
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
@@ -1688,8 +1665,8 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
         rf"\b{split_word}\s*(?:jadi\s*)?({participant_token})\s*(?:orang)?\s+{friend_marker}\s+({name_chunk})",
         # "sama raka dibagi 2" / "bareng raka bagi dua"
         rf"\b{friend_marker}\s+({name_chunk})\s+{split_word}\s*(?:jadi\s*)?({participant_token})",
-        # "dibagi 2 raka" tanpa marker sama/dengan.
-        # Nama harus diawali huruf, jadi "dibagi 2 11-05-2026" tidak match.
+        # Split bill parsing note: separate the paid transaction from each person share.
+        # Split bill parsing note: separate the paid transaction from each person share.
         rf"\b{split_word}\s*(?:jadi\s*)?({participant_token})\s*(?:orang)?\s+({name_chunk})",
         # "berdua sama raka" / "bertiga bareng raka fajar".
         rf"\b({participant_token})\s+{friend_marker}\s+({name_chunk})",
@@ -1720,16 +1697,22 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
         person_names = share_parse.get("person_names") or []
         person_shares = share_parse.get("person_shares") or {}
         base_share_amount = float(share_parse.get("base_share_amount", 0) or 0)
+        person_names, person_shares = limit_split_bill_friends_to_participants(
+            person_names,
+            person_shares,
+            participants,
+            base_share_amount,
+        )
         has_custom_share = bool(share_parse.get("has_custom_share"))
         break
 
     if not participants or participants < 2 or not person_names:
         return None
 
-    # Parser regex/LLM bisa saja sudah membagi "22k dibagi 2" menjadi 11k.
-    # Setelah split bill valid, transaksi utama dikembalikan ke total yang dibayar,
-    # sedangkan share/piutang dihitung terpisah. Jangan mutasi parsed kalau pola
-    # split bill tidak valid, agar kasus gagal tidak tiba-tiba berubah nominal.
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     parsed["amount"] = amount
 
     if not person_shares:
@@ -1744,10 +1727,10 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     user_share_amount = max(amount - total_receivable, 0.0)
     share_amount = user_share_amount  # backward compatible field: sekarang berarti bagian user
 
-    # Bersihkan deskripsi/subject supaya tidak ikut menyimpan frasa
-    # "bagi/dibagi 2 sama ...". Prioritaskan raw input karena parser regex
-    # kadang menyisakan potongan seperti "Dua Sama Budi", "Berdua Sama Budi",
-    # atau "/ Sama Alpat" sebagai deskripsi.
+    # Transaction flow note for preview, split bill, or debt handling.
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # Transaction flow note for preview, split bill, or debt handling.
+    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
     clean_desc = build_split_bill_item_description_from_raw(raw, parsed.get("description") or "")
     clean_desc = strip_trailing_split_person_names(clean_desc, person_names)
     parsed["description"] = clean_desc
@@ -1775,6 +1758,7 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
 
 
 def attach_split_bill_if_any(parsed: dict, raw: str) -> dict:
+    """Helper for attach split bill if any in the Telegram bot flow."""
     split_bill = detect_split_bill(parsed, raw)
     if split_bill:
         parsed["split_bill"] = split_bill
@@ -1782,11 +1766,13 @@ def attach_split_bill_if_any(parsed: dict, raw: str) -> dict:
 
 
 def split_bill_needs_decision(parsed: dict) -> bool:
+    """Helper for split bill needs decision in the Telegram bot flow."""
     split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
     return bool(split_bill) and not split_bill.get("status")
 
 
 def mixed_split_bill_needs_decision(mixed_items: list[dict]) -> bool:
+    """Helper for mixed split bill needs decision in the Telegram bot flow."""
     for item in mixed_items or []:
         if item.get("kind") == "transaction" and split_bill_needs_decision(item.get("parsed", {})):
             return True
@@ -1794,13 +1780,7 @@ def mixed_split_bill_needs_decision(mixed_items: list[dict]) -> bool:
 
 
 def split_bill_keyboard(scope: str = "single", item_index: int | None = None) -> InlineKeyboardMarkup:
-    """Keyboard keputusan split bill.
-
-    Untuk mixed/bulk, callback_data membawa index item split bill yang sedang
-    ditampilkan. Ini membuat callback idempotent: jika user double-click atau
-    Telegram mengirim callback lama lagi, klik lama tidak akan diam-diam
-    diterapkan ke split bill berikutnya.
-    """
+    """Helper for split bill keyboard in the Telegram bot flow."""
     suffix = f":{item_index}" if item_index is not None else ""
     return InlineKeyboardMarkup([
         [
@@ -1812,12 +1792,13 @@ def split_bill_keyboard(scope: str = "single", item_index: int | None = None) ->
 
 
 def mixed_split_bill_keyboard(mixed_items: list[dict]) -> InlineKeyboardMarkup:
-    """Keyboard split bill mixed dengan index item aktif di callback_data."""
+    """Helper for mixed split bill keyboard in the Telegram bot flow."""
     current_index = get_next_mixed_split_bill_index(mixed_items)
     return split_bill_keyboard("mixed", current_index)
 
 
 def build_split_bill_prompt_from_parsed(parsed: dict) -> str:
+    """Build the data structure or message text for split bill prompt from parsed."""
     split_bill = parsed.get("split_bill", {}) or {}
     person_names = split_bill.get("person_names") or [split_bill.get("person_name", "-")]
     participants = int(split_bill.get("participants", 2) or 2)
@@ -1846,6 +1827,7 @@ def build_split_bill_prompt_from_parsed(parsed: dict) -> str:
 
 
 def build_mixed_split_bill_prompt(mixed_items: list[dict]) -> str:
+    """Build the data structure or message text for mixed split bill prompt."""
     split_items = [
         item for item in mixed_items or []
         if item.get("kind") == "transaction" and split_bill_needs_decision(item.get("parsed", {}))
@@ -1880,7 +1862,7 @@ def build_mixed_split_bill_prompt(mixed_items: list[dict]) -> str:
 
 
 def get_mixed_split_bill_indexes(mixed_items: list[dict]) -> list[int]:
-    """Kembalikan index item transaksi campuran yang memiliki split bill."""
+    """Retrieve data needed for mixed split bill indexes."""
     indexes = []
     for idx, item in enumerate(mixed_items or []):
         if item.get("kind") != "transaction":
@@ -1892,7 +1874,7 @@ def get_mixed_split_bill_indexes(mixed_items: list[dict]) -> list[int]:
 
 
 def get_next_mixed_split_bill_index(mixed_items: list[dict]) -> int | None:
-    """Kembalikan index split bill pertama yang belum dipilih paid/unpaid."""
+    """Retrieve data needed for next mixed split bill index."""
     for idx in get_mixed_split_bill_indexes(mixed_items):
         parsed = mixed_items[idx].get("parsed", {})
         if split_bill_needs_decision(parsed):
@@ -1901,13 +1883,7 @@ def get_next_mixed_split_bill_index(mixed_items: list[dict]) -> int | None:
 
 
 def build_mixed_split_bill_queue_prompt(mixed_items: list[dict]) -> str:
-    """
-    Prompt split bill untuk bulk input, tapi ditanya satu-per-satu.
-
-    Ini penting karena dalam satu bulk input bisa ada split bill yang sudah dibayar
-    dan split bill lain yang belum dibayar. Jadi tombol paid/unpaid hanya berlaku
-    untuk item yang sedang ditampilkan, bukan semua split bill sekaligus.
-    """
+    """Build the data structure or message text for mixed split bill queue prompt."""
     split_indexes = get_mixed_split_bill_indexes(mixed_items)
     current_index = get_next_mixed_split_bill_index(mixed_items)
 
@@ -1944,7 +1920,7 @@ def build_mixed_split_bill_queue_prompt(mixed_items: list[dict]) -> str:
 
 
 def apply_split_bill_decision_to_current_mixed(mixed_items: list[dict], status: str) -> tuple[list[dict], int | None]:
-    """Terapkan paid/unpaid hanya ke split bill mixed yang sedang aktif."""
+    """Apply changes for split bill decision to current mixed."""
     current_index = get_next_mixed_split_bill_index(mixed_items)
     if current_index is None:
         return mixed_items, None
@@ -1953,14 +1929,7 @@ def apply_split_bill_decision_to_current_mixed(mixed_items: list[dict], status: 
 
 
 def apply_split_bill_decision_to_mixed_index(mixed_items: list[dict], item_index: int, status: str) -> tuple[list[dict], int | None, str]:
-    """Terapkan paid/unpaid ke index split bill tertentu.
-
-    Output: (mixed_items, decided_index, result_status)
-    result_status:
-    - applied: keputusan baru berhasil diterapkan
-    - already_decided: callback duplikat/lama untuk item yang sudah diputuskan
-    - invalid: index tidak valid atau item bukan split bill
-    """
+    """Apply changes for split bill decision to mixed index."""
     if item_index is None or item_index < 0 or item_index >= len(mixed_items or []):
         return mixed_items, None, "invalid"
 
@@ -1982,17 +1951,11 @@ def apply_split_bill_decision_to_mixed_index(mixed_items: list[dict], item_index
     return mixed_items, item_index, "applied"
 
 
-# Bagian ini menentukan efek split bill sebelum transaksi disimpan.
-# paid berarti teman sudah bayar, unpaid berarti user menalangi dan perlu dibuatkan piutang.
+# Split bill parsing note: separate the paid transaction from each person share.
+# Debt command note: keep payable and receivable actions explicit and auditable.
 
 def apply_split_bill_decision_to_parsed(parsed: dict, status: str) -> dict:
-    """
-    Terapkan keputusan split bill ke transaksi.
-
-    - paid: teman sudah bayar, jadi transaksi yang disimpan cukup bagian user.
-    - unpaid: user menalangi total dulu, jadi transaksi tetap total tagihan
-      dan nanti dibuat piutang tanpa cashflow tambahan.
-    """
+    """Apply changes for split bill decision to parsed."""
     split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
     if not split_bill:
         return parsed
@@ -2002,8 +1965,15 @@ def apply_split_bill_decision_to_parsed(parsed: dict, status: str) -> dict:
     total_amount = float(split_bill.get("total_amount", parsed.get("amount", 0)) or 0)
     share_amount = float(split_bill.get("user_share_amount", split_bill.get("share_amount", 0)) or 0)
 
-    if status == "paid" and share_amount > 0:
-        parsed["amount"] = share_amount
+    if status == "paid":
+        if share_amount <= 0 and total_amount > 0:
+            participants = int(split_bill.get("participants", 0) or 0)
+            if participants > 0:
+                share_amount = total_amount / participants
+                split_bill["share_amount"] = share_amount
+                split_bill["user_share_amount"] = share_amount
+        if share_amount > 0:
+            parsed["amount"] = share_amount
     elif status == "unpaid" and total_amount > 0:
         parsed["amount"] = total_amount
 
@@ -2011,6 +1981,7 @@ def apply_split_bill_decision_to_parsed(parsed: dict, status: str) -> dict:
 
 
 def apply_split_bill_decision_to_mixed(mixed_items: list[dict], status: str) -> list[dict]:
+    """Apply changes for split bill decision to mixed."""
     for item in mixed_items or []:
         if item.get("kind") != "transaction":
             continue
@@ -2021,6 +1992,7 @@ def apply_split_bill_decision_to_mixed(mixed_items: list[dict], status: str) -> 
 
 
 def create_split_bill_debt(parsed: dict, raw: str = "", source_transaction_id: str = "") -> dict | None:
+    """Create a new record or object for split bill debt."""
     split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
     if not split_bill or split_bill.get("status") != "unpaid":
         return None
@@ -2082,7 +2054,7 @@ def create_split_bill_debt(parsed: dict, raw: str = "", source_transaction_id: s
 
 
 def format_split_debt_result_lines(debt_result: dict) -> list[str]:
-    """Formatkan hasil create_split_bill_debt untuk output Telegram."""
+    """Format split debt result lines into readable text."""
     lines = []
     for item in (debt_result or {}).get("created", []) or []:
         lines.append(
@@ -2092,6 +2064,7 @@ def format_split_debt_result_lines(debt_result: dict) -> list[str]:
 
 
 def summarize_saved_transaction_items(items: list[dict]) -> dict:
+    """Build a concise summary for the Telegram bot flow."""
     total_expense = 0.0
     total_income = 0.0
     total_transfer = 0.0
@@ -2113,6 +2086,7 @@ def summarize_saved_transaction_items(items: list[dict]) -> dict:
 
 
 def append_saved_summary_lines(lines: list[str], items: list[dict], title: str = "Ringkasan tersimpan"):
+    """Append data or text to saved summary lines."""
     summary = summarize_saved_transaction_items(items)
     lines.append(f"\n📊 *{title}:*")
     lines.append(f"❌ Pengeluaran: *{format_rupiah(summary['expense'])}*")
@@ -2122,15 +2096,15 @@ def append_saved_summary_lines(lines: list[str], items: list[dict], title: str =
     lines.append(f"📌 Net       : *{format_rupiah(summary['net'])}*")
 
 def _clean_fronting_item_text(text: str, person: str = "") -> str:
-    """Bersihkan nama item ditalangin dari nominal, nama penalang, dan frasa split."""
+    """Clean and standardize clean fronting item text."""
     item = str(text or "").strip()
     if person:
         item = re.sub(rf"\b(?:sama|oleh|ke|dari)?\s*(?:si\s+)?{re.escape(person)}\b", " ", item, flags=re.IGNORECASE)
     item = re.sub(r"\b(?:tanggal|tgl|kemarin|hari\s+ini|besok|bulan\s+depan|minggu\s+depan)\b.*$", " ", item, flags=re.IGNORECASE)
     item = re.sub(r"\b(?:rp|idr)?\s*\d+[\d.,]*\s*(?:rb|ribu|k|jt|juta)?(?:\s*/\s*\d+)?\b", " ", item, flags=re.IGNORECASE)
     item = strip_split_bill_phrase(item)
-    # Fallback keras untuk ditalangin+PTPT: jangan simpan sisa "Dibagi"
-    # sebagai subject/description transaksi. Contoh yang harus jadi "Minyak":
+    # Legacy compatibility note for older records or older in-memory state.
+    # Clean leftover split-bill phrases so subject and description stay readable.
     # "Minyak Dibagi", "Minyak Dibagi Fajar Raka", "Minyak Dibagi Sama Fajar Raka".
     item = re.sub(r"\b(?:di\s*-?\s*bagi|dibagi|bagi|split|share|patungan)\b.*$", " ", item, flags=re.IGNORECASE)
     item = re.sub(r"^\s*(?:beli|bayar|byr|jajan|makan|minum)\b", " ", item, flags=re.IGNORECASE)
@@ -2139,7 +2113,7 @@ def _clean_fronting_item_text(text: str, person: str = "") -> str:
 
 
 def _fronting_expense_description(debt_parsed: dict) -> str:
-    """Ambil nama item untuk ditalangin agar report tidak tampil sebagai label debt."""
+    """Helper for fronting expense description in the Telegram bot flow."""
     description = str(debt_parsed.get("description") or "").strip()
     person = str(debt_parsed.get("person_name") or "").strip()
 
@@ -2156,7 +2130,7 @@ def _fronting_expense_description(debt_parsed: dict) -> str:
 
 
 def _fronting_expense_category(debt_parsed: dict) -> str:
-    """Tebak kategori expense untuk ditalangin dari raw input jika memungkinkan."""
+    """Helper for fronting expense category in the Telegram bot flow."""
     raw = str(debt_parsed.get("raw_input") or "").strip()
     if raw:
         try:
@@ -2171,7 +2145,7 @@ def _fronting_expense_category(debt_parsed: dict) -> str:
 
 
 def is_ditalangin_expense_without_balance(debt_parsed: dict) -> bool:
-    """Ditalangin = expense sudah terjadi, tapi saldo rekening user belum berubah."""
+    """Check a boolean condition for is ditalangin expense without balance."""
     return (
         str(debt_parsed.get("cashflow_mode") or "").strip() == "debt_only"
         and str(debt_parsed.get("fronting_mode") or "").strip().lower() == "ditalangin"
@@ -2180,7 +2154,7 @@ def is_ditalangin_expense_without_balance(debt_parsed: dict) -> bool:
 
 
 def normalize_slash_split_syntax(raw: str) -> str:
-    """Ubah shorthand 46k/4 menjadi 46k dibagi 4 agar parser split bill lama bisa menangkapnya."""
+    """Clean and standardize normalize slash split syntax."""
     text = str(raw or "")
     return re.sub(
         r"(\d+[\d.,]*\s*(?:rb|ribu|k|jt|juta)?)\s*/\s*(\d+)",
@@ -2191,20 +2165,7 @@ def normalize_slash_split_syntax(raw: str) -> str:
 
 
 def enrich_ditalangin_split_bill_if_any(debt_parsed: dict, raw: str | None = None) -> dict:
-    """
-    Support kasus PTPT: user ditalangin orang lain, tetapi itemnya tetap
-    menjadi pengeluaran terpusat user dan dibagi lagi ke penghuni/teman.
-
-    Contoh:
-    ditalangin Bagas beli minyak 46k dibagi 4 sama Bagas Fajar Raka
-
-    Secara personal finance user:
-    - transaksi expense tetap gross Rp46k agar pengeluaran rumah tercatat penuh
-    - user punya utang payable full Rp46k ke Bagas sebagai pihak yang menalangi
-    - teman yang disebut di split bill tetap menjadi receivable ke user masing-masing Rp11,5k
-      termasuk Bagas jika namanya ada di daftar share
-    - net expense report menjadi Rp46k - total piutang share teman
-    """
+    """Helper for enrich ditalangin split bill if any in the Telegram bot flow."""
     if not isinstance(debt_parsed, dict) or not is_ditalangin_expense_without_balance(debt_parsed):
         return debt_parsed
 
@@ -2242,9 +2203,9 @@ def enrich_ditalangin_split_bill_if_any(debt_parsed: dict, raw: str | None = Non
     total_receivable = float(split_bill.get("total_receivable", 0) or 0)
 
     updated = dict(debt_parsed)
-    # Jangan ubah amount menjadi bagian user. Untuk PTPT, user tetap punya
-    # payable full ke orang yang menalangi, sementara split bill dibuat sebagai
-    # receivable terpisah ke daftar teman.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # Split bill parsing note: separate the paid transaction from each person share.
     updated["amount"] = total_amount
     updated["fronted_split_bill"] = split_bill
     updated["fronted_gross_amount"] = total_amount
@@ -2259,6 +2220,7 @@ def enrich_ditalangin_split_bill_if_any(debt_parsed: dict, raw: str | None = Non
 
 
 def _debt_payment_catatan(debt_parsed: dict, raw: str) -> str:
+    """Helper for debt payment catatan in the Telegram bot flow."""
     parts = [str(raw or "").strip()]
     allocations = debt_parsed.get("debt_allocations") or []
     alloc_parts = []
@@ -2286,9 +2248,7 @@ def build_debt_cashflow_transaction(
     account: str,
     debt_type_for_payment: str | None = None,
 ) -> dict:
-    """
-    Ubah aktivitas utang/piutang menjadi transaksi cashflow/fact table.
-    """
+    """Build the data structure or message text for debt cashflow transaction."""
     intent = debt_parsed.get("intent")
     person = debt_parsed.get("person_name") or ""
     amount = debt_parsed.get("amount") or 0
@@ -2304,10 +2264,10 @@ def build_debt_cashflow_transaction(
 
 
     if str(debt_parsed.get("cashflow_mode") or "").strip() == "debt_only":
-        # Khusus ditalangin/nitip/dibayarin: pengeluaran aslinya sudah terjadi,
-        # tetapi uang belum keluar dari rekening user karena orang lain yang menalangi.
-        # Jadi transaksi harus muncul di /harian, /mingguan, /bulanan, /budget,
-        # namun tetap tidak mengubah saldo rekening.
+        # Fronting-money note: distinguish actual account cashflow from payable or receivable records.
+        # Account balance note: avoid partial balance updates when validation fails.
+        # Budget command note: regex handling supports natural phrases such as `budget makan 1jt`.
+        # Account balance note: avoid partial balance updates when validation fails.
         if is_ditalangin_expense_without_balance(debt_parsed):
             item_desc = str(debt_parsed.get("expense_description") or "").strip() or _fronting_expense_description(debt_parsed)
             catatan_parts = [str(raw or "").strip(), "ditalangin/tanpa update saldo rekening"]
@@ -2470,16 +2430,12 @@ def build_debt_cashflow_transaction(
 
 
 def debt_uses_cashflow(debt_parsed: dict) -> bool:
-    """Kembalikan True kalau aktivitas debt perlu dicatat juga sebagai cashflow."""
+    """Helper for debt uses cashflow in the Telegram bot flow."""
     return str(debt_parsed.get("cashflow_mode") or "cashflow") != "debt_only"
 
 
 def build_debt_only_confirm_preview(debt_parsed: dict) -> str:
-    """Preview untuk debt tanpa update saldo rekening.
-
-    Khusus ditalangin, transaksi tetap disimpan sebagai expense agar muncul di
-    report, tetapi skip_account=True sehingga saldo rekening tidak berubah.
-    """
+    """Build the data structure or message text for debt only confirm preview."""
     intent = debt_parsed.get("intent")
     person = debt_parsed.get("person_name") or "-"
     amount = debt_parsed.get("amount") or 0
@@ -2546,11 +2502,7 @@ def build_debt_only_confirm_preview(debt_parsed: dict) -> str:
 
 
 def build_debt_initial_preview(debt_parsed: dict) -> str:
-    """Preview awal debt sebelum user lanjut ke pilih rekening/konfirmasi.
-
-    Tujuannya menjaga semua input hutang/piutang tetap melewati tahap review
-    dulu. Data belum disimpan sampai user menekan tombol konfirmasi final.
-    """
+    """Build the data structure or message text for debt initial preview."""
     intent = debt_parsed.get("intent")
     person = debt_parsed.get("person_name") or "-"
     amount = debt_parsed.get("amount") or 0
@@ -2604,7 +2556,7 @@ def build_debt_initial_preview(debt_parsed: dict) -> str:
 
 
 def build_debt_short_summary(debt_parsed: dict) -> str:
-    """Ringkasan pendek debt untuk transisi setelah edit/preview."""
+    """Build the data structure or message text for debt short summary."""
     intent = debt_parsed.get("intent") or "debt"
     person = md_safe(debt_parsed.get("person_name") or "-")
     amount = float(debt_parsed.get("amount", 0) or 0)
@@ -2627,7 +2579,7 @@ def build_debt_short_summary(debt_parsed: dict) -> str:
     return "\n".join(lines)
 
 def build_debt_account_prompt(debt_parsed: dict) -> str:
-    """Preview debt sebelum memilih rekening."""
+    """Build the data structure or message text for debt account prompt."""
     intent = debt_parsed.get("intent")
     person = debt_parsed.get("person_name") or "-"
     amount = debt_parsed.get("amount") or 0
@@ -2672,7 +2624,7 @@ def build_debt_confirm_preview(
     account: str,
     debt_type_for_payment: str | None = None,
 ) -> str:
-    """Preview debt setelah rekening dipilih, sebelum disimpan."""
+    """Build the data structure or message text for debt confirm preview."""
     transaction_parsed = build_debt_cashflow_transaction(
         debt_parsed,
         account,
@@ -2730,7 +2682,7 @@ def build_debt_batch_confirm_preview(
     debt_items: list[dict],
     account: str,
 ) -> str:
-    """Preview batch debt setelah rekening dipilih, sebelum disimpan."""
+    """Build the data structure or message text for debt batch confirm preview."""
     lines = ["🧾 *Preview Batch Utang/Piutang*\n"]
 
     total_cash_in = 0
@@ -2798,7 +2750,7 @@ def build_debt_batch_confirm_preview(
     return "\n".join(lines)
 
 def build_debt_batch_account_prompt(debt_items: list[dict]) -> str:
-    """Preview batch debt sebelum memilih rekening."""
+    """Build the data structure or message text for debt batch account prompt."""
     lines = [f"🧾 *Ditemukan {len(debt_items)} input utang/piutang:*\n"]
 
     total_cash_in = 0

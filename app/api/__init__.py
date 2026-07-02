@@ -1,2 +1,3 @@
-"""Package endpoint API opsional untuk mode webhook."""
+"""Optional API package for webhook deployment."""
+
 

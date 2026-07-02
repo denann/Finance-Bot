@@ -1,3 +1,5 @@
+"""Gemini prompt and response helpers for finance insight, audit, coaching, and data-based Q&A."""
+
 from __future__ import annotations
 
 import json
@@ -21,10 +23,12 @@ MODE_LABELS = {
 
 
 def _json_dumps(data: dict) -> str:
+    """Helper for json dumps in the parser and NLP layer."""
     return json.dumps(data, ensure_ascii=False, indent=2, default=str)
 
 
 def build_finance_insight_prompt(mode: str, context: dict, question: str = "") -> str:
+    """Build the data structure or message text for finance insight prompt."""
     mode_label = MODE_LABELS.get(mode, mode)
     question_line = question or context.get("question") or "-"
 
@@ -67,7 +71,7 @@ Konteks JSON:
 
 
 def generate_finance_insight(mode: str, context: dict, question: str = "") -> str:
-    """Buat teks insight. Jika Gemini gagal, gunakan teks fallback deterministic."""
+    """Helper for generate finance insight in the parser and NLP layer."""
     if not GEMINI_API_KEY:
         if mode == "audit":
             return deterministic_audit_text(context)

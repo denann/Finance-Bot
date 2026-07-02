@@ -1,3 +1,5 @@
+"""Net worth and asset service for account balances, active assets, snapshots, and net worth history."""
+
 import re
 import urllib.request
 import uuid
@@ -21,8 +23,8 @@ ASSET_COLUMNS = [
     "is_active",
     "created_at",
     "updated_at",
-    # Kolom opsional untuk aset yang nilainya bisa dihitung otomatis, misalnya emas.
-    # Tambahkan header ini ke sheet assets agar auto-valuation emas bisa berjalan.
+    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Schema compatibility note for Google Sheets headers and rows.
     "asset_type",
     "quantity",
     "unit",
@@ -63,20 +65,24 @@ LIABILITY_FEATURE_REMOVED_MESSAGE = (
 
 
 def now_str() -> str:
+    """Helper for now str in the finance service layer."""
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def today_str() -> str:
+    """Helper for today str in the finance service layer."""
     return datetime.now().strftime("%Y-%m-%d")
 
 
 def generate_id(prefix: str) -> str:
+    """Helper for generate id in the finance service layer."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     suffix = uuid.uuid4().hex[:6]
     return f"{prefix}_{timestamp}_{suffix}"
 
 
 def safe_float(value) -> float:
+    """Helper for safe float in the finance service layer."""
     try:
         if isinstance(value, str):
             value = value.replace(".", "").replace(",", "")
@@ -86,7 +92,7 @@ def safe_float(value) -> float:
 
 
 def safe_float_decimal(value) -> float:
-    """Parsing nilai desimal seperti 41, 41.5, 41,5 tanpa menganggap titik sebagai ribuan."""
+    """Helper for safe float decimal in the finance service layer."""
     try:
         raw = str(value or "").strip().lower()
         raw = raw.replace("gram", "").replace("gr", "").replace("g", "")
@@ -103,7 +109,7 @@ def safe_float_decimal(value) -> float:
 
 
 def parse_human_money(value) -> float:
-    """Parsing nominal harga aset manual seperti 2420000, 2.42 juta, 2,42jt, atau 91.457k."""
+    """Parse input into structured data for the finance service layer."""
     raw = str(value or "").strip().lower()
     if not raw:
         return 0.0
@@ -129,12 +135,12 @@ def parse_human_money(value) -> float:
 
 
 def normalize_date_value(value) -> str:
-    """Normalisasi input tanggal Indonesia umum ke format YYYY-MM-DD jika memungkinkan."""
+    """Clean and standardize normalize date value."""
     raw = str(value or "").strip()
     if not raw:
         return ""
 
-    # Pertahankan tanggal ISO yang sudah valid.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     if re.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}", raw):
         y, m, d = raw.split("-")
         return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
@@ -152,7 +158,7 @@ def normalize_date_value(value) -> str:
 
 
 def calculate_asset_gain(asset: dict) -> dict:
-    """Hitung acquisition cost, gain/loss, dan persentase gain untuk satu aset."""
+    """Calculate derived values for calculate asset gain."""
     current_value = safe_float(asset.get("current_value", 0))
     quantity = safe_float_decimal(asset.get("quantity"))
     purchase_price = safe_float(asset.get("purchase_price_per_unit", 0))
@@ -180,7 +186,7 @@ def calculate_asset_gain(asset: dict) -> dict:
 
 
 def parse_price_to_float(value) -> float:
-    """Parsing string harga Indonesia seperti Rp 2,594,000 atau 2.594.000."""
+    """Parse input into structured data for the finance service layer."""
     try:
         raw = str(value or "").strip()
         raw = re.sub(r"[^0-9]", "", raw)
@@ -190,23 +196,7 @@ def parse_price_to_float(value) -> float:
 
 
 def fetch_antam_buyback_price() -> dict:
-    """
-    Ambil harga buyback Antam terbaru per gram dari Logam Mulia.
-
-    Output:
-    {
-        "success": bool,
-        "price_per_gram": float,
-        "source": "antam_buyback",
-        "source_url": str,
-        "updated_at": str,
-        "message": str,
-    }
-
-    Catatan:
-    - Scraping website bisa gagal jika Logam Mulia mengubah struktur HTML.
-    - Pemanggil fungsi sebaiknya tetap memakai harga terakhir yang tersimpan jika fungsi ini gagal.
-    """
+    """Helper for fetch antam buyback price in the finance service layer."""
     url = "https://www.logammulia.com/sell/gold"
 
     try:
@@ -269,6 +259,7 @@ def fetch_antam_buyback_price() -> dict:
 
 
 def is_gold_asset(record: dict) -> bool:
+    """Check a boolean condition for is gold asset."""
     asset_type = str(record.get("asset_type", "")).strip().lower()
     category = str(record.get("category", "")).strip().lower()
     unit = str(record.get("unit", "")).strip().lower()
@@ -281,18 +272,22 @@ def is_gold_asset(record: dict) -> bool:
 
 
 def is_active_record(record: dict) -> bool:
+    """Check a boolean condition for is active record."""
     return str(record.get("is_active", "")).strip().upper() == "TRUE"
 
 
 def build_asset_row(asset: dict) -> list:
+    """Build the data structure or message text for asset row."""
     return [asset.get(col, "") for col in ASSET_COLUMNS]
 
 
 def build_liability_row(liability: dict) -> list:
+    """Build the data structure or message text for liability row."""
     return [liability.get(col, "") for col in LIABILITY_COLUMNS]
 
 
 def build_snapshot_row(snapshot: dict) -> list:
+    """Build the data structure or message text for snapshot row."""
     return [snapshot.get(col, "") for col in NET_WORTH_SNAPSHOT_COLUMNS]
 
 
@@ -309,6 +304,7 @@ def add_asset(
     purchase_price_per_unit: float | None = None,
     purchase_date: str = "",
 ) -> dict:
+    """Helper for add asset in the finance service layer."""
     asset_type = str(asset_type or "manual").strip().lower()
     category = str(category or "Other Asset").strip()
     unit = str(unit or "").strip()
@@ -319,8 +315,8 @@ def add_asset(
     purchase_unit_price = safe_float(purchase_price_per_unit) if purchase_price_per_unit not in [None, ""] else ""
     purchase_date_value = normalize_date_value(purchase_date)
 
-    # Aset berbasis satuan: emas 41 gram, laptop 1 buah, dll.
-    # Nilai aset = quantity × price_per_unit. Tidak auto-scrape external source.
+    # Unit-based assets: gold 41 grams, laptop 1 unit, and similar cases.
+    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
     if quantity_value > 0 or unit or unit_price > 0:
         if quantity_value <= 0:
             raise ValueError("Quantity aset harus lebih dari 0. Contoh: `41 gram` atau `1 buah`.")
@@ -384,20 +380,16 @@ def add_liability(
     category: str = "Other Liability",
     description: str = "",
 ) -> dict:
-    """Deprecated: liabilities tidak lagi dipakai dalam konsep net worth bot."""
+    """Helper for add liability in the finance service layer."""
     raise NotImplementedError(LIABILITY_FEATURE_REMOVED_MESSAGE)
 
 def refresh_gold_assets(records: list[dict]) -> list[dict]:
-    """Deprecated auto-refresh hook.
-
-    Harga aset sekarang dikelola manual lewat price_per_unit/unit_price agar
-    bot tidak bergantung scraping website eksternal yang bisa kena 403.
-    Fungsi ini sengaja tidak mengubah records.
-    """
+    """Helper for refresh gold assets in the finance service layer."""
     return records
 
 
 def get_assets(active_only: bool = True, refresh_gold: bool = True) -> list[dict]:
+    """Retrieve data needed for assets."""
     records = get_all_records(SHEET_ASSETS)
 
     if refresh_gold:
@@ -410,10 +402,11 @@ def get_assets(active_only: bool = True, refresh_gold: bool = True) -> list[dict
 
 
 def get_liabilities(active_only: bool = True) -> list[dict]:
-    """Deprecated: liabilities sudah tidak menjadi sheet aktif."""
+    """Retrieve data needed for liabilities."""
     return []
 
 def get_record_by_id(sheet_name: str, record_id: str) -> dict | None:
+    """Retrieve data needed for record by id."""
     records = get_all_records(sheet_name)
 
     for record in records:
@@ -424,6 +417,7 @@ def get_record_by_id(sheet_name: str, record_id: str) -> dict | None:
 
 
 def find_record_row_index(sheet_name: str, record_id: str) -> int | None:
+    """Helper for find record row index in the finance service layer."""
     records = get_all_records(sheet_name)
 
     for idx, record in enumerate(records, start=2):
@@ -439,6 +433,7 @@ def update_record_cells(
     record_id: str,
     updates: dict,
 ) -> bool:
+    """Update record cells while keeping related data consistent."""
     row_index = find_record_row_index(sheet_name, record_id)
 
     if not row_index:
@@ -455,6 +450,7 @@ def update_record_cells(
 
 
 def normalize_asset_update_field(field: str) -> str | None:
+    """Clean and standardize normalize asset update field."""
     key = str(field or "").strip().lower()
 
     aliases = {
@@ -510,6 +506,7 @@ def normalize_asset_update_field(field: str) -> str | None:
 
 
 def normalize_liability_update_field(field: str) -> str | None:
+    """Clean and standardize normalize liability update field."""
     key = str(field or "").strip().lower()
 
     aliases = {
@@ -539,6 +536,7 @@ def normalize_liability_update_field(field: str) -> str | None:
 
 
 def normalize_common_update_value(field: str, value):
+    """Clean and standardize normalize common update value."""
     raw = str(value or "").strip()
 
     if field in ["current_value", "current_balance", "price_per_unit", "purchase_price_per_unit"]:
@@ -575,6 +573,7 @@ def normalize_common_update_value(field: str, value):
 
 
 def update_asset(asset_id: str, updates: dict) -> dict:
+    """Update asset while keeping related data consistent."""
     asset = get_record_by_id(SHEET_ASSETS, asset_id)
 
     if not asset:
@@ -641,7 +640,7 @@ def update_asset(asset_id: str, updates: dict) -> dict:
 
 
 def update_liability(liability_id: str, updates: dict) -> dict:
-    """Deprecated: liabilities tidak lagi dipakai dalam konsep net worth bot."""
+    """Update liability while keeping related data consistent."""
     return {
         "success": False,
         "before": {},
@@ -651,6 +650,7 @@ def update_liability(liability_id: str, updates: dict) -> dict:
     }
 
 def deactivate_asset(asset_id: str) -> bool:
+    """Helper for deactivate asset in the finance service layer."""
     return update_record_cells(
         SHEET_ASSETS,
         ASSET_COLUMNS,
@@ -663,10 +663,11 @@ def deactivate_asset(asset_id: str) -> bool:
 
 
 def deactivate_liability(liability_id: str) -> bool:
-    """Deprecated: liabilities tidak lagi dipakai dalam konsep net worth bot."""
+    """Helper for deactivate liability in the finance service layer."""
     return False
 
 def calculate_net_worth() -> dict:
+    """Calculate derived values for calculate net worth."""
     accounts = get_all_accounts()
     assets = get_assets(active_only=True)
 
@@ -680,8 +681,8 @@ def calculate_net_worth() -> dict:
         for asset in assets
     )
 
-    # Liabilities sudah dihapus dari konsep bot.
-    # Kewajiban personal antar orang tetap dikelola melalui fitur /hutang.
+    # Implementation note for this project-specific finance flow.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
     total_liabilities = 0.0
     net_worth = total_accounts + total_assets
 
@@ -696,6 +697,7 @@ def calculate_net_worth() -> dict:
     }
 
 def create_net_worth_snapshot() -> dict:
+    """Create a new record or object for net worth snapshot."""
     summary = calculate_net_worth()
 
     snapshot = {
@@ -714,6 +716,7 @@ def create_net_worth_snapshot() -> dict:
 
 
 def get_net_worth_snapshots(limit: int = 12) -> list[dict]:
+    """Retrieve data needed for net worth snapshots."""
     records = get_all_records(SHEET_NET_WORTH_SNAPSHOTS)
     records = list(reversed(records))
 

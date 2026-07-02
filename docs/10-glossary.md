@@ -2,84 +2,60 @@
 
 ## Account
 
-Rekening/sumber dana user, misalnya `Cash`, `BRI`, `BCA`, `DANA`, `GoPay`.
+A wallet, bank account, or e-wallet used as a source or destination of money.
 
 ## Amount
 
-Nominal transaksi dalam rupiah. Input seperti `20k`, `1.2jt`, atau `2 juta` akan dinormalisasi menjadi angka.
+The transaction value. Human input such as `20k`, `1.2jt`, or `2 juta` is normalized into a number.
 
 ## Atomic write
 
-Pola write Google Sheets yang berusaha memastikan beberapa perubahan data diperlakukan sebagai satu operasi. Jika salah satu gagal, sistem mencoba rollback perubahan sebelumnya.
+A best-effort pattern that groups several Google Sheets writes into one logical operation. If one write fails, the system tries to roll back previous writes.
 
 ## Callback
 
-Event dari tombol inline Telegram. Contoh: user menekan `Lanjut`, `Batal`, `Simpan`, atau memilih rekening.
+A Telegram event triggered by an inline button such as `Lanjut`, `Simpan`, or `Batal`.
 
 ## Clarification
 
-Flow ketika bot belum yakin maksud input user. Bot bertanya dulu sebelum preview atau save.
+A flow where the bot asks the user to clarify the meaning of an ambiguous input.
 
 ## Debt
 
-Hutang/piutang personal. Di project ini debt bisa berupa `payable` atau `receivable`.
+A personal payable or receivable record.
 
 ## Ditalangin
 
-Kondisi ketika orang lain membayar dulu untuk user. Biasanya membuat user punya utang ke orang tersebut.
-
-## Gemini draft preview
-
-Preview yang dibantu Gemini untuk input non-sensitive. Hasilnya tetap harus dicek user dan tidak langsung disimpan.
-
-## Handler
-
-Fungsi yang menerima update Telegram, misalnya command, pesan teks, foto, atau callback button.
-
-## Operational data store
-
-Tempat data operasional disimpan. Di project ini menggunakan Google Sheets.
-
-## Parse safety routing
-
-Layer yang menilai apakah hasil parsing aman atau perlu warning/klarifikasi.
-
-## Pending expense
-
-Rencana/tagihan yang belum tentu sudah dibayar. Disimpan sebagai pending agar tidak langsung mengubah saldo.
-
-## Polling mode
-
-Mode runtime di mana bot mengambil update dari Telegram secara berkala. Ini mode default project.
-
-## Preview before write
-
-Prinsip bahwa data harus ditampilkan dulu ke user sebelum disimpan ke Google Sheets.
-
-## Receivable / Piutang
-
-Orang lain berutang kepada user.
-
-## Payable / Utang
-
-User berutang kepada orang lain.
-
-## Service layer
-
-Layer yang menyimpan business logic finansial, misalnya save transaksi, update saldo, settle debt, hitung budget.
-
-## Split bill
-
-Transaksi yang dibagi dengan orang lain. Bot bisa membuat piutang/utang terkait pembagian tersebut.
+An Indonesian finance term used when someone else pays first for the user. In this project, it usually creates a payable.
 
 ## Talangin
 
-Kondisi ketika user membayar dulu untuk orang lain. Biasanya membuat orang lain punya utang ke user.
+An Indonesian finance term used when the user pays first for someone else. In this project, it usually creates a receivable.
 
-## Warning preview
+## Parse safety routing
 
-Preview dengan peringatan karena hasil parser mungkin rawan salah.
+The layer that decides whether parser output should go to normal preview, warning preview, Gemini draft, or clarification.
+
+## Pending expense
+
+A planned or incomplete expense that should not immediately change account balance.
+
+## Polling mode
+
+Runtime mode where the bot fetches updates from Telegram Bot API while the Python process is running.
+
+## Preview before write
+
+The safety principle that data should be reviewed by the user before it is saved to Google Sheets.
+
+## Service layer
+
+The layer that contains finance business logic, such as saving transactions, updating balances, settling debts, and calculating budgets.
+
+## Split bill
+
+A transaction shared with other people. The bot can create related debt records from the split.
 
 ## Webhook mode
 
-Mode runtime advanced di mana Telegram mengirim update ke endpoint FastAPI.
+Runtime mode where Telegram sends updates to a FastAPI endpoint.

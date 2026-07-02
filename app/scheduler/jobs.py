@@ -1,4 +1,5 @@
-"""Definisi job APScheduler untuk recurring transaction, reminder, export, dan summary otomatis."""
+"""APScheduler job definitions for recurring transactions, reminders, exports, and scheduled summaries."""
+
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -18,14 +19,7 @@ from app.services.recurring_service import get_due_recurring_rules
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 async def job_recurring_run():
-    """
-    Kirim reminder recurring yang jatuh tempo.
-
-    Bot tidak langsung membuat transaksi. User klik tombol "Sudah bayar"
-    untuk mencatat transaksi dan menggeser next_run_date ke bulan berikutnya.
-    Jika belum bayar, abaikan; karena next_run_date masih jatuh tempo, bot akan
-    mengingatkan lagi pada run berikutnya.
-    """
+    """Helper for job recurring run in the scheduled job layer."""
     try:
         due_rules = get_due_recurring_rules()
 
@@ -72,7 +66,7 @@ async def job_recurring_run():
     
 
 async def send_message(text: str, parse_mode: str | None = "Markdown", reply_markup=None):
-    """Kirim pesan ke user via bot."""
+    """Send a Telegram response for send message."""
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     await bot.send_message(
         chat_id=ALLOWED_USER_ID,
@@ -85,7 +79,7 @@ async def send_message(text: str, parse_mode: str | None = "Markdown", reply_mar
 # ── Job functions ─────────────────────────────────────────────────────────────
 
 async def job_daily_summary():
-    """Kirim ringkasan harian setiap jam 21:00."""
+    """Helper for job daily summary in the scheduled job layer."""
     try:
         report = get_daily_report()
 
@@ -107,7 +101,7 @@ async def job_daily_summary():
             for cat, amount in report["by_category"].items():
                 lines.append(f"  • {cat}: {format_rupiah(amount)}")
 
-        # Cek budget warning
+        # Check budget warning
         budget_summary = get_budget_summary()
         warnings = [b for b in budget_summary if b["status"] in ["warning", "over"]]
         if warnings:
@@ -125,7 +119,7 @@ async def job_daily_summary():
 
 
 async def job_weekly_summary():
-    """Kirim ringkasan mingguan setiap Senin jam 08:00."""
+    """Helper for job weekly summary in the scheduled job layer."""
     try:
         report = get_weekly_report()
 
@@ -149,7 +143,7 @@ async def job_weekly_summary():
             for cat, amount in report["by_category"].items():
                 lines.append(f"  • {cat}: {format_rupiah(amount)}")
 
-        # Top 3 pengeluaran terbesar
+        # Implementation note for this project-specific finance flow.
         top = sorted(
             [t for t in report["transactions"] if t.get("type") == "expense"],
             key=lambda x: float(x.get("amount", 0)),
@@ -171,9 +165,9 @@ async def job_weekly_summary():
 
 
 async def job_monthly_summary():
-    """Kirim laporan bulanan setiap tanggal 1 jam 07:00."""
+    """Helper for job monthly summary in the scheduled job layer."""
     try:
-        # Laporan bulan LALU (karena dijalankan tanggal 1 bulan baru)
+        # Date parsing note: keep explicit and relative Indonesian date formats predictable.
         now = datetime.now()
         if now.month == 1:
             year, month = now.year - 1, 12
@@ -200,7 +194,7 @@ async def job_monthly_summary():
             for cat, amount in report["by_category"].items():
                 lines.append(f"  • {cat}: {format_rupiah(amount)}")
 
-        # Budget vs realisasi bulan lalu
+        # Budget command note: regex handling supports natural phrases such as `budget makan 1jt`.
         budget_summary = get_budget_summary(f"{year}-{month:02d}")
         if budget_summary:
             lines.append("\n*Budget vs Realisasi:*")
@@ -219,10 +213,7 @@ async def job_monthly_summary():
 
 
 async def job_debt_reminder():
-    """
-    Cek hutang yang mendekati jatuh tempo.
-    Kirim reminder H-3 setiap hari jam 08:00.
-    """
+    """Helper for job debt reminder in the scheduled job layer."""
     try:
         active_debts = get_active_debts(debt_type="payable")
         today = datetime.now().date()
@@ -275,13 +266,10 @@ async def job_debt_reminder():
 # ── Scheduler setup ───────────────────────────────────────────────────────────
 
 def create_scheduler() -> AsyncIOScheduler:
-    """
-    Buat dan konfigurasi scheduler.
-    Timezone Asia/Jakarta (WIB).
-    """
+    """Create a new record or object for scheduler."""
     scheduler = AsyncIOScheduler(timezone="Asia/Jakarta")
 
-    # Ringkasan harian — setiap hari jam 21:00 WIB
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     scheduler.add_job(
         job_daily_summary,
         CronTrigger(hour=21, minute=0),
@@ -299,7 +287,7 @@ def create_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    # Laporan bulanan — tanggal 1 tiap bulan jam 07:00 WIB
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     scheduler.add_job(
         job_monthly_summary,
         CronTrigger(day=1, hour=7, minute=0),
@@ -308,7 +296,7 @@ def create_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    # Debt reminder — setiap hari jam 08:00 WIB
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     scheduler.add_job(
         job_debt_reminder,
         CronTrigger(hour=8, minute=0),

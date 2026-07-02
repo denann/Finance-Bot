@@ -1,4 +1,6 @@
-# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
+"""Natural message handler that routes text and image input into parser, preview, clarification, debt, split bill, pending, or AI flows."""
+
+# Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
@@ -72,7 +74,7 @@ from app.nlp.parse_safety import (
 )
 
 async def send_parse_clarification(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: str, parsed: dict | None, assessment: dict) -> None:
-    """Kirim prompt klarifikasi tanpa menyimpan apa pun."""
+    """Send a Telegram response for send parse clarification."""
     context.user_data["pending_parse_clarification"] = {
         "raw": raw,
         "parsed": parsed or {},
@@ -93,7 +95,7 @@ async def send_parse_clarification(update: Update, context: ContextTypes.DEFAULT
 
 
 def try_gemini_draft_for_parse_safety(raw: str, fallback_parsed: dict, assessment: dict) -> tuple[dict, dict, bool]:
-    """Ambil draft Gemini untuk review non-sensitif. Kalau gagal, tetap pakai regex + warning."""
+    """Helper for try gemini draft for parse safety in the Telegram bot flow."""
     if str((fallback_parsed or {}).get("parsed_by") or "").strip().lower() == "gemini":
         draft_assessment = dict(assessment or {})
         reasons = list(draft_assessment.get("reasons") or [])
@@ -124,13 +126,7 @@ def try_gemini_draft_for_parse_safety(raw: str, fallback_parsed: dict, assessmen
 
 
 async def debt_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Tangani input debt dari pesan bebas.
-
-    Debt tidak langsung diproses.
-    Bot akan tanya rekening dulu supaya aktivitas debt juga masuk transactions
-    dan saldo rekening ikut berubah.
-    """
+    """Handle the Telegram request for debt message."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return True
@@ -141,11 +137,11 @@ async def debt_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if not debt_parsed:
         return False
 
-    # Penting untuk single input: parse_mixed_item() sudah melakukan enrichment,
-    # tetapi single debt flow sebelumnya belum. Tanpa ini, input PTPT seperti:
+    # Single-input debt flow needs the same enrichment used by mixed input parsing.
+    # Single-input debt flow needs the same enrichment used by mixed input parsing.
     # "ditalangin Alpat beli minyak 46k dibagi 4 sama Alpat Opik Sapto"
-    # hanya membuat payable 46k ke Alpat dan gagal membuat receivable share
-    # 11.5k ke Alpat/Opik/Sapto.
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # Implementation note for this project-specific finance flow.
     debt_parsed = enrich_ditalangin_split_bill_if_any(debt_parsed, text)
 
     person = debt_parsed.get("person_name")
@@ -191,17 +187,7 @@ async def debt_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     return True
 
 async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
-    """
-    Jalankan hasil Gemini intent router.
-
-    Output:
-    - True jika sudah ditangani
-    - False jika perlu lanjut ke fallback biasa
-
-    Keamanan:
-    - delete/edit tetap preview dan butuh tombol Simpan.
-    - confidence rendah tidak dieksekusi.
-    """
+    """Helper for handle gemini intent in the Telegram bot flow."""
     if not should_try_gemini_intent_router(user_text):
         return False
 
@@ -444,8 +430,8 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             return True
 
-        # Fitur ini butuh preview_edit_transaction_by_ref.
-        # Kalau phase edit_txn belum terpasang, bagian ini akan error saat import.
+        # This feature depends on preview_edit_transaction_by_ref being available.
+        # Split bill parsing note: separate the paid transaction from each person share.
         resolved = resolve_txn_refs_from_last(context, [ref])
 
         if resolved.get("invalid_refs") and not resolved["row_indices"] and not resolved["txn_ids"]:
@@ -500,29 +486,20 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 def normalize_text_command(text: str) -> str:
+    """Clean and standardize normalize text command."""
     clean = str(text or "").strip().lower()
     clean = re.sub(r"\s+", " ", clean)
     return clean
 
 
 async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
-    """
-    Tangani natural command sederhana secara lokal tanpa Gemini.
-
-    Tujuan:
-    - "cek saldo" jangan perlu Gemini
-    - "cek hutang" jangan jatuh ke typo resolver "cek"
-    - "cari kopi" langsung jadi pencarian
-    - "lihat transaksi hari ini" langsung jadi /last today
-
-    Kembalikan True kalau input sudah ditangani.
-    """
+    """Helper for handle local natural intent in the Telegram bot flow."""
     clean = normalize_text_command(user_text)
 
     if not clean:
         return False
 
-    # Jangan ganggu input yang mengandung nominal, karena kemungkinan transaksi.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     has_amount = bool(
         re.search(
             r"\b\d+(?:[.,]\d+)?\s*(rb|ribu|k|jt|juta)?\b",
@@ -534,7 +511,7 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
     if has_amount:
         return False
 
-    # ── Saldo ────────────────────────────────────────────────────────────────
+    # ── Balance flow ─────────────────────────────────────────────────────────────
     saldo_patterns = {
         "cek saldo",
         "lihat saldo",
@@ -621,7 +598,7 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
         return True
 
-    # ── Last / histori transaksi ─────────────────────────────────────────────
+    # ── Latest transaction history flow ───────────────────────────────────────
     last_patterns = {
         "lihat transaksi",
         "lihat transaksi terakhir",
@@ -745,7 +722,7 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
         )
         return True
 
-    # ── Cari transaksi ───────────────────────────────────────────────────────
+    # ── Transaction search flow ───────────────────────────────────────────────
     # Contoh:
     # cari kopi
     # search kopi
@@ -789,15 +766,7 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
 # ── Image / Receipt Handler ──────────────────────────────────────────────────
 
 async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Tangani foto struk/nota/screenshot transaksi.
-
-    Alur:
-    - User mengirim gambar.
-    - Bot mengunduh gambar dari Telegram.
-    - Gemini membaca gambar dan mengembalikan data transaksi.
-    - Hasil masuk ke alur preview + pilih rekening yang sama seperti input teks.
-    """
+    """Handle the Telegram request for image."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -825,7 +794,7 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("❌ File yang dikirim belum terbaca sebagai gambar.")
         return
 
-    # Batas aman supaya gambar besar tidak membebani memory/server.
+    # Image parsing note: receipt output still goes through preview before saving.
     if file_size and file_size > 10 * 1024 * 1024:
         await message.reply_text(
             "❌ Gambar terlalu besar. Kirim gambar di bawah 10 MB."
@@ -870,7 +839,7 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     items = result.get("items", []) or []
 
-    # Single transaction dari gambar.
+    # Image parsing note: receipt output still goes through preview before saving.
     if len(items) == 1:
         parsed = items[0]
         attach_split_bill_if_any(parsed, caption or "")
@@ -897,7 +866,7 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Multiple transaction dari gambar.
+    # Image parsing note: receipt output still goes through preview before saving.
     mixed_items = []
     for idx, parsed in enumerate(items, 1):
         raw_item = f"gambar item {idx}"
@@ -933,10 +902,11 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Message Handler ──────────────────────────────────────────────────────────
 
-# Handler utama untuk pesan teks natural.
-# Flow-nya dibuat berlapis: command natural, pending, debt, parse safety, transaksi, lalu fallback intent.
+# Implementation note for this project-specific finance flow.
+# The flow is layered: natural command, pending, debt, parse safety, transaction, then intent fallback.
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the Telegram request for message."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -995,17 +965,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ── Layer 0: Local natural intent paling awal ────────────────────────────
-    # WAJIB sebelum split/debt parser.
-    # Ini untuk mencegah "cek hutang" ketangkep parse_debt_input().
-    #
-    # Aman karena handle_local_natural_intent() harus return False
-    # kalau input mengandung nominal.
-    #
+    # Implementation note for this project-specific finance flow.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # 
+    # Implementation note for this project-specific finance flow.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
+    # 
     # Jadi:
-    # - "cek hutang" -> /hutang
-    # - "cek saldo" -> /saldo
+    # - "check hutang" -> /hutang
+    # Account balance note: avoid partial balance updates when validation fails.
     # - "cari kopi" -> search
-    # - "Budi minjem 300k" -> tidak ke-handle di sini, lanjut debt parser
+    # Implementation note for this project-specific finance flow.
     local_natural_handled = await handle_local_natural_intent(
         update,
         context,
@@ -1018,11 +988,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Natural pending expense ──────────────────────────────────────────────
     # Contoh:
     # - nanti perlu bayar wisuda 750k
-    # - perlu 750k buat bayar wisuda
-    # - bakal service motor 300k tanggal 30
-    #
-    # Ditaruh sebelum debt/parser transaksi supaya input berkeyword masa depan/rencana
-    # tidak tercatat sebagai transaksi aktual. Guard-nya ada di is_pending_expense_text().
+    # - perlu 750k create bayar wisuda
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
+    # 
+    # Implementation note for this project-specific finance flow.
+    # Pending expense note: planned items should not be recorded as actual transactions yet.
     if is_pending_expense_text(user_text):
         try:
             item = build_pending_expense_from_text(user_text)
@@ -1046,14 +1016,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ── Natural selected debt settlement ─────────────────────────────────────
-    # Contoh: "Sapto bayar hutang 337063 untuk debt 1-17".
-    # Harus jalan sebelum debt parser biasa supaya tidak dialokasikan global.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Implementation note for this project-specific finance flow.
     selected_debt_settle_handled = await handle_natural_debt_settle(update, context, user_text)
     if selected_debt_settle_handled:
         return
 
-    # ── Pertanyaan finance RAG/Gemini read-only ───────────────────────────────
-    # Ditaruh sebelum parser transaksi, tapi hanya aktif untuk pertanyaan tanpa nominal.
+    # ── Implementation section ────────────────────────────────────────────────
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     finance_question_handled = await handle_natural_finance_question(
         update,
         context,
@@ -1063,8 +1033,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if finance_question_handled:
         return
 
-    # ── Parse Safety Routing: klarifikasi yang harus ditangkap sebelum parser debt/transaction.
-    # Contoh: "Budi bayar makan 100k", "saldo BRI 500k", "uang Budi 50k".
+    # ── Implementation section ────────────────────────────────────────────────
+    # Example cleanup: remove the person prefix so the description stays focused on the expense item.
     pre_parse_assessment = assess_parse_safety(user_text, {})
     if pre_parse_assessment.get("recommended_action") == CLARIFICATION:
         await send_parse_clarification(update, context, user_text, {}, pre_parse_assessment)
@@ -1148,10 +1118,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             preview = build_mixed_preview(mixed_items)
 
-            # Split bill harus diputuskan dulu sebelum pilih rekening/confirm.
-            # Kalau tidak, input bulk seperti "22k dibagi 2 sama Sapto"
-            # terlihat seperti transaksi biasa Rp22.000 dan tidak langsung
-            # menanyakan apakah bagian teman sudah dibayar.
+            # Split bill parsing note: separate the paid transaction from each person share.
+            # Split bill parsing note: separate the paid transaction from each person share.
+            # Implementation note for this project-specific finance flow.
+            # Split bill parsing note: separate the paid transaction from each person share.
             if mixed_split_bill_needs_decision(mixed_items):
                 await update.message.reply_text(
                     build_mixed_split_bill_queue_prompt(mixed_items),
@@ -1168,9 +1138,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
-    # Single income yang kurang nominal.
-    # Contoh: "Transfer dari Sapto tgl 6" -> tanya nominal dulu,
-    # bukan gagal parse dan bukan debt/payment.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
+    # Debt payment note: settlement and void actions must stay explicit for auditability.
     missing_amount_income = parse_income_missing_amount(user_text)
     if missing_amount_income:
         context.user_data["pending_missing_amount"] = {
@@ -1192,12 +1162,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if parsed.get("type") == "pending":
         # Layer 3.5: local natural intent shortcut.
-        # Ini menangani kasus sederhana tanpa Gemini:
-        # - cek saldo
-        # - cek hutang
-        # - lihat budget bulan ini
+        # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+        # Account balance note: avoid partial balance updates when validation fails.
+        # - check hutang
+        # Budget command note: regex handling supports natural phrases such as `budget makan 1jt`.
         # - cari kopi
-        # - lihat transaksi hari ini
+        # Date parsing note: keep explicit and relative Indonesian date formats predictable.
         local_natural_handled = await handle_local_natural_intent(
             update,
             context,
@@ -1207,10 +1177,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if local_natural_handled:
             return
 
-        # Layer 4: router intent Gemini.
-        # Dipakai untuk command natural yang lebih fleksibel:
-        # - hapus transaksi nomor 2
-        # - edit transaksi nomor 2 deskripsinya Kopi susu
+        # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+        # Implementation note for this project-specific finance flow.
+        # - hapus transaction nomor 2
+        # - edit transaction nomor 2 deskripsinya Kopi susu
         gemini_handled = await handle_gemini_intent(update, context, user_text)
 
         if gemini_handled:
@@ -1267,8 +1237,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else build_preview(parsed)
     )
 
-    # Untuk split bill, tanya status pembayaran teman dulu.
-    # Setelah user memilih paid/unpaid, baru lanjut pilih rekening atau confirm.
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # Account balance note: avoid partial balance updates when validation fails.
     if split_bill_needs_decision(parsed):
         await update.message.reply_text(
             build_split_bill_prompt_from_parsed(parsed),
@@ -1285,6 +1255,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def build_transactions_full_text(transactions: list[dict], title: str, account_filter: str | None = None) -> str:
+    """Build the data structure or message text for transactions full text."""
     transactions = enrich_transactions_with_debt_info(transactions or [])
     lines = [f"🧾 *{md_safe(title)}*\n"]
     append_net_gross_note(lines, transactions)
@@ -1371,6 +1342,7 @@ def build_transactions_full_text(transactions: list[dict], title: str, account_f
     return "\n".join(lines)
 
 def build_transaction_filter_title(base_title: str, category_filter: str | None = None, account_filter: str | None = None) -> str:
+    """Build the data structure or message text for transaction filter title."""
     suffix = []
     if category_filter:
         suffix.append(f"Kategori {category_filter}")
@@ -1382,15 +1354,7 @@ def build_transaction_filter_title(base_title: str, category_filter: str | None 
 
 
 def _build_transaksi_prefixed_period_arg(first: str, rest: str, mode: str) -> str | None:
-    """Bangun argumen periode+filter untuk /transaksi dengan prefix hari/minggu/bulan.
-
-    Tujuan utamanya agar format natural seperti:
-    - /transaksi bulan lalu Food & Beverage
-    - /transaksi minggu lalu rekening Cash
-    - /transaksi hari ini makan
-
-    tetap bisa dibaca oleh split_report_filter_args().
-    """
+    """Build the data structure or message text for transaksi prefixed period arg."""
     rest = str(rest or "").strip()
     if not rest:
         return None
@@ -1407,7 +1371,7 @@ def _build_transaksi_prefixed_period_arg(first: str, rest: str, mode: str) -> st
 
 
 def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str | None]:
-    """Parsing command /transaksi untuk daftar lengkap hari/minggu/bulan/rekening tertentu."""
+    """Parse input into structured data for the Telegram bot flow."""
     raw = " ".join(args or []).strip()
     low = raw.lower()
 
@@ -1481,10 +1445,10 @@ def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str |
         report = get_daily_report(raw)
         return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day", None
 
-    # Alias natural tanpa prefix, misalnya:
-    # /transaksi kemarin
-    # /transaksi minggu lalu
-    # /transaksi bulan lalu
+    # Command routing note: exact commands and aliases are checked before similarity-based typo handling.
+    # /transaction kemarin
+    # /transaction minggu lalu
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     try:
         date_arg = parse_report_date_arg(raw)
         report = get_daily_report(date_arg)
@@ -1512,7 +1476,7 @@ def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str |
 
 
 async def transaksi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """List transaksi full untuk hari/minggu/bulan tertentu."""
+    """Handle the Telegram request for transaksi."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1560,14 +1524,7 @@ async def transaksi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def last_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /last
-    /last 20
-    /last today
-    /last week
-    /last month
-    /last 2026-06
-    """
+    """Handle the Telegram request for last."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1644,11 +1601,7 @@ async def last_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def delete_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /delete_txn 1
-    /delete_txn 1 3 5
-    /delete_txn txn_...
-    """
+    """Handle the Telegram request for delete txn."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1714,25 +1667,7 @@ async def delete_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 def parse_edit_updates(args: list[str]) -> dict:
-    """
-    Parsing argumen edit.
-
-    Format utama:
-    amount=15000
-    amount = 500k
-    account=Cash
-    category="Food & Beverage"
-    desc="Kopi susu"
-    date=2026-06-10
-
-    Shortcut:
-    /edit_txn 2 15000
-    -> amount=15000
-
-    Catatan split bill:
-    token setelah kata `dibagi/bagi/split/patungan` diabaikan di sini,
-    lalu diproses terpisah oleh attach_split_bill_if_any().
-    """
+    """Parse input into structured data for the Telegram bot flow."""
     if not args:
         return {}
 
@@ -1753,7 +1688,7 @@ def parse_edit_updates(args: list[str]) -> dict:
             i += 1
             continue
 
-        # Begitu masuk frasa split bill, sisanya bukan field edit biasa.
+        # Split bill parsing note: separate the paid transaction from each person share.
         if low in split_words or low.replace("-", "") in {"dibagi"}:
             break
 
@@ -1765,7 +1700,7 @@ def parse_edit_updates(args: list[str]) -> dict:
             i += 3
             continue
 
-        # Mendukung: amount=500k dan amount= 500k
+        # Supports both `amount=500k` and `amount= 500k`.
         if "=" in arg:
             key, value = arg.split("=", 1)
             key = key.strip()
@@ -1795,30 +1730,18 @@ def parse_edit_updates(args: list[str]) -> dict:
 
 
 def edit_args_contain_split_bill(args: list[str]) -> bool:
+    """Helper for edit args contain split bill in the Telegram bot flow."""
     raw = " ".join(str(x or "") for x in args)
     return bool(re.search(r"\b(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)\b", raw, flags=re.IGNORECASE))
 
 
 def _normalize_edit_arg_token(token: str) -> str:
+    """Clean and standardize normalize edit arg token."""
     return str(token or "").strip().lower().replace("_", "-")
 
 
 def parse_edit_debt_payment_conversion_args(args: list[str]) -> dict | None:
-    """Parsing /edit_txn untuk mengubah transaksi biasa menjadi pembayaran debt.
-
-    Format yang didukung:
-    - /edit_txn 2 bayar_hutang Sapto
-    - /edit_txn 2 pembayaran_hutang Sapto
-    - /edit_txn 2 bayar hutang Sapto
-    - /edit_txn 2 bayar_piutang Sapto
-    - /edit_txn 2 pembayaran_piutang Sapto
-    - /edit_txn 2 debt=payable person=Sapto
-    - /edit_txn 2 debt=receivable person=Sapto amount=100k
-
-    target_type:
-    - payable    => Anda membayar utang ke orang tersebut, cashflow expense.
-    - receivable => orang tersebut membayar piutang ke Anda, cashflow income.
-    """
+    """Parse input into structured data for the Telegram bot flow."""
     if not args:
         return None
 
@@ -1891,12 +1814,12 @@ def parse_edit_debt_payment_conversion_args(args: list[str]) -> dict | None:
             i += 2
             continue
 
-        # Preposisi setelah marker tidak masuk nama.
+        # Split bill parsing note: separate the paid transaction from each person share.
         if consume_person and compact in {"ke", "dari", "sama", "dengan", "untuk", "sebagai"}:
             i += 1
             continue
 
-        # Setelah marker, token non-field dianggap nama sampai ketemu key=value.
+        # Split bill parsing note: separate the paid transaction from each person share.
         if consume_person:
             person_tokens.append(token)
             i += 1
@@ -1912,7 +1835,7 @@ def parse_edit_debt_payment_conversion_args(args: list[str]) -> dict | None:
     person = re.sub(r"\s+", " ", person).strip()
     person = re.sub(r"^(ke|dari|sama|dengan|untuk)\s+", "", person, flags=re.IGNORECASE).strip()
 
-    # Jangan biarkan field amount=... atau account=... ketelan sebagai nama.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     person = re.sub(r"\s+\w+\s*=.*$", "", person).strip()
 
     if not target_type:
@@ -1930,6 +1853,7 @@ def parse_edit_debt_payment_conversion_args(args: list[str]) -> dict | None:
 
 
 def build_debt_payment_conversion_updates(conversion: dict, old_txn: dict | None = None) -> dict:
+    """Build the data structure or message text for debt payment conversion updates."""
     target_type = str(conversion.get("target_type") or "").strip().lower()
     person = str(conversion.get("person_name") or "").strip().title()
     updates = dict(conversion.get("extra_updates") or {})
@@ -1957,6 +1881,7 @@ def build_debt_payment_conversion_updates(conversion: dict, old_txn: dict | None
 
 
 def validate_edit_debt_payment_conversion(conversion: dict, amount: float) -> dict:
+    """Validate data before it is used by the Telegram bot flow."""
     person = str(conversion.get("person_name") or "").strip().title()
     target_type = str(conversion.get("target_type") or "").strip().lower()
     label = "utang" if target_type == "payable" else "piutang"
@@ -1991,6 +1916,7 @@ def validate_edit_debt_payment_conversion(conversion: dict, amount: float) -> di
 
 
 def build_edit_debt_payment_preview_text(preview: dict, conversion: dict, debt_check: dict) -> str:
+    """Build the data structure or message text for edit debt payment preview text."""
     text = build_edit_preview_text(preview)
     person = str(conversion.get("person_name") or "-").strip()
     target_type = str(conversion.get("target_type") or "").strip().lower()
@@ -2013,6 +1939,7 @@ def build_edit_debt_payment_preview_text(preview: dict, conversion: dict, debt_c
 
 
 def build_edit_split_preview_text(preview: dict, split_parsed: dict | None = None) -> str:
+    """Build the data structure or message text for edit split preview text."""
     text = build_edit_preview_text(preview)
     split_bill = (split_parsed or {}).get("split_bill") or {}
     status = split_bill.get("status")
@@ -2029,6 +1956,7 @@ def build_edit_split_preview_text(preview: dict, split_parsed: dict | None = Non
 
 
 def build_edit_preview_text(preview: dict) -> str:
+    """Build the data structure or message text for edit preview text."""
     old_txn = preview.get("old_txn", {})
     new_txn = preview.get("new_txn", {})
     updates = preview.get("updates", {})
@@ -2071,12 +1999,7 @@ def build_edit_preview_text(preview: dict) -> str:
 
 
 def extract_bulk_edit_txn_lines(raw_text: str) -> list[str]:
-    """Ambil baris /edit_txn dari pesan multi-line.
-
-    Dipakai supaya user bisa paste beberapa command edit sekaligus, misalnya:
-    /edit_txn 1 category="Food & Beverage"
-    /edit_txn 2 category="Bills & Utilities"
-    """
+    """Extract the important part of the input for bulk edit txn lines."""
     lines = [str(line or "").strip() for line in str(raw_text or "").splitlines()]
     lines = [line for line in lines if line]
 
@@ -2092,6 +2015,7 @@ def extract_bulk_edit_txn_lines(raw_text: str) -> list[str]:
 
 
 def _format_bulk_edit_value(value) -> str:
+    """Format bulk edit value into readable text."""
     if isinstance(value, (int, float)):
         if float(value).is_integer():
             return format_rupiah(float(value)) if abs(float(value)) >= 1000 else str(int(value))
@@ -2100,6 +2024,7 @@ def _format_bulk_edit_value(value) -> str:
 
 
 def build_bulk_edit_preview_text(entries: list[dict]) -> str:
+    """Build the data structure or message text for bulk edit preview text."""
     lines = [
         "✏️ *Preview Bulk Edit Transaksi*",
         f"Akan mengedit *{len(entries)} transaksi* dari daftar terakhir.",
@@ -2160,6 +2085,7 @@ def build_bulk_edit_preview_text(entries: list[dict]) -> str:
 
 
 def build_bulk_edit_error_text(errors: list[str]) -> str:
+    """Build the data structure or message text for bulk edit error text."""
     lines = ["❌ *Bulk edit tidak bisa diproses.*", ""]
     lines.append("Perbaiki baris berikut dulu:")
     for err in errors[:15]:
@@ -2175,6 +2101,7 @@ def build_bulk_edit_error_text(errors: list[str]) -> str:
 
 
 def parse_bulk_edit_txn_entries(lines: list[str], context: ContextTypes.DEFAULT_TYPE) -> tuple[list[dict], list[str]]:
+    """Parse input into structured data for the Telegram bot flow."""
     entries: list[dict] = []
     errors: list[str] = []
     seen_targets: set[str] = set()
@@ -2260,6 +2187,7 @@ def parse_bulk_edit_txn_entries(lines: list[str], context: ContextTypes.DEFAULT_
 
 
 async def bulk_edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, lines: list[str]):
+    """Handle the Telegram request for bulk edit txn."""
     entries, errors = parse_bulk_edit_txn_entries(lines, context)
 
     if errors or not entries:
@@ -2290,12 +2218,7 @@ async def bulk_edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /edit_txn 2 amount=15000
-    /edit_txn 2 amount=15000 desc="Kopi susu"
-    /edit_txn 2 account=BRI category="Food & Beverage"
-    /edit_txn txn_... amount=20000
-    """
+    """Handle the Telegram request for edit txn."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return

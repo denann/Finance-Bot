@@ -1,4 +1,6 @@
-# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
+"""Telegram command handlers for balance, reports, budget, debt, pending expense, assets, export, and AI finance insight."""
+
+# Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
@@ -6,6 +8,7 @@ from app.bot.handler_parts.transaction_flow import build_pending_expense_confirm
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the Telegram request for start."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -47,6 +50,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the Telegram request for help."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -278,13 +282,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def add_session_chat_history(context: ContextTypes.DEFAULT_TYPE, role: str, text: str, limit: int = 10):
-    """Simpan riwayat tanya-jawab finance di session Telegram user.
-
-    Catatan:
-    - Tidak persistent; hilang jika bot restart/redeploy.
-    - Dipakai hanya sebagai konteks percakapan untuk /ask/natural finance question.
-    - Angka faktual tetap harus berasal dari context Google Sheets, bukan dari history.
-    """
+    """Helper for add session chat history in the Telegram bot flow."""
     if context is None:
         return
 
@@ -301,7 +299,7 @@ def add_session_chat_history(context: ContextTypes.DEFAULT_TYPE, role: str, text
 
 
 def get_session_chat_history(context: ContextTypes.DEFAULT_TYPE, limit: int = 8) -> list[dict]:
-    """Ambil beberapa pesan terakhir untuk membantu /ask memahami konteks lanjutan."""
+    """Retrieve data needed for session chat history."""
     if context is None:
         return []
     history = context.user_data.get("finance_chat_history", [])
@@ -309,7 +307,7 @@ def get_session_chat_history(context: ContextTypes.DEFAULT_TYPE, limit: int = 8)
 
 
 def attach_session_history(context: ContextTypes.DEFAULT_TYPE, context_data: dict) -> dict:
-    """Tambahkan riwayat chat sesi ke context JSON yang dikirim ke Gemini."""
+    """Helper for attach session history in the Telegram bot flow."""
     data = dict(context_data or {})
     history = get_session_chat_history(context)
     if history:
@@ -330,6 +328,7 @@ async def send_finance_insight_reply(
     context: ContextTypes.DEFAULT_TYPE | None = None,
     remember_history: bool = False,
 ):
+    """Send a Telegram response for send finance insight reply."""
     await update.message.reply_text("⏳ Mengambil data dan membuat insight...")
     answer = generate_finance_insight(mode, context_data, question=question)
 
@@ -342,6 +341,7 @@ async def send_finance_insight_reply(
 
 
 async def examples_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the Telegram request for examples."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -373,7 +373,7 @@ async def examples_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def insight_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/insight [YYYY-MM] — monthly narrative report."""
+    """Handle the Telegram request for insight."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -391,7 +391,7 @@ async def insight_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def audit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/audit [YYYY-MM] — cek data quality dan anomali."""
+    """Handle the Telegram request for audit."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -409,7 +409,7 @@ async def audit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def ask_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/ask <pertanyaan> — tanya jawab finansial natural."""
+    """Handle the Telegram request for ask."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -447,7 +447,7 @@ async def ask_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def coach_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/coach [pertanyaan] — financial coach ringan."""
+    """Handle the Telegram request for coach."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -467,7 +467,7 @@ async def coach_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_natural_finance_question(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
-    """Tangani pertanyaan finance natural tanpa command. Alur ini hanya read-only."""
+    """Helper for handle natural finance question in the Telegram bot flow."""
     if not should_handle_finance_question(user_text):
         return False
 
@@ -493,7 +493,7 @@ async def handle_natural_finance_question(update: Update, context: ContextTypes.
 
 
 def format_report_delta(delta_info: dict, *, positive_when_up: bool, as_count: bool = False) -> str:
-    """Formatkan delta vs periode sebelumnya dengan indikator hijau/merah berbasis emoji."""
+    """Format report delta into readable text."""
     if not delta_info or delta_info.get("available") is False or delta_info.get("delta") is None:
         return "~"
 
@@ -522,6 +522,7 @@ def format_report_delta(delta_info: dict, *, positive_when_up: bool, as_count: b
 
 
 def append_report_comparison_lines(lines: list[str], report: dict, label: str):
+    """Append data or text to report comparison lines."""
     comparison = (report or {}).get("comparison") or {}
     if not comparison:
         return
@@ -534,7 +535,7 @@ def append_report_comparison_lines(lines: list[str], report: dict, label: str):
 
 
 def get_report_expense_display(report: dict) -> str:
-    """Formatkan total expense report sebagai Net (Gross) jika ada piutang aktif."""
+    """Retrieve data needed for report expense display."""
     gross = float((report or {}).get("total_expense", 0) or 0)
     net = (report or {}).get("total_net_expense_after_receivable")
     if net is None:
@@ -543,7 +544,7 @@ def get_report_expense_display(report: dict) -> str:
 
 
 def append_report_metric_lines(lines: list[str], report: dict):
-    """Tambahkan metrik ringkasan; jika filter rekening aktif, transfer dihitung masuk/keluar."""
+    """Append data or text to report metric lines."""
     account_filter = (report or {}).get("account_filter")
     if account_filter:
         lines.append(f"🏦 Rekening : *{md_safe(account_filter)}*")
@@ -565,6 +566,7 @@ def append_report_metric_lines(lines: list[str], report: dict):
 
 
 def append_account_report_lines(lines: list[str], report: dict):
+    """Append data or text to account report lines."""
     account = (report or {}).get("account_filter") or "-"
     balance = (report or {}).get("account_balance")
     lines.append(f"🏦 Rekening : *{md_safe(account)}*")
@@ -579,6 +581,7 @@ def append_account_report_lines(lines: list[str], report: dict):
 
 
 def append_recent_account_transaction_lines(lines: list[str], report: dict, limit: int = 8):
+    """Append data or text to recent account transaction lines."""
     transactions = (report or {}).get("transactions") or []
     if not transactions:
         return
@@ -588,6 +591,7 @@ def append_recent_account_transaction_lines(lines: list[str], report: dict, limi
         lines.extend(build_transaction_display_lines(txn, index=i, include_date=True, include_id=True))
 
 def append_report_category_breakdown_lines(lines: list[str], report: dict, comparison_label: str):
+    """Append data or text to report category breakdown lines."""
     by_category = (report or {}).get("by_category") or {}
     if not by_category:
         return
@@ -611,14 +615,16 @@ def append_report_category_breakdown_lines(lines: list[str], report: dict, compa
 
 
 def build_top_expense_debt_lines(txn: dict, amount: float) -> list[str]:
-    """Pembungkus kompatibilitas. Detail debt sekarang diformat oleh build_transaction_display_lines."""
+    """Build the data structure or message text for top expense debt lines."""
     return []
 
 def is_category_detail_report(report: dict) -> bool:
+    """Check a boolean condition for is category detail report."""
     return bool((report or {}).get("category_filter"))
 
 
 def get_category_list_title(category: str) -> str:
+    """Retrieve data needed for category list title."""
     category_lower = str(category or "").strip().lower()
     if category_lower == "food & beverage":
         return "🍽 *Daftar Makanan/Minuman:*"
@@ -626,6 +632,7 @@ def get_category_list_title(category: str) -> str:
 
 
 def append_category_detail_summary(lines: list[str], report: dict, comparison_label: str):
+    """Append data or text to category detail summary."""
     category = (report or {}).get("category_filter") or "-"
     account = (report or {}).get("account_filter")
     total_income = float((report or {}).get("total_income", 0) or 0)
@@ -655,6 +662,7 @@ def append_category_detail_summary(lines: list[str], report: dict, comparison_la
 
 
 def append_category_transaction_lines(lines: list[str], report: dict, *, include_date: bool):
+    """Append data or text to category transaction lines."""
     category = (report or {}).get("category_filter") or "-"
     transactions = (report or {}).get("transactions") or []
     if not transactions:
@@ -677,6 +685,7 @@ def append_category_transaction_lines(lines: list[str], report: dict, *, include
 
 
 async def saldo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the Telegram request for saldo."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -707,19 +716,14 @@ async def saldo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def rekening_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /rekening
-    /rekening Cash        -> full ledger rekening bulan ini
-    /rekening Cash 2026-06 -> full ledger rekening bulan tertentu
-    /rekening Cash all     -> full ledger semua histori rekening
-    """
+    """Handle the Telegram request for rekening."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
 
     raw_arg = " ".join(context.args).strip() if context.args else ""
 
-    # Tanpa argumen, jadikan alias yang lebih informatif untuk /saldo.
+    # Command routing note: exact commands and aliases are checked before similarity-based typo handling.
     if not raw_arg:
         await saldo_handler(update, context)
         return
@@ -786,6 +790,7 @@ async def rekening_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def harian_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the Telegram request for harian."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -873,6 +878,7 @@ async def harian_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def mingguan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the Telegram request for mingguan."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -968,6 +974,7 @@ async def mingguan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the Telegram request for bulanan."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1063,8 +1070,8 @@ async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await reply_long_markdown(update, "\n".join(lines))
 
-    # Insight otomatis setelah /bulanan.
-    # Dikirim sebagai pesan terpisah tanpa parse_mode agar output Gemini tidak merusak Markdown Telegram.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
+    # Telegram Markdown safety note: send AI output separately to avoid broken formatting.
     try:
         insight_data = build_monthly_finance_context(month_name)
         insight_text = generate_finance_insight(
@@ -1080,6 +1087,7 @@ async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cari_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the Telegram request for cari."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1113,7 +1121,7 @@ async def cari_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def format_budget_net_gross(net_amount: float, gross_amount: float) -> str:
-    """Formatkan budget realisasi sebagai Bersih (Gross)."""
+    """Format budget net gross into readable text."""
     net = float(net_amount or 0)
     gross = float(gross_amount or 0)
     if abs(net - gross) > 0.0001:
@@ -1121,10 +1129,7 @@ def format_budget_net_gross(net_amount: float, gross_amount: float) -> str:
     return format_rupiah(net)
 
 async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /budget
-    /budget 2026-06
-    """
+    """Handle the Telegram request for budget."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1190,10 +1195,7 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 async def budget_history_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /budget_history
-    Tampilkan daftar bulan yang punya budget.
-    """
+    """Handle the Telegram request for budget history."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1228,6 +1230,7 @@ async def budget_history_handler(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 def build_pending_expense_lines(items: list[dict], title: str, total: float | None = None) -> list[str]:
+    """Build the data structure or message text for pending expense lines."""
     lines = [f"🕒 *{md_safe(title)}*\n"]
 
     if not items:
@@ -1284,9 +1287,7 @@ def build_pending_expense_lines(items: list[dict], title: str, total: float | No
 
 
 async def pending_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /pending [YYYY-MM|bulan ini|bulan lalu|bulan depan|all|tanpa tanggal]
-    """
+    """Handle the Telegram request for pending."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1309,10 +1310,7 @@ async def pending_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def pending_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /pending_add bayar wifi 285k tgl 30 dari BRI
-    Bisa juga dipanggil dari MessageHandler regex: pending/rencana ...
-    """
+    """Handle the Telegram request for pending add."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1359,7 +1357,7 @@ async def pending_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def pending_paid_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/pending_paid pending_id [rekening]"""
+    """Handle the Telegram request for pending paid."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1395,7 +1393,7 @@ async def pending_paid_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def pending_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/pending_cancel pending_id"""
+    """Handle the Telegram request for pending cancel."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1426,6 +1424,7 @@ async def pending_cancel_handler(update: Update, context: ContextTypes.DEFAULT_T
 
 
 def parse_amount_text(value: str) -> float:
+    """Parse input into structured data for the Telegram bot flow."""
     raw = str(value or "").strip().lower().replace(" ", "").replace(",", ".")
     if not raw:
         return 0
@@ -1439,7 +1438,7 @@ def parse_amount_text(value: str) -> float:
 
     try:
         if unit in {"rb", "ribu", "k"}:
-            # 331.063k = 331.063 rupiah, bukan 331.063.000.
+            # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
             if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", raw):
                 return float(raw.replace(".", ""))
             return float(raw) * 1_000
@@ -1454,14 +1453,7 @@ def parse_amount_text(value: str) -> float:
         return 0
     
 def extract_split_bill_total_amount(raw_text: str) -> float | None:
-    """
-    Ambil nominal asli dari input split bill.
-
-    Contoh:
-    - Tissue 10k bagi 4 sama fajar bagas raka -> 10000
-    - Ayam 26k dibagi 2 sama raka -> 26000
-    - Ayam 26k sama raka dibagi 2 -> 26000
-    """
+    """Extract the important part of the input for split bill total amount."""
     text = str(raw_text or "").strip()
     amount_token = r"(?P<amount>\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta|m)?)"
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
@@ -1482,16 +1474,7 @@ def extract_split_bill_total_amount(raw_text: str) -> float | None:
     return None
 
 async def set_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Input bebas:
-    budget makan 1.5 juta
-    budget jajan 500rb
-    budget kebutuhan 2 juta 2026-07
-
-    Rule:
-    - Alias kuat seperti makan -> Food & Beverage.
-    - Label lain disimpan apa adanya sebagai budget custom.
-    """
+    """Handle the Telegram request for set budget."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1529,7 +1512,7 @@ async def set_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         month = normalize_month(None)
 
-    # Ambil label setelah kata budget, lalu buang nominal dan bulan.
+    # Budget command note: regex handling supports natural phrases such as `budget makan 1jt`.
     label_text = re.sub(r"^\s*budget\s+", "", text_lower).strip()
     label_text = re.sub(r"\b20\d{2}[-/](0?[1-9]|1[0-2])\b", " ", label_text)
     label_text = re.sub(r"\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta)?", " ", label_text)
@@ -1548,7 +1531,7 @@ async def set_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     alias_to_category = {
-        # Sengaja TIDAK memasukkan 'jajan' supaya bisa jadi budget custom.
+        # Budget command note: regex handling supports natural phrases such as `budget makan 1jt`.
         "makan": "Food & Beverage",
         "makanan": "Food & Beverage",
         "minum": "Food & Beverage",
@@ -1583,7 +1566,7 @@ async def set_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     tokens = set(label_text.split())
     matched_category = None
 
-    # Exact phrase dulu, lalu token-level alias.
+    # Command routing note: exact commands and aliases are checked before similarity-based typo handling.
     if label_text in alias_to_category:
         matched_category = alias_to_category[label_text]
     else:
@@ -1615,6 +1598,7 @@ async def set_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 def short_debt_id(debt_id: str) -> str:
+    """Helper for short debt id in the Telegram bot flow."""
     debt_id = str(debt_id or "")
     if len(debt_id) <= 18:
         return debt_id
@@ -1623,16 +1607,7 @@ def short_debt_id(debt_id: str) -> str:
 
 
 def parse_debt_void_args(args: list[str]) -> dict:
-    """
-    Parsing argumen /debt_void yang lebih ramah user.
-
-    Mendukung:
-    - /debt_void 1
-    - /debt_void debt_xxx
-    - /debt_void Maya
-    - /debt_void Maya 1
-    - /debt_void Cash Maya 1
-    """
+    """Parse input into structured data for the Telegram bot flow."""
     args = [str(a or "").strip() for a in (args or []) if str(a or "").strip()]
     if not args:
         return {"mode": "empty"}
@@ -1654,6 +1629,7 @@ def parse_debt_void_args(args: list[str]) -> dict:
 
 
 def build_debt_void_preview_text(preview: dict) -> str:
+    """Build the data structure or message text for debt void preview text."""
     if preview.get("bulk"):
         person = md_safe(preview.get("person_name") or "-")
         scope = preview.get("scope") or "person_all"
@@ -1765,14 +1741,7 @@ def build_debt_void_preview_text(preview: dict) -> str:
 
 
 async def debt_void_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /debt_void <nomor|debt_id|nama|nama nomor>
-
-    Membatalkan debt yang salah input secara aman:
-    - debt ditandai settled/void
-    - cashflow debt terkait dihapus jika memang ada
-    - saldo rekening direverse jika cashflow terkait ditemukan
-    """
+    """Handle the Telegram request for debt void."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1841,6 +1810,7 @@ async def debt_void_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def normalize_debt_edit_type(value: str) -> str | None:
+    """Clean and standardize normalize debt edit type."""
     text = str(value or "").strip().lower()
     mapping = {
         "payable": "payable",
@@ -1858,6 +1828,7 @@ def normalize_debt_edit_type(value: str) -> str | None:
 
 
 def parse_debt_edit_args(args: list[str]) -> tuple[str | None, dict, str | None]:
+    """Parse input into structured data for the Telegram bot flow."""
     if len(args) < 3:
         return None, {}, (
             "Format edit debt belum lengkap.\n\n"
@@ -1928,6 +1899,7 @@ def parse_debt_edit_args(args: list[str]) -> tuple[str | None, dict, str | None]
 
 
 def build_debt_edit_result_text(result: dict) -> str:
+    """Build the data structure or message text for debt edit result text."""
     debt = result.get("debt") or {}
     changed = result.get("changed") or {}
     debt_type = str(debt.get("type") or "").strip()
@@ -1956,9 +1928,7 @@ def build_debt_edit_result_text(result: dict) -> str:
 
 
 async def debt_edit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /debt_edit <nomor_dari_hutang_atau_debt_id> <field> <value>
-    """
+    """Handle the Telegram request for debt edit."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1984,7 +1954,7 @@ async def debt_edit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def format_debt_created_date_for_display(debt: dict) -> str:
-    """Ambil tanggal dibuat debt/piutang untuk grouping /hutang <nama>."""
+    """Format debt created date for display into readable text."""
     raw = str((debt or {}).get("created_at", "") or "").strip()
     if not raw:
         return "Tanpa tanggal"
@@ -1997,18 +1967,12 @@ def format_debt_created_date_for_display(debt: dict) -> str:
         except Exception:
             return match.group(0).replace("/", "-")
 
-    # Fallback kalau created_at tersimpan sebagai date serial/string lain.
+    # Legacy compatibility note for older records or older in-memory state.
     return raw
 
 
 def debt_detail_sort_key_for_display(debt: dict) -> tuple[str, str, int]:
-    """Urutkan detail /hutang <nama> dari terbaru ke terlama.
-
-    created_at di sheet debts saat ini umumnya hanya YYYY-MM-DD, sedangkan debt_id
-    menyimpan timestamp lengkap: debt_YYYYMMDD_HHMMSS_microsecond. Karena itu
-    debt_id dipakai sebagai tie-breaker agar item dalam tanggal yang sama juga
-    konsisten terbaru ke terlama.
-    """
+    """Helper for debt detail sort key for display in the Telegram bot flow."""
     created_date = format_debt_created_date_for_display(debt)
     debt_id = str((debt or {}).get("id", "") or "").strip()
     try:
@@ -2023,7 +1987,7 @@ def debt_detail_sort_key_for_display(debt: dict) -> tuple[str, str, int]:
 # ── Debt Settle Selected Range ───────────────────────────────────────────────
 
 def parse_debt_number_selection(selection: str) -> list[str]:
-    """Parsing nomor debt dari detail /hutang <nama>. Mendukung: 1-17, 1 2 3, 1,3,5."""
+    """Parse input into structured data for the Telegram bot flow."""
     raw = str(selection or "").strip()
     if not raw:
         return []
@@ -2054,7 +2018,7 @@ def parse_debt_number_selection(selection: str) -> list[str]:
 
 
 def parse_debt_settle_command_args(args: list[str]) -> dict:
-    """Parsing /debt_settle Raka 1-17 amount=337063 account=DANA."""
+    """Parse input into structured data for the Telegram bot flow."""
     args = [str(a or "").strip() for a in (args or []) if str(a or "").strip()]
     result = {"person_name": "", "selection": "", "numbers": [], "amount": None, "account": "", "error": ""}
     if len(args) < 2:
@@ -2085,14 +2049,14 @@ def parse_debt_settle_command_args(args: list[str]) -> dict:
             positional.append(token)
         i += 1
 
-    # Selection adalah token terakhir yang mengandung angka/range. Sisanya dianggap nama.
+    # Selection parsing note: the last numeric token is treated as the selected item or range.
     selection_idx = None
     for idx, token in enumerate(positional):
         if re.fullmatch(r"\d+(?:-\d+)?(?:[,\s]+\d+(?:-\d+)?)*", token):
             selection_idx = idx
             break
     if selection_idx is None:
-        # fallback: ambil token terakhir sebagai pilihan
+        # Legacy compatibility note for older records or older in-memory state.
         selection_idx = len(positional) - 1
 
     person_parts = positional[:selection_idx]
@@ -2124,7 +2088,7 @@ def parse_debt_settle_command_args(args: list[str]) -> dict:
 
 
 def parse_natural_debt_settle_text(text: str) -> dict | None:
-    """Parsing input natural: Raka bayar hutang 337063 untuk debt 1-17."""
+    """Parse input into structured data for the Telegram bot flow."""
     raw = str(text or "").strip()
     if not raw:
         return None
@@ -2156,7 +2120,7 @@ def parse_natural_debt_settle_text(text: str) -> dict | None:
 
 
 def resolve_selected_debts_from_last_detail(context: ContextTypes.DEFAULT_TYPE, person_name: str, numbers: list[str]) -> dict:
-    """Pastikan nomor berasal dari hasil terakhir /hutang <person>."""
+    """Resolve the final value for selected debts from last detail from possible inputs."""
     person = normalize_person_name(person_name)
     last_person = normalize_person_name(context.user_data.get("last_debt_person", ""))
     last_map = context.user_data.get("last_debt_map") or {}
@@ -2222,6 +2186,7 @@ def resolve_selected_debts_from_last_detail(context: ContextTypes.DEFAULT_TYPE, 
 
 
 def build_selected_debt_total_text(payload: dict) -> str:
+    """Build the data structure or message text for selected debt total text."""
     person = payload.get("person_name") or "-"
     numbers = payload.get("numbers") or []
     selection = payload.get("selection") or ", ".join(numbers)
@@ -2248,6 +2213,7 @@ def build_selected_debt_total_text(payload: dict) -> str:
 
 
 def build_selected_debt_settle_preview_text(payload: dict) -> str:
+    """Build the data structure or message text for selected debt settle preview text."""
     person = payload.get("person_name") or "-"
     selection = payload.get("selection") or ", ".join(payload.get("numbers") or [])
     summary = payload.get("summary") or {}
@@ -2313,6 +2279,7 @@ def build_selected_debt_settle_preview_text(payload: dict) -> str:
 
 
 def build_selected_settle_catatan(payload: dict, result: dict) -> str:
+    """Build the data structure or message text for selected settle catatan."""
     raw = str(payload.get("raw") or "").strip()
     parts = [raw, "selected_settle=1"]
     allocs = []
@@ -2336,6 +2303,7 @@ def build_selected_settle_catatan(payload: dict, result: dict) -> str:
 
 
 def prepare_selected_debt_settle_payload(context: ContextTypes.DEFAULT_TYPE, parsed: dict) -> dict:
+    """Helper for prepare selected debt settle payload in the Telegram bot flow."""
     resolved = resolve_selected_debts_from_last_detail(context, parsed.get("person_name", ""), parsed.get("numbers") or [])
     if not resolved.get("success"):
         return {"success": False, "message": resolved.get("message", "Gagal resolve debt terpilih.")}
@@ -2362,6 +2330,7 @@ def prepare_selected_debt_settle_payload(context: ContextTypes.DEFAULT_TYPE, par
 
 
 def selected_debt_settle_overpay_keyboard() -> InlineKeyboardMarkup:
+    """Helper for selected debt settle overpay keyboard in the Telegram bot flow."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Anggap lunas / bonus", callback_data="debt_settle_overpay:bonus")],
         [InlineKeyboardButton("🔴 Catat sebagai hutang lawan arah", callback_data="debt_settle_overpay:opposite_debt")],
@@ -2370,6 +2339,7 @@ def selected_debt_settle_overpay_keyboard() -> InlineKeyboardMarkup:
 
 
 async def debt_settle_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the Telegram request for debt settle."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -2384,7 +2354,7 @@ async def debt_settle_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"❌ {payload.get('message')}", parse_mode="Markdown")
         return
 
-    # Tanpa nominal = mode hitung total saja.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     if payload.get("amount") is None:
         await update.message.reply_text(build_selected_debt_total_text(payload), parse_mode="Markdown")
         return
@@ -2419,6 +2389,7 @@ async def debt_settle_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def handle_natural_debt_settle(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> bool:
+    """Helper for handle natural debt settle in the Telegram bot flow."""
     parsed = parse_natural_debt_settle_text(text)
     if not parsed:
         return False
@@ -2459,6 +2430,7 @@ async def handle_natural_debt_settle(update: Update, context: ContextTypes.DEFAU
 
 
 def build_selected_debt_settle_transaction(payload: dict, result: dict) -> dict:
+    """Build the data structure or message text for selected debt settle transaction."""
     person = payload.get("person_name") or ""
     amount = float(payload.get("amount", 0) or 0)
     account = payload.get("account") or ""
@@ -2495,11 +2467,7 @@ def build_selected_debt_settle_transaction(payload: dict, result: dict) -> dict:
 # ── Shareable Debt Summary ───────────────────────────────────────────────────
 
 def _collect_known_debt_person_names() -> list[str]:
-    """Ambil daftar nama orang dari ringkasan debt untuk membersihkan item lama.
-
-    Ini membantu kasus data lama seperti "Galon Raka Fajar" atau
-    "Tissue Bagas Raka" agar output shareable cukup menampilkan itemnya.
-    """
+    """Helper for collect known debt person names in the Telegram bot flow."""
     names = []
     try:
         summary = get_debt_person_summary() or {}
@@ -2514,6 +2482,7 @@ def _collect_known_debt_person_names() -> list[str]:
 
 
 def _strip_trailing_known_names_for_summary(text: str, known_names: list[str]) -> str:
+    """Helper for strip trailing known names for summary in the Telegram bot flow."""
     clean = str(text or "").strip(" .,-")
     if not clean or not known_names:
         return clean
@@ -2544,11 +2513,7 @@ def _strip_trailing_known_names_for_summary(text: str, known_names: list[str]) -
 
 
 def _clean_debt_description_for_share(desc: str, person: str, known_names: list[str] | None = None) -> str:
-    """Bersihkan deskripsi debt agar layak dikirim ke teman.
-
-    Output shareable tidak perlu prefix teknis seperti "Split bill:" atau
-    "Ditalangin Raka:" dan tidak perlu sisa daftar nama split bill.
-    """
+    """Clean and standardize clean debt description for share."""
     raw = str(desc or "").strip()
     if not raw:
         return "-"
@@ -2556,8 +2521,8 @@ def _clean_debt_description_for_share(desc: str, person: str, known_names: list[
     person_text = str(person or "").strip()
     known_names = known_names or []
 
-    # Data lama kadang tersimpan: "Ditalangin Nasi Kuning: Ke Raka".
-    # Untuk format ini, item ada sebelum titik dua.
+    # Legacy compatibility note for older records or older in-memory state.
+    # Implementation note for this project-specific finance flow.
     if person_text:
         m = re.match(rf"^\s*Ditalangin\s+(.+?)\s*:\s*(?:ke|kepada)\s+{re.escape(person_text)}\s*$", raw, flags=re.IGNORECASE)
         if m:
@@ -2567,11 +2532,11 @@ def _clean_debt_description_for_share(desc: str, person: str, known_names: list[
             if m:
                 raw = m.group(1).strip()
 
-    # Prefix umum dari debt rows.
+    # Implementation note for this project-specific finance flow.
     raw = re.sub(r"^\s*Split\s*bill(?:\s+ditalangin\s+[^:]+)?\s*:\s*", "", raw, flags=re.IGNORECASE)
     raw = re.sub(r"^\s*Ditalangin\s+[^:]+\s*:\s*", "", raw, flags=re.IGNORECASE)
 
-    # Buang sisa frasa split yang bocor ke subject/description.
+    # Clean leftover split-bill phrases so subject and description stay readable.
     raw = re.sub(r"\b(?:di\s*-?\s*bagi|dibagi|bagi|split|share|patungan)\b.*$", "", raw, flags=re.IGNORECASE)
     raw = re.sub(r"\b(?:ke|kepada)\s+" + re.escape(person_text) + r"\s*$", "", raw, flags=re.IGNORECASE) if person_text else raw
     raw = _strip_trailing_known_names_for_summary(raw, known_names + ([person_text] if person_text else []))
@@ -2581,11 +2546,13 @@ def _clean_debt_description_for_share(desc: str, person: str, known_names: list[
 
 
 def _format_shareable_date_heading(date_value) -> str:
+    """Format shareable date heading into readable text."""
     label = format_indonesian_date_group_label(date_value)
     return label.rstrip(":")
 
 
 def _group_debts_for_shareable_summary(debts: list[dict], person: str, known_names: list[str]) -> list[str]:
+    """Helper for group debts for shareable summary in the Telegram bot flow."""
     if not debts:
         return ["Tidak ada rincian aktif."]
 
@@ -2609,6 +2576,7 @@ def _group_debts_for_shareable_summary(debts: list[dict], person: str, known_nam
 
 
 def build_shareable_debt_summary_text(person_query: str) -> str:
+    """Build the data structure or message text for shareable debt summary text."""
     detail = get_debt_person_detail(person_query, include_settled=True)
     person = detail.get("person_name") or str(person_query or "").strip().title()
     active_details = detail.get("active_details") or []
@@ -2684,6 +2652,7 @@ def build_shareable_debt_summary_text(person_query: str) -> str:
 
 
 async def ringkasan_hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the Telegram request for ringkasan hutang."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -2702,6 +2671,7 @@ async def ringkasan_hutang_handler(update: Update, context: ContextTypes.DEFAULT
     )
 
 async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the Telegram request for hutang."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -2709,11 +2679,11 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = getattr(context, "args", []) or []
     person_query = " ".join(args).strip()
 
-    # /hutang <nama> = detail rincian per orang
+    # Debt command note: keep payable and receivable actions explicit and auditable.
     if person_query:
-        # Jangan auto-settle saat membuka detail. /hutang <nama> hanya membaca
-        # posisi aktif; settlement/offset harus eksplisit dari user agar rincian
-        # utang dan piutang tetap bisa diaudit di akhir bulan.
+        # Debt command note: keep payable and receivable actions explicit and auditable.
+        # Debt payment note: settlement and void actions must stay explicit for auditability.
+        # Debt command note: keep payable and receivable actions explicit and auditable.
         netting_result = {"success": False, "offset_amount": 0}
         detail = get_debt_person_detail(person_query, include_settled=True)
         active_details = sorted(
@@ -2817,7 +2787,7 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
         return
 
-    # /hutang = ringkasan agregat per orang
+    # Debt command note: keep payable and receivable actions explicit and auditable.
     summary = get_debt_person_summary()
 
     if not summary["payables"] and not summary["receivables"] and not summary.get("balanced"):
@@ -2869,8 +2839,8 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/debt_void 1` — hanya untuk input salah; boleh rollback transaksi sumber ke gross"
     )
 
-    # /debt_void dan /debt_edit sekarang lebih aman dipakai dari /hutang <nama>,
-    # karena /hutang utama sudah agregat per orang.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
     context.user_data["last_debt_map"] = {}
     context.user_data.pop("last_debt_person", None)
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")

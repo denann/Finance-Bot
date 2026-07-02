@@ -1,2 +1,3 @@
-"""Package pecahan handler Telegram agar file handler utama tidak terlalu besar."""
+"""Smaller Telegram handler modules grouped by responsibility."""
+
 

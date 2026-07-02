@@ -1,2 +1,3 @@
-"""Package NLP/parser untuk membaca input natural user."""
+"""NLP and parser package for understanding user input."""
+
 

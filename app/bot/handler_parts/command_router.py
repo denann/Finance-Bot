@@ -1,9 +1,12 @@
-# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
+"""Local command router and typo resolver for commands and natural read-only inputs."""
+
+# Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
 
 def build_gemini_low_confidence_text(router_result: dict) -> str:
+    """Build the data structure or message text for gemini low confidence text."""
     intent = router_result.get("intent", "unknown")
     confidence = float(router_result.get("confidence", 0) or 0)
     explanation = router_result.get("explanation", "")
@@ -22,6 +25,7 @@ def build_gemini_low_confidence_text(router_result: dict) -> str:
 
 
 def build_gemini_fallback_text() -> str:
+    """Build the data structure or message text for gemini fallback text."""
     return (
         "🤔 Maaf, saya belum bisa memahami maksud input tersebut.\n\n"
         "Coba format transaksi seperti:\n"
@@ -40,10 +44,7 @@ def build_gemini_fallback_text() -> str:
 
 
 def router_args_to_last_filter(args: dict) -> tuple[int, str | None, str | None, str]:
-    """
-    Konversi args Gemini ke parameter get_recent_transactions.
-    Output: limit, period, month, title
-    """
+    """Helper for router args to last filter in the Telegram bot flow."""
     period = args.get("period")
     month = args.get("month")
     limit = args.get("limit")
@@ -73,6 +74,7 @@ def router_args_to_last_filter(args: dict) -> tuple[int, str | None, str | None,
 
 
 def extract_edit_updates_from_router(args: dict) -> dict:
+    """Extract the important part of the input for edit updates from router."""
     updates = args.get("updates", {}) or {}
 
     if not isinstance(updates, dict):
@@ -89,19 +91,11 @@ def extract_edit_updates_from_router(args: dict) -> dict:
     return cleaned
 
 def format_rupiah(amount: float) -> str:
+    """Format rupiah into readable text."""
     return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
 
 def md_safe(value) -> str:
-    """
-    Escape teks dinamis agar aman untuk Telegram parse_mode='Markdown'.
-
-    Wajib dipakai untuk data dari user/sheet:
-    - description
-    - category
-    - account
-    - subject
-    - transaction id
-    """
+    """Helper for md safe in the Telegram bot flow."""
     return escape_markdown(str(value or "-"), version=1)
 
 KNOWN_COMMANDS = {
@@ -291,7 +285,7 @@ COMMAND_ALIASES = {
     "void_piutang": "debt_void",
     "debt_void": "debt_void",
 
-    # rekening
+    # account
     "rekening": "rekening",
     "rek": "rekening",
     "akun": "rekening",
@@ -331,7 +325,7 @@ COMMAND_ALIASES = {
     "carii": "cari",
     "cari": "cari",
 
-    # Gemini / RAG finance
+    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
     "insight": "insight",
     "analisis": "insight",
     "analisa": "insight",
@@ -382,14 +376,7 @@ SIMILARITY_MARGIN = 0.12
 
 
 def clean_command_token(command_text: str) -> str:
-    """
-    Bersihkan command/token user.
-
-    Contoh:
-    /minguan -> minguan
-    minguan -> minguan
-    /delete_txn@MyBot -> delete_txn
-    """
+    """Clean and standardize clean command token."""
     clean = str(command_text or "").strip().lower()
     clean = clean.lstrip("/")
     clean = clean.split("@")[0]
@@ -399,24 +386,24 @@ def clean_command_token(command_text: str) -> str:
 
 
 def command_description(command_name: str) -> str:
+    """Helper for command description in the Telegram bot flow."""
     info = KNOWN_COMMANDS.get(command_name, {})
     return info.get("description", "")
 
 
 def is_destructive_command(command_name: str) -> bool:
+    """Check a boolean condition for is destructive command."""
     info = KNOWN_COMMANDS.get(command_name, {})
     return bool(info.get("destructive", False))
 
 
 def similarity_score(a: str, b: str) -> float:
+    """Helper for similarity score in the Telegram bot flow."""
     return SequenceMatcher(None, a, b).ratio()
 
 
 def get_similarity_candidates(clean_command: str) -> list[dict]:
-    """
-    Hitung similarity terhadap command resmi saja.
-    Alias tidak dimasukkan agar tidak bikin hasil bias.
-    """
+    """Retrieve data needed for similarity candidates."""
     candidates = []
 
     for command_name in KNOWN_COMMANDS.keys():
@@ -436,26 +423,7 @@ def get_similarity_candidates(clean_command: str) -> list[dict]:
 
 
 def resolve_command_local(command_text: str) -> dict:
-    """
-    Resolver command lokal yang deterministik.
-
-    Layer:
-    1. exact command
-    2. unavailable exact
-    3. alias exact
-    4. similarity with threshold + margin
-    5. unresolved
-
-    Output:
-    {
-        "status": "exact"|"unavailable"|"alias"|"similarity"|"ambiguous"|"unresolved",
-        "input": "minguan",
-        "command": "mingguan" | None,
-        "message": str,
-        "score": float | None,
-        "second_score": float | None,
-    }
-    """
+    """Resolve the final value for command local from possible inputs."""
     clean = clean_command_token(command_text)
 
     if not clean:
@@ -468,7 +436,7 @@ def resolve_command_local(command_text: str) -> dict:
             "second_score": None,
         }
 
-    # Layer 1: command resmi yang cocok persis
+    # Implementation note for this project-specific finance flow.
     if clean in KNOWN_COMMANDS:
         return {
             "status": "exact",
@@ -480,7 +448,7 @@ def resolve_command_local(command_text: str) -> dict:
         }
 
     # Layer 2: unavailable exact
-    # Harus sebelum similarity supaya /kuartalan tidak diarahkan ke /bulanan.
+    # Command routing note: exact commands and aliases are checked before similarity-based typo handling.
     if clean in UNAVAILABLE_COMMANDS:
         return {
             "status": "unavailable",
@@ -492,7 +460,7 @@ def resolve_command_local(command_text: str) -> dict:
         }
 
     # Layer 3: alias exact
-    # Alias harus exact, bukan contains.
+    # Command routing note: exact commands and aliases are checked before similarity-based typo handling.
     if clean in COMMAND_ALIASES:
         target = COMMAND_ALIASES[clean]
 
@@ -535,7 +503,7 @@ def resolve_command_local(command_text: str) -> dict:
             "second_score": second_score,
         }
 
-    # Kalau score tinggi tapi margin rendah, jangan force.
+    # Implementation note for this project-specific finance flow.
     if best_score >= SIMILARITY_THRESHOLD and margin < SIMILARITY_MARGIN:
         return {
             "status": "ambiguous",
@@ -559,9 +527,7 @@ def resolve_command_local(command_text: str) -> dict:
 
 
 def build_command_suggestion_text(resolved: dict, original_text: str) -> str:
-    """
-    Bangun response untuk command typo / unknown command.
-    """
+    """Build the data structure or message text for command suggestion text."""
     status = resolved.get("status")
     clean = resolved.get("input") or clean_command_token(original_text)
     command = resolved.get("command")
@@ -611,13 +577,7 @@ def build_command_suggestion_text(resolved: dict, original_text: str) -> str:
 
 
 def maybe_text_is_command_typo(text: str) -> str | None:
-    """
-    Deteksi typo command pada input tanpa slash.
-
-    Rule:
-    - Hanya agresif untuk input 1 token.
-    - Untuk multi-token, jangan jawab "Command /cek tidak tersedia".
-    """
+    """Try to detect text is command typo without forcing a final decision."""
     clean_text = str(text or "").strip().lower()
 
     if not clean_text:
@@ -625,8 +585,8 @@ def maybe_text_is_command_typo(text: str) -> str | None:
 
     tokens = clean_text.split()
 
-    # Jangan handle multi-token di typo resolver.
-    # Multi-token seharusnya masuk intent natural lokal atau Gemini.
+    # Command routing note: exact commands and aliases are checked before similarity-based typo handling.
+    # Command routing note: exact commands and aliases are checked before similarity-based typo handling.
     if len(tokens) != 1:
         return None
 
@@ -667,14 +627,7 @@ def maybe_text_is_command_typo(text: str) -> str | None:
     return None
 
 async def unknown_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Tangani slash command yang tidak dikenali.
-    Contoh:
-    /minguan -> saran /mingguan
-    /mingguannn -> similarity ke /mingguan
-    /detele -> saran /delete_txn
-    /kuartalan -> fitur belum tersedia
-    """
+    """Handle the Telegram request for unknown command."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -688,6 +641,7 @@ async def unknown_command_handler(update: Update, context: ContextTypes.DEFAULT_
     )
 
 def short_txn_id(txn_id: str) -> str:
+    """Helper for short txn id in the Telegram bot flow."""
     txn_id = str(txn_id or "")
     if len(txn_id) <= 18:
         return txn_id
@@ -695,16 +649,7 @@ def short_txn_id(txn_id: str) -> str:
 
 
 def expand_txn_refs(refs: list[str]) -> list[str]:
-    """
-    Perluas argumen transaksi.
-
-    Mendukung:
-    - 1 3 5 -> 1, 3, 5
-    - 1-4   -> 1, 2, 3, 4
-    - 4-1   -> 4, 3, 2, 1
-
-    Transaction ID yang mengandung tanda minus tidak diubah.
-    """
+    """Helper for expand txn refs in the Telegram bot flow."""
     expanded = []
 
     for ref in refs or []:
@@ -726,16 +671,7 @@ def expand_txn_refs(refs: list[str]) -> list[str]:
 
 
 def resolve_txn_refs_from_last(context: ContextTypes.DEFAULT_TYPE, refs: list[str]) -> dict:
-    """
-    Cocokkan argumen /delete_txn.
-
-    Mendukung:
-    - angka dari hasil /last terakhir: 1 2 3
-      -> resolve ke row_index, bukan transaction_id
-
-    - transaction_id langsung: txn_...
-      -> resolve sebagai txn_ids
-    """
+    """Resolve the final value for txn refs from last from possible inputs."""
     last_map = context.user_data.get("last_txn_map", {})
 
     row_indices = []
@@ -760,11 +696,11 @@ def resolve_txn_refs_from_last(context: ContextTypes.DEFAULT_TYPE, refs: list[st
                     invalid_refs.append(clean)
 
             else:
-                # Backward compatibility kalau last_map lama masih string ID.
+                # Legacy compatibility note for older records or older in-memory state.
                 txn_ids.append(str(mapped))
 
         else:
-            # Kalau angka tapi tidak ada di last_map, berarti user belum /last
+            # Implementation note for this project-specific finance flow.
             # atau nomornya di luar hasil /last terakhir.
             if clean.isdigit():
                 invalid_refs.append(clean)
@@ -794,6 +730,7 @@ def resolve_txn_refs_from_last(context: ContextTypes.DEFAULT_TYPE, refs: list[st
     }
 
 def build_last_transactions_text(transactions: list[dict], title: str) -> str:
+    """Build the data structure or message text for last transactions text."""
     transactions = enrich_transactions_with_debt_info(transactions or [])
     lines = [f"🧾 *{md_safe(title)}*\n"]
     append_net_gross_note(lines, transactions)
@@ -819,6 +756,7 @@ def build_last_transactions_text(transactions: list[dict], title: str) -> str:
     return "\n".join(lines)
 
 def build_delete_preview_text(preview: dict) -> str:
+    """Build the data structure or message text for delete preview text."""
     deletable = preview.get("deletable", [])
     blocked = preview.get("blocked", [])
     missing_ids = preview.get("missing_ids", [])
@@ -894,6 +832,7 @@ def build_delete_preview_text(preview: dict) -> str:
     return "\n".join(lines)
 
 def is_authorized(update: Update) -> bool:
+    """Check a boolean condition for is authorized."""
     if not update.effective_user:
         return False
 
@@ -902,6 +841,7 @@ def is_authorized(update: Update) -> bool:
 
 
 async def reject_unauthorized(update: Update):
+    """Helper for reject unauthorized in the Telegram bot flow."""
     user_id = update.effective_user.id if update.effective_user else "unknown"
 
     message = (

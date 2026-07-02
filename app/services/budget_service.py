@@ -1,3 +1,5 @@
+"""Budget service for monthly budget setup, actual spending, remaining budget, and budget history."""
+
 from datetime import datetime, date, timedelta
 import re
 
@@ -22,20 +24,12 @@ DEBT_CASHFLOW_CATEGORIES = {
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def get_current_month() -> str:
-    """Kembalikan bulan ini dalam format YYYY-MM."""
+    """Retrieve data needed for current month."""
     return datetime.now().strftime("%Y-%m")
 
 
 def normalize_month(month: str | None = None) -> str:
-    """
-    Normalisasi bulan ke format YYYY-MM.
-
-    Mendukung:
-    - None          -> bulan sekarang
-    - 2026-06
-    - 2026/06
-    - 2026 06
-    """
+    """Clean and standardize normalize month."""
     if not month:
         return get_current_month()
 
@@ -59,13 +53,7 @@ def normalize_month(month: str | None = None) -> str:
 
 
 def normalize_sheet_month_value(value) -> str:
-    """
-    Normalisasi nilai month dari Google Sheets ke format YYYY-MM.
-
-    Kenapa perlu:
-    - Google Sheets bisa auto-convert `2026-06` menjadi date/serial number.
-    - Data lama bisa tersimpan sebagai `2026-06-01` atau format date lain.
-    """
+    """Clean and standardize normalize sheet month value."""
     if value is None:
         return ""
 
@@ -78,7 +66,7 @@ def normalize_sheet_month_value(value) -> str:
     if isinstance(value, (int, float)):
         try:
             # Google Sheets/Excel serial date origin.
-            # `2026-06` yang terlanjur dianggap tanggal biasanya terbaca sebagai serial number.
+            # Date parsing note: keep explicit and relative Indonesian date formats predictable.
             dt = datetime(1899, 12, 30) + timedelta(days=float(value))
             if 1990 <= dt.year <= 2100:
                 return dt.strftime("%Y-%m")
@@ -97,12 +85,12 @@ def normalize_sheet_month_value(value) -> str:
     if match:
         return normalize_month(f"{match.group(1)}-{match.group(2)}")
 
-    # 2026-06-01, 2026-6-1, atau format date dari Google Sheets.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     match = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+.*)?", raw)
     if match:
         return normalize_month(f"{match.group(1)}-{match.group(2)}")
 
-    # Kalau gspread mengembalikan display value seperti Jun 2026 / June 2026.
+    # If gspread mengembalikan display value seperti Jun 2026 / June 2026.
     for fmt in ("%b %Y", "%B %Y", "%Y %B", "%Y %b"):
         try:
             return datetime.strptime(raw, fmt).strftime("%Y-%m")
@@ -112,17 +100,19 @@ def normalize_sheet_month_value(value) -> str:
     return raw
 
 def format_month_label(month: str) -> str:
-    """Ubah YYYY-MM menjadi label singkat."""
+    """Format month label into readable text."""
     month = normalize_month(month)
     dt = datetime.strptime(month, "%Y-%m")
     return dt.strftime("%B %Y")
 
 
 def format_rupiah(amount: float) -> str:
+    """Format rupiah into readable text."""
     return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
 
 
 def get_budget_status_emoji(pct_used: float) -> str:
+    """Retrieve data needed for budget status emoji."""
     if pct_used >= 100:
         return "🔴"
     elif pct_used >= 80:
@@ -134,12 +124,14 @@ def get_budget_status_emoji(pct_used: float) -> str:
 
 
 def generate_budget_id(month: str, category: str) -> str:
+    """Helper for generate budget id in the finance service layer."""
     clean_category = re.sub(r"[^a-zA-Z0-9]+", "_", category.strip().lower())
     clean_category = clean_category.strip("_")
     return f"budget_{month}_{clean_category}"
 
 
 def safe_float(value, default: float = 0.0) -> float:
+    """Helper for safe float in the finance service layer."""
     try:
         return float(value or 0)
     except Exception:
@@ -149,17 +141,7 @@ def safe_float(value, default: float = 0.0) -> float:
 # ── Budget CRUD ───────────────────────────────────────────────────────────────
 
 def set_budget(category: str, amount: float, month: str = None) -> dict:
-    """
-    Atur atau perbarui budget untuk kategori tertentu pada bulan tertentu.
-
-    Sheet budgets disarankan punya header:
-    id | month | category | budget_amount | created_at | updated_at
-
-    Kalau sheet lama kamu masih:
-    month | category | budget_amount | created_at
-
-    sebaiknya ubah header-nya dulu agar cocok dengan versi ini.
-    """
+    """Helper for set budget in the finance service layer."""
     month = normalize_month(month)
     amount = float(amount or 0)
 
@@ -218,7 +200,7 @@ def set_budget(category: str, amount: float, month: str = None) -> dict:
 
 
 def get_budget(category: str, month: str = None) -> float | None:
-    """Ambil budget untuk kategori tertentu di bulan tertentu."""
+    """Retrieve data needed for budget."""
     month = normalize_month(month)
 
     records = get_all_records(SHEET_BUDGETS)
@@ -234,7 +216,7 @@ def get_budget(category: str, month: str = None) -> float | None:
 
 
 def get_all_budgets(month: str = None) -> list[dict]:
-    """Ambil semua budget di bulan tertentu."""
+    """Retrieve data needed for all budgets."""
     month = normalize_month(month)
 
     records = get_all_records(SHEET_BUDGETS)
@@ -245,7 +227,7 @@ def get_all_budgets(month: str = None) -> list[dict]:
 
 
 def get_budget_months() -> list[str]:
-    """Ambil daftar bulan yang punya budget."""
+    """Retrieve data needed for budget months."""
     records = get_all_records(SHEET_BUDGETS)
     months = sorted({
         normalize_sheet_month_value(r.get("month", ""))
@@ -259,11 +241,7 @@ def get_budget_months() -> list[str]:
 # ── Realisasi vs Budget ───────────────────────────────────────────────────────
 
 def budget_transaction_matches_category(record: dict, category: str) -> bool:
-    """Cek apakah transaksi masuk ke budget category tertentu.
-
-    Budget resmi dicocokkan dari kolom category. Budget custom seperti
-    `Jajan` tetap bisa match dari description/raw_input.
-    """
+    """Helper for budget transaction matches category in the finance service layer."""
     budget_key = str(category or "").strip().lower()
     if not budget_key:
         return False
@@ -278,12 +256,7 @@ def budget_transaction_matches_category(record: dict, category: str) -> bool:
 
 
 def calculate_budget_actual_from_transactions(transactions: list[dict]) -> dict:
-    """Hitung realisasi budget sebagai Bersih (Gross).
-
-    Bersih = gross expense dikurangi piutang aktif yang menempel ke transaksi
-    split bill. Ini sengaja disamakan dengan output `/transaksi`, supaya
-    `/budget` tidak terlihat gross-only.
-    """
+    """Calculate derived values for calculate budget actual from transactions."""
     gross_total = 0.0
     net_total = 0.0
 
@@ -300,7 +273,7 @@ def calculate_budget_actual_from_transactions(transactions: list[dict]) -> dict:
 
 
 def get_actual_expense_breakdown(category: str, month: str = None) -> dict:
-    """Hitung total pengeluaran bersih dan gross untuk kategori budget."""
+    """Retrieve data needed for actual expense breakdown."""
     month = normalize_month(month)
 
     records = get_all_records(SHEET_TRANSACTIONS)
@@ -322,7 +295,7 @@ def get_actual_expense_breakdown(category: str, month: str = None) -> dict:
     if not matched:
         return {"net": 0.0, "gross": 0.0}
 
-    # Import lokal supaya budget_service tidak punya circular import saat module load.
+    # Budget command note: regex handling supports natural phrases such as `budget makan 1jt`.
     from app.services.report_service import enrich_transactions_with_debt_info
 
     enriched = enrich_transactions_with_debt_info(matched)
@@ -330,17 +303,12 @@ def get_actual_expense_breakdown(category: str, month: str = None) -> dict:
 
 
 def get_actual_expense(category: str, month: str = None) -> float:
-    """Kembalikan realisasi budget bersih untuk kategori tertentu."""
+    """Retrieve data needed for actual expense."""
     return get_actual_expense_breakdown(category, month).get("net", 0.0)
 
 
 def get_budget_summary(month: str = None) -> list[dict]:
-    """
-    Ambil ringkasan budget vs realisasi semua kategori pada bulan tertentu.
-
-    Output `actual` = pengeluaran bersih.
-    Output `actual_gross` = pengeluaran gross sebelum piutang aktif dikurangi.
-    """
+    """Retrieve data needed for budget summary."""
     month = normalize_month(month)
 
     budgets = get_all_budgets(month)
@@ -355,7 +323,7 @@ def get_budget_summary(month: str = None) -> list[dict]:
             monthly_expenses.append(dict(record or {}))
 
     if monthly_expenses:
-        # Import lokal supaya budget_service tidak punya circular import saat module load.
+        # Budget command note: regex handling supports natural phrases such as `budget makan 1jt`.
         from app.services.report_service import enrich_transactions_with_debt_info
         monthly_expenses = enrich_transactions_with_debt_info(monthly_expenses)
 
@@ -394,10 +362,7 @@ def get_budget_summary(month: str = None) -> list[dict]:
 
 
 def check_budget_after_transaction(category: str, month: str = None) -> dict | None:
-    """
-    Dipanggil setiap kali ada transaksi expense masuk.
-    Kembalikan info budget jika ada, None jika kategori tidak punya budget.
-    """
+    """Helper for check budget after transaction in the finance service layer."""
     month = normalize_month(month)
 
     if category in DEBT_CASHFLOW_CATEGORIES:

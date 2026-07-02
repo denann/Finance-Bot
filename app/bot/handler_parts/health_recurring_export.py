@@ -1,26 +1,22 @@
-# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
+"""Handlers for health checks, recurring transactions, and scheduled export workflows."""
+
+# Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
 
 def health_status_icon(ok: bool) -> str:
+    """Helper for health status icon in the Telegram bot flow."""
     return "🟢" if ok else "🔴"
 
 
 def health_warn_icon(ok: bool) -> str:
+    """Helper for health warn icon in the Telegram bot flow."""
     return "🟢" if ok else "🟡"
 
 
 def safe_health_check(label: str, check_func):
-    """
-    Jalankan satu health check dengan aman.
-    Output:
-    {
-        "label": str,
-        "ok": bool,
-        "message": str
-    }
-    """
+    """Helper for safe health check in the Telegram bot flow."""
     try:
         result = check_func()
 
@@ -45,6 +41,7 @@ def safe_health_check(label: str, check_func):
 
 
 def check_google_sheets_connection():
+    """Helper for check google sheets connection in the Telegram bot flow."""
     spreadsheet = get_spreadsheet()
 
     if not spreadsheet:
@@ -55,22 +52,26 @@ def check_google_sheets_connection():
 
 
 def check_sheet_readable(sheet_name: str):
+    """Helper for check sheet readable in the Telegram bot flow."""
     records = get_all_records(sheet_name)
     return True, f"{len(records)} row readable"
 
 def check_wispybite():
+    """Helper for check wispybite in the Telegram bot flow."""
     if not WEBHOOK_URL:
         return False, "Webhook Url kosong."
 
     return True, "Webhook Url tersedia"
 
 def check_wispybite_port():
+    """Helper for check wispybite port in the Telegram bot flow."""
     if not APP_PORT:
         return False, "Port Webhook kosong."
 
     return True, "Port Webhook tersedia"
 
 def check_gemini_config():
+    """Helper for check gemini config in the Telegram bot flow."""
     if not GEMINI_API_KEY:
         return False, "GEMINI_API_KEY kosong."
 
@@ -78,6 +79,7 @@ def check_gemini_config():
 
 
 def check_environment_config():
+    """Helper for check environment config in the Telegram bot flow."""
     required_envs = [
         "TELEGRAM_BOT_TOKEN",
         "ALLOWED_USER_ID",
@@ -98,6 +100,7 @@ def check_environment_config():
 
 
 def build_health_report_text(results: list[dict]) -> str:
+    """Build the data structure or message text for health report text."""
     total = len(results)
     passed = sum(1 for r in results if r.get("ok"))
     failed = total - passed
@@ -126,9 +129,7 @@ def build_health_report_text(results: list[dict]) -> str:
     return "\n".join(lines)
 
 async def health_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /health — cek status komponen utama bot.
-    """
+    """Handle the Telegram request for health."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -203,14 +204,7 @@ async def health_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 def parse_recurring_add_args(args: list[str]) -> dict:
-    """
-    Format:
-    /recurring_add Nama | type | amount | category | account | monthly | day | description
-
-    Contoh:
-    /recurring_add Netflix | expense | 65000 | Entertainment | DANA | monthly | 5 | Langganan Netflix
-    /recurring_add Gaji | income | 8000000 | Salary | BRI | monthly | 25 | Gaji bulanan
-    """
+    """Parse input into structured data for the Telegram bot flow."""
     raw = " ".join(args).strip()
 
     if not raw:
@@ -257,14 +251,7 @@ def parse_recurring_add_args(args: list[str]) -> dict:
     }
 
 def parse_recurring_edit_args(args: list[str]) -> tuple[str, dict]:
-    """
-    Format:
-    /recurring_edit <rule_id> | field=value | field=value
-
-    Contoh:
-    /recurring_edit rec_xxx | amount=75000
-    /recurring_edit rec_xxx | day=10 | account=BRI
-    """
+    """Parse input into structured data for the Telegram bot flow."""
     raw = " ".join(args).strip()
 
     if not raw:
@@ -320,6 +307,7 @@ def parse_recurring_edit_args(args: list[str]) -> tuple[str, dict]:
 
 
 def build_recurring_edit_result_text(result: dict) -> str:
+    """Build the data structure or message text for recurring edit result text."""
     before = result.get("rule_before", {}) or {}
     after = result.get("rule_after", {}) or {}
     updates = result.get("updates", {}) or {}
@@ -346,9 +334,7 @@ def build_recurring_edit_result_text(result: dict) -> str:
     return "\n".join(lines)
 
 async def recurring_edit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /recurring_edit <rule_id> | field=value | field=value
-    """
+    """Handle the Telegram request for recurring edit."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -382,6 +368,7 @@ async def recurring_edit_handler(update: Update, context: ContextTypes.DEFAULT_T
         )
 
 def short_rule_id(rule_id: str) -> str:
+    """Helper for short rule id in the Telegram bot flow."""
     rule_id = str(rule_id or "")
     if len(rule_id) <= 18:
         return rule_id
@@ -389,6 +376,7 @@ def short_rule_id(rule_id: str) -> str:
 
 
 def build_recurring_rules_text(rules: list[dict]) -> str:
+    """Build the data structure or message text for recurring rules text."""
     if not rules:
         return (
             "📭 Belum ada recurring transaction.\n\n"
@@ -425,6 +413,7 @@ def build_recurring_rules_text(rules: list[dict]) -> str:
 
 
 def build_recurring_run_text(result: dict) -> str:
+    """Build the data structure or message text for recurring run text."""
     lines = [
         "🔁 *Recurring Run Result*\n",
         f"📅 Tanggal run: `{result.get('run_date')}`",
@@ -460,9 +449,7 @@ def build_recurring_run_text(result: dict) -> str:
     return "\n".join(lines)
 
 async def recurring_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /recurring — list recurring rules
-    """
+    """Handle the Telegram request for recurring."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -476,9 +463,7 @@ async def recurring_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def recurring_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /recurring_add Nama | type | amount | category | account | monthly | day | description
-    """
+    """Handle the Telegram request for recurring add."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -517,9 +502,7 @@ async def recurring_add_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def recurring_run_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /recurring_run — jalankan recurring yang jatuh tempo secara manual
-    """
+    """Handle the Telegram request for recurring run."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -539,9 +522,7 @@ async def recurring_run_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def recurring_off_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /recurring_off <rule_id>
-    """
+    """Handle the Telegram request for recurring off."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -571,9 +552,7 @@ async def recurring_off_handler(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 def write_transactions_to_csv(records: list[dict], file_path: str):
-    """
-    Tulis records transaksi ke file CSV.
-    """
+    """Helper for write transactions to csv in the Telegram bot flow."""
     with open(file_path, mode="w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(
             f,
@@ -593,6 +572,7 @@ def write_transactions_to_csv(records: list[dict], file_path: str):
 
 
 def build_export_caption(export_result: dict) -> str:
+    """Build the data structure or message text for export caption."""
     filter_info = export_result.get("filter", {})
     summary = export_result.get("summary", {})
 
@@ -614,13 +594,7 @@ def build_export_caption(export_result: dict) -> str:
     )
 
 async def export_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /download_data
-    /download_data today
-    /download_data week
-    /download_data month
-    /download_data 2026-06
-    """
+    """Handle the Telegram request for export."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -682,16 +656,7 @@ async def export_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 async def scheduled_export_transactions(bot, chat_id: int, period=None):
-    """
-    Auto export transaksi untuk scheduler.
-
-    period:
-    - None      = export semua transaksi
-    - "today"   = export transaksi hari ini
-    - "week"    = export transaksi minggu ini
-    - "month"   = export transaksi bulan ini
-    - "2026-06" = export transaksi bulan tertentu
-    """
+    """Helper for scheduled export transactions in the Telegram bot flow."""
     export_result = get_transactions_for_export(period)
 
     if not export_result.get("success"):

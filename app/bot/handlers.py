@@ -1,9 +1,5 @@
-"""Titik masuk handler Telegram.
+"""Compatibility facade that re-exports handlers from handler_parts."""
 
-File handler asli sudah terlalu besar, jadi logic-nya dipisah ke beberapa modul
-di ``app.bot.handler_parts``. Setiap modul menyimpan import-nya sendiri, lalu
-symbol handler/helper penting di-export ulang di sini agar import lama tetap aman.
-"""
 from app.bot.handler_parts.core import *
 from app.bot.handler_parts.networth_assets import *
 from app.bot.handler_parts.health_recurring_export import *

@@ -1,2 +1,3 @@
-"""Package service layer untuk operasi bisnis finance."""
+"""Service layer package for finance business logic."""
+
 

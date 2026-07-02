@@ -1,49 +1,37 @@
 # 02. Runtime & Entrypoint
 
-Entrypoint utama project adalah `main.py`.
+The main entry point is `main.py`.
 
-`main.py` bertugas menjalankan bot dalam dua mode:
+This file is responsible for running the bot in one of two modes:
 
-1. **Polling mode**: default untuk local setup dan Wispbyte 24/7.
-2. **Webhook mode**: optional advanced mode menggunakan FastAPI.
+1. **Polling mode**, which is the default and simplest path.
+2. **Webhook mode**, which is optional and uses FastAPI.
 
 ## Runtime mode
 
-Mode dibaca dari environment variable:
+Runtime mode is controlled by:
 
 ```env
 BOT_MODE=polling
 ```
 
-atau:
+or:
 
 ```env
 BOT_MODE=webhook
 ```
 
-Validasi nilai dilakukan di `app/config.py`:
-
-```python
-BOT_MODE = os.getenv("BOT_MODE", "polling").strip().lower()
-if BOT_MODE not in {"polling", "webhook"}:
-    raise ValueError("BOT_MODE harus 'polling' atau 'webhook'.")
-```
+`app/config.py` validates this value so the app only accepts supported modes.
 
 ## Polling mode
 
-Polling mode dijalankan saat user menjalankan:
+Polling mode runs when the user executes:
 
 ```bash
 python main.py
 ```
 
-Jika `BOT_MODE=polling`, maka `main.py` memanggil:
-
-```python
-asyncio.run(run_polling_mode())
-```
-
-Fungsi `run_polling_mode()` melakukan beberapa langkah:
+The high-level flow is:
 
 ```text
 validate_runtime_config("polling")
@@ -55,41 +43,28 @@ validate_runtime_config("polling")
 → updater.start_polling()
 ```
 
-Poin penting:
+Important details:
 
-- `delete_webhook()` dipanggil supaya polling tidak bentrok dengan webhook lama.
-- `ensure_schema_on_startup()` mencoba memastikan struktur Google Sheets siap.
-- Scheduler tetap aktif di polling mode.
-- Bot aktif selama proses Python hidup.
+- `delete_webhook()` prevents conflicts with an old webhook setup.
+- `ensure_schema_on_startup()` prepares Google Sheets tabs and headers.
+- Scheduler jobs still run in polling mode.
+- The bot stays active as long as the Python process stays alive.
 
 ## Webhook mode
 
-Webhook mode digunakan untuk deployment FastAPI:
+Webhook mode runs FastAPI:
 
-```env
-BOT_MODE=webhook
+```bash
+BOT_MODE=webhook python main.py
 ```
 
-Saat mode webhook aktif, `main.py` menjalankan:
+or:
 
-```python
-uvicorn.run("main:app", host="0.0.0.0", port=APP_PORT, reload=False)
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-FastAPI app tetap dibuat di level module:
-
-```python
-app = FastAPI(title="Finance Bot")
-app.include_router(webhook_router)
-```
-
-Ini membuat `uvicorn main:app` tetap valid.
-
-## Startup FastAPI
-
-Event startup FastAPI hanya benar-benar mengaktifkan webhook jika `BOT_MODE=webhook`.
-
-Langkah startup webhook:
+Startup flow:
 
 ```text
 validate_runtime_config("webhook")
@@ -100,53 +75,29 @@ validate_runtime_config("webhook")
 → start_scheduler_once()
 ```
 
-Jika `BOT_MODE` bukan webhook, startup FastAPI tidak akan set webhook.
+Webhook mode requires:
 
-## Runtime config validation
-
-`validate_runtime_config()` memastikan env dasar sudah ada:
-
-- `TELEGRAM_BOT_TOKEN`
-- `ALLOWED_USER_ID`
-- `GOOGLE_SHEET_ID`
-- `GOOGLE_SERVICE_ACCOUNT_JSON`
-- `GEMINI_API_KEY`
-
-Jika mode webhook, tambahan yang wajib:
-
-- `WEBHOOK_URL`
-- `TELEGRAM_WEBHOOK_SECRET`
+```env
+WEBHOOK_URL=https://your-domain.com
+TELEGRAM_WEBHOOK_SECRET=your_secret
+```
 
 ## Scheduler lifecycle
 
-Scheduler dibuat sekali:
+The scheduler is created once and started only when needed:
 
-```python
-scheduler = create_scheduler()
+```text
+create_scheduler()
+→ start_scheduler_once()
 ```
 
-Lalu dinyalakan dengan:
+This prevents duplicate scheduler starts when the app is initialized more than once.
 
-```python
-start_scheduler_once()
-```
+## Operational endpoints
 
-Agar tidak double start, fungsi ini mengecek:
-
-```python
-if not scheduler.running:
-    scheduler.start()
-```
-
-Saat shutdown, `shutdown_scheduler_once()` mematikan scheduler jika masih running.
-
-## Endpoint operasional
-
-`main.py` juga menyediakan endpoint:
-
-| Endpoint | Fungsi |
+| Endpoint | Purpose |
 |---|---|
-| `/health` | Mengecek status app dan mode runtime |
-| `/test-sheets` | Mengecek koneksi Google Sheets dan schema |
+| `/health` | Confirms that the app is running and shows the current mode |
+| `/test-sheets` | Checks Google Sheets access and schema readiness |
 
-Endpoint ini paling relevan saat app dijalankan dalam mode webhook/ASGI server.
+These endpoints are mainly useful in webhook or hosted environments.

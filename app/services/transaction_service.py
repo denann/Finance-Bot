@@ -1,3 +1,5 @@
+"""Transaction service for saving, editing, deleting, batch writing, balance updates, and debt relation updates."""
+
 from datetime import datetime, timedelta
 import re
 import uuid
@@ -34,26 +36,18 @@ EXPORT_TRANSACTION_COLUMNS = [
     "tipe_hutang",
 ]
 
-# Nomor kolom Google Sheets berbasis 1 untuk field relasi debt pada transaksi.
+# Schema compatibility note for Google Sheets headers and rows.
 HUTANG_ID_COL = 14
 TIPE_HUTANG_COL = 15
 
 
 def get_current_month_str() -> str:
+    """Retrieve data needed for current month str."""
     return datetime.now().strftime("%Y-%m")
 
 
 def normalize_export_period(period: str | None = None) -> dict:
-    """
-    Normalisasi argumen /download_data.
-
-    Mendukung:
-    - None      -> bulan ini
-    - today     -> hari ini
-    - week      -> minggu ini
-    - month     -> bulan ini
-    - YYYY-MM   -> bulan tertentu
-    """
+    """Clean and standardize normalize export period."""
     today = datetime.now().date()
 
     if not period:
@@ -125,6 +119,7 @@ def normalize_export_period(period: str | None = None) -> dict:
 
 
 def parse_date_safe(value):
+    """Parse input into structured data for the finance service layer."""
     try:
         return datetime.strptime(str(value), "%Y-%m-%d").date()
     except Exception:
@@ -132,18 +127,7 @@ def parse_date_safe(value):
 
 
 def get_transactions_for_export(period: str | None = None) -> dict:
-    """
-    Ambil transaksi untuk export CSV.
-
-    Output:
-    {
-        "success": bool,
-        "records": list[dict],
-        "filter": dict,
-        "summary": dict,
-        "message": str
-    }
-    """
+    """Retrieve data needed for transactions for export."""
     try:
         filter_info = normalize_export_period(period)
     except Exception as e:
@@ -225,19 +209,14 @@ SKIP_ACCOUNT_NAMES = {
 
 
 def is_skip_account_transaction(parsed: dict) -> bool:
-    """True jika transaksi dicatat tanpa mengubah saldo rekening."""
+    """Check a boolean condition for is skip account transaction."""
     account = str(parsed.get("account") or "").strip().lower()
     return bool(parsed.get("skip_account")) or account in SKIP_ACCOUNT_NAMES
 
 # ── ID Generator ──────────────────────────────────────────────────────────────
 
 def generate_transaction_id() -> str:
-    """
-    Buat ID transaksi yang unik.
-
-    Format:
-    txn_YYYYMMDD_HHMMSS_microsecond_uuid8
-    """
+    """Helper for generate transaction id in the finance service layer."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     unique_suffix = uuid.uuid4().hex[:8]
     return f"txn_{timestamp}_{unique_suffix}"
@@ -246,12 +225,7 @@ def generate_transaction_id() -> str:
 # ── Row Builder ───────────────────────────────────────────────────────────────
 
 def build_transaction_row(parsed: dict, raw_input: str) -> tuple[str, list]:
-    """
-    Bangun row transaksi sesuai header Google Sheets:
-
-    id, date, type, amount, category, account, to_account,
-    subject, description, catatan, tipe_pengeluaran, raw_input, parsed_by, hutang_id, tipe_hutang
-    """
+    """Build the data structure or message text for transaction row."""
     txn_id = generate_transaction_id()
 
     txn_type = parsed.get("type") or ""
@@ -294,13 +268,7 @@ def update_transaction_debt_relation(
     debt_ids: list[str],
     tipe_hutang: str = "piutang",
 ) -> dict:
-    """
-    Perbarui kolom hutang_id dan tipe_hutang di sheet transactions.
-
-    Dipakai untuk split bill karena debt_id baru diketahui setelah transaksi utama
-    berhasil tersimpan. Relasi balik ini membuat row transactions mudah ditrace
-    ke debt detail yang dibuat dari transaksi tersebut.
-    """
+    """Update transaction debt relation while keeping related data consistent."""
     transaction_id = str(transaction_id or "").strip()
     clean_debt_ids = [str(x).strip() for x in (debt_ids or []) if str(x or "").strip()]
     tipe_hutang = str(tipe_hutang or "").strip()
@@ -335,7 +303,7 @@ def update_transaction_debt_relation(
 
 
 def clear_transaction_debt_relation(transaction_id: str) -> dict:
-    """Kosongkan hutang_id/tipe_hutang transaksi setelah split bill lama dibatalkan/lunas."""
+    """Clear or reset transaction debt relation."""
     transaction_id = str(transaction_id or "").strip()
     if not transaction_id:
         return {"success": False, "message": "transaction_id kosong."}
@@ -351,6 +319,7 @@ def clear_transaction_debt_relation(transaction_id: str) -> dict:
 
 
 def validate_transaction(parsed: dict) -> tuple[bool, str]:
+    """Validate data before it is used by the finance service layer."""
     txn_type = str(parsed.get("type") or "").strip().lower()
 
     try:
@@ -364,7 +333,7 @@ def validate_transaction(parsed: dict) -> tuple[bool, str]:
     if txn_type not in ["expense", "income", "transfer", "debt_offset", "debt_only"]:
         return False, "Tipe transaksi tidak valid."
 
-    # Normalisasi agar row yang tersimpan konsisten lowercase.
+    # Transaction service note for keeping account balance and related records consistent.
     parsed["type"] = txn_type
 
     if amount <= 0:
@@ -395,7 +364,7 @@ def validate_transaction(parsed: dict) -> tuple[bool, str]:
 # ── Account helpers ───────────────────────────────────────────────────────────
 
 def get_account_balance(account_name: str) -> float | None:
-    """Ambil saldo rekening berdasarkan nama."""
+    """Retrieve data needed for account balance."""
     records = get_all_records(SHEET_ACCOUNTS)
 
     for record in records:
@@ -406,10 +375,7 @@ def get_account_balance(account_name: str) -> float | None:
 
 
 def update_account_balance(account_name: str, new_balance: float) -> bool:
-    """
-    Perbarui saldo rekening di sheet accounts.
-    Kembalikan True jika berhasil, False jika rekening tidak ditemukan.
-    """
+    """Update account balance while keeping related data consistent."""
     ACCOUNT_NAME_COL = 1
     BALANCE_COL = 3
     LAST_UPDATED_COL = 5
@@ -429,19 +395,12 @@ def update_account_balance(account_name: str, new_balance: float) -> bool:
 
 
 def get_all_accounts() -> list[dict]:
-    """Ambil semua rekening beserta saldonya."""
+    """Retrieve data needed for all accounts."""
     return get_all_records(SHEET_ACCOUNTS)
 
 
 def get_account_index_map() -> dict:
-    """
-    Ambil semua account sekali saja.
-    Output:
-    {
-        "cash": {"row": 2, "name": "Cash", "balance": 100000},
-        "bri": {"row": 3, "name": "BRI", "balance": 500000},
-    }
-    """
+    """Retrieve data needed for account index map."""
     records = get_all_records(SHEET_ACCOUNTS)
     result = {}
 
@@ -460,13 +419,7 @@ def get_account_index_map() -> dict:
 
 
 def validate_accounts_exist(account_deltas: dict) -> tuple[bool, list[str]]:
-    """
-    Validasi semua rekening yang akan terdampak sebelum operasi write.
-
-    Google Sheets tidak punya transaksi atomic seperti database. Helper ini
-    mencegah kasus paling umum: row transactions sudah berubah, tetapi saldo
-    gagal karena nama rekening tidak ditemukan.
-    """
+    """Validate data before it is used by the finance service layer."""
     if not account_deltas:
         return True, []
 
@@ -482,18 +435,11 @@ def validate_accounts_exist(account_deltas: dict) -> tuple[bool, list[str]]:
 
 
 def calculate_account_deltas(parsed_items: list[dict]) -> dict:
-    """
-    Hitung perubahan saldo per rekening dari banyak transaksi.
-
-    Output:
-    {
-        "Cash": -50000,
-        "BRI": 100000,
-    }
-    """
+    """Calculate derived values for calculate account deltas."""
     deltas = {}
 
     def add_delta(account_name: str, value: float):
+        """Helper for add delta in the finance service layer."""
         if not account_name:
             return
 
@@ -527,17 +473,7 @@ def calculate_account_deltas(parsed_items: list[dict]) -> dict:
 
 
 def apply_account_deltas(account_deltas: dict) -> dict:
-    """
-    Perbarui saldo rekening berdasarkan total delta per account.
-    Ini lebih cepat daripada update saldo tiap transaksi.
-
-    Output:
-    {
-        "success": True,
-        "new_balances": {"Cash": 50000, "BRI": 1000000},
-        "failed_accounts": []
-    }
-    """
+    """Apply changes for account deltas."""
     if not account_deltas:
         return {
             "success": True,
@@ -554,8 +490,8 @@ def apply_account_deltas(account_deltas: dict) -> dict:
     new_balances = {}
     failed_accounts = []
 
-    # Pre-check semua account dulu. Kalau ada yang hilang, jangan update
-    # sebagian saldo karena itu bisa bikin data makin inkonsisten.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
+    # Split bill parsing note: separate the paid transaction from each person share.
     for account_name in account_deltas:
         account_key = str(account_name).strip().lower()
         if account_key and account_key not in accounts_map:
@@ -573,7 +509,7 @@ def apply_account_deltas(account_deltas: dict) -> dict:
         account_info = accounts_map.get(account_key)
 
         if not account_info:
-            # Harusnya tidak kejadian karena sudah pre-check, tapi tetap aman.
+            # Transaction service note for keeping account balance and related records consistent.
             failed_accounts.append(account_name)
             continue
 
@@ -594,10 +530,7 @@ def apply_account_deltas(account_deltas: dict) -> dict:
 # ── Core transaction functions ────────────────────────────────────────────────
 
 def save_transaction(parsed: dict, raw_input: str) -> dict:
-    """
-    Simpan satu transaksi ke Google Sheets dan update saldo rekening.
-    Tetap dipakai untuk transaksi single.
-    """
+    """Validate and save one transaction, then update related account balances."""
     is_valid, validation_message = validate_transaction(parsed)
     if not is_valid:
         return {
@@ -683,20 +616,7 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
 
 
 def save_transactions_batch(parsed_items: list[dict]) -> dict:
-    """
-    Simpan banyak transaksi sekaligus.
-
-    Input:
-    [
-        {"parsed": parsed_dict, "raw": "beli nasi 30k"},
-        {"parsed": parsed_dict, "raw": "beli ayam 20k"},
-    ]
-
-    Optimisasi:
-    1. append_rows sekali untuk semua transaksi
-    2. hitung total delta saldo per rekening
-    3. update saldo per rekening sekali
-    """
+    """Save multiple transactions in one batch and apply account balance changes safely."""
     if not parsed_items:
         return {
             "success": False,
@@ -815,23 +735,20 @@ def save_transactions_batch(parsed_items: list[dict]) -> dict:
 # ── Query functions ───────────────────────────────────────────────────────────
 
 def get_transactions_by_month(year: int, month: int) -> list[dict]:
-    """Ambil semua transaksi dalam satu bulan."""
+    """Retrieve data needed for transactions by month."""
     records = get_all_records(SHEET_TRANSACTIONS)
     prefix = f"{year}-{month:02d}"
     return [r for r in records if str(r.get("date", "")).startswith(prefix)]
 
 
 def get_transactions_by_date(date_str: str) -> list[dict]:
-    """Ambil semua transaksi di tanggal tertentu. Format: YYYY-MM-DD"""
+    """Retrieve data needed for transactions by date."""
     records = get_all_records(SHEET_TRANSACTIONS)
     return [r for r in records if r.get("date") == date_str]
 
 
 def get_expense_by_category(year: int, month: int) -> dict:
-    """
-    Hitung total pengeluaran per kategori dalam satu bulan.
-    Output: {"Food & Beverage": 250000, "Transport": 150000, ...}
-    """
+    """Retrieve data needed for expense by category."""
     transactions = get_transactions_by_month(year, month)
     result = {}
 
@@ -846,6 +763,7 @@ def get_expense_by_category(year: int, month: int) -> dict:
     return result
 
 def is_debt_cashflow_transaction(txn: dict) -> bool:
+    """Check a boolean condition for is debt cashflow transaction."""
     category = str(txn.get("category", "")).strip()
     parsed_by = str(txn.get("parsed_by", "")).strip().lower()
 
@@ -853,6 +771,7 @@ def is_debt_cashflow_transaction(txn: dict) -> bool:
 
 
 def parse_transaction_date(date_value: str):
+    """Parse input into structured data for the finance service layer."""
     try:
         return datetime.strptime(str(date_value), "%Y-%m-%d").date()
     except Exception:
@@ -860,14 +779,7 @@ def parse_transaction_date(date_value: str):
 
 
 def sort_transactions_sheet_by_date(desc: bool = True) -> dict:
-    """
-    Sort tab transactions berdasarkan kolom date.
-
-    Catatan:
-    - Header tetap di row 1.
-    - Urutan default terbaru di atas supaya /last dan sheet konsisten.
-    - Kalau sorting gagal, caller tidak boleh dianggap gagal simpan transaksi.
-    """
+    """Helper for sort transactions sheet by date in the finance service layer."""
     try:
         sheet = get_sheet(SHEET_TRANSACTIONS)
         values = sheet.get_all_values()
@@ -902,10 +814,7 @@ def sort_transactions_sheet_by_date(desc: bool = True) -> dict:
 
 
 def get_transactions_with_row_index() -> list[dict]:
-    """
-    Ambil semua transaksi + _row_index Google Sheets.
-    Data mulai row 2 karena row 1 adalah header.
-    """
+    """Retrieve data needed for transactions with row index."""
     records = get_all_records(SHEET_TRANSACTIONS)
     result = []
 
@@ -921,17 +830,7 @@ def get_recent_transactions(
     period: str | None = None,
     month: str | None = None,
 ) -> list[dict]:
-    """
-    Ambil transaksi terbaru.
-
-    period:
-    - today
-    - week
-    - month
-
-    month:
-    - YYYY-MM
-    """
+    """Retrieve data needed for recent transactions."""
     records = get_transactions_with_row_index()
     today = datetime.now().date()
 
@@ -979,6 +878,7 @@ def get_recent_transactions(
     return records[:limit]
 
 def get_transaction_by_id(txn_id: str) -> dict | None:
+    """Retrieve data needed for transaction by id."""
     records = get_transactions_with_row_index()
 
     for record in records:
@@ -989,6 +889,7 @@ def get_transaction_by_id(txn_id: str) -> dict | None:
 
 
 def get_transactions_by_ids(txn_ids: list[str]) -> list[dict]:
+    """Retrieve data needed for transactions by ids."""
     target_ids = {str(x).strip() for x in txn_ids if str(x).strip()}
     records = get_transactions_with_row_index()
 
@@ -998,6 +899,7 @@ def get_transactions_by_ids(txn_ids: list[str]) -> list[dict]:
     ]
 
 def get_transactions_by_row_indices(row_indices: list[int]) -> list[dict]:
+    """Retrieve data needed for transactions by row indices."""
     target_rows = {int(x) for x in row_indices}
     records = get_transactions_with_row_index()
 
@@ -1008,24 +910,11 @@ def get_transactions_by_row_indices(row_indices: list[int]) -> list[dict]:
 
 
 def calculate_reverse_deltas_for_delete(transactions: list[dict]) -> dict:
-    """
-    Balik efek saldo dari transaksi yang akan dihapus.
-
-    expense Cash 10k:
-    - saat input: Cash -10k
-    - saat delete: Cash +10k
-
-    income Cash 10k:
-    - saat input: Cash +10k
-    - saat delete: Cash -10k
-
-    transfer Cash -> BRI 10k:
-    - saat input: Cash -10k, BRI +10k
-    - saat delete: Cash +10k, BRI -10k
-    """
+    """Calculate derived values for calculate reverse deltas for delete."""
     deltas = {}
 
     def add_delta(account_name: str, value: float):
+        """Helper for add delta in the finance service layer."""
         if not account_name:
             return
 
@@ -1058,7 +947,7 @@ def calculate_reverse_deltas_for_delete(transactions: list[dict]) -> dict:
 
 
 def parse_transaction_debt_ids(txn: dict) -> list[str]:
-    """Ambil debt/hutang id dari kolom transactions.hutang_id, mendukung format comma-separated."""
+    """Parse input into structured data for the finance service layer."""
     raw = str(txn.get("hutang_id", "") or "").strip()
     if not raw:
         return []
@@ -1066,6 +955,7 @@ def parse_transaction_debt_ids(txn: dict) -> list[str]:
 
 
 def transaction_has_debt_relation(txn: dict) -> bool:
+    """Helper for transaction has debt relation in the finance service layer."""
     return bool(parse_transaction_debt_ids(txn)) or bool(str(txn.get("tipe_hutang", "") or "").strip())
 
 
@@ -1073,13 +963,7 @@ def preview_delete_transactions_by_refs(
     row_indices: list[int] | None = None,
     txn_ids: list[str] | None = None,
 ) -> dict:
-    """
-    Preview delete berdasarkan:
-    - row_indices: dari nomor /last
-    - txn_ids: kalau user input ID langsung
-
-    Untuk /delete_txn 1 2 3, row_index lebih aman daripada transaction_id.
-    """
+    """Helper for preview delete transactions by refs in the finance service layer."""
     row_indices = row_indices or []
     txn_ids = txn_ids or []
 
@@ -1126,10 +1010,7 @@ def preview_delete_transactions_by_refs(
     }
 
 def preview_delete_transactions(txn_ids: list[str]) -> dict:
-    """
-    Validasi dan preview transaksi yang akan dihapus.
-    Tidak mengubah sheet.
-    """
+    """Helper for preview delete transactions in the finance service layer."""
     transactions = get_transactions_by_ids(txn_ids)
     found_ids = {str(t.get("id", "")).strip() for t in transactions}
     requested_ids = {str(x).strip() for x in txn_ids}
@@ -1159,12 +1040,7 @@ def preview_delete_transactions(txn_ids: list[str]) -> dict:
 
 
 def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
-    """
-    Hapus banyak transaksi sekaligus dan reverse saldo rekening.
-
-    Safety:
-    - debt cashflow transaction diblok dulu supaya debts sheet tidak inkonsisten.
-    """
+    """Delete transactions by ids with validation for related data."""
     preview = preview_delete_transactions(txn_ids)
 
     deletable = preview["deletable"]
@@ -1217,8 +1093,8 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
             linked_ids = parse_transaction_debt_ids(txn)
             category = str(txn.get("category", "") or "").strip()
 
-            # Kalau transaksi yang dihapus adalah pembayaran debt, efeknya harus
-            # dibalik ke debts, bukan mem-void debt sumbernya.
+            # Transaction service note for keeping account balance and related records consistent.
+            # Debt payment note: settlement and void actions must stay explicit for auditability.
             if category in {"Pembayaran Piutang", "Bayar Utang"}:
                 reverse_result = reverse_debt_payment_transaction(txn)
                 if not reverse_result.get("success"):
@@ -1304,9 +1180,7 @@ def delete_transactions_by_refs(
     row_indices: list[int] | None = None,
     txn_ids: list[str] | None = None,
 ) -> dict:
-    """
-    Hapus transaksi berdasarkan row_index dan/atau transaction_id.
-    """
+    """Delete transactions by refs with validation for related data."""
     preview = preview_delete_transactions_by_refs(row_indices, txn_ids)
 
     deletable = preview["deletable"]
@@ -1532,10 +1406,11 @@ FIELD_ALIASES = {
 
 
 def normalize_edit_field(field: str) -> str | None:
+    """Clean and standardize normalize edit field."""
     key = str(field or "").strip().lower()
 
-    # Kalau input/Gemini langsung kasih nama field resmi seperti "description",
-    # tetap diterima.
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # Transaction service note for keeping account balance and related records consistent.
     if key in EDITABLE_TRANSACTION_FIELDS:
         return key
 
@@ -1543,6 +1418,7 @@ def normalize_edit_field(field: str) -> str | None:
 
 
 def normalize_edit_updates(updates: dict) -> dict:
+    """Clean and standardize normalize edit updates."""
     normalized = {}
 
     for raw_field, value in updates.items():
@@ -1593,6 +1469,7 @@ def get_single_transaction_by_ref(
     row_index: int | None = None,
     txn_id: str | None = None,
 ) -> dict | None:
+    """Retrieve data needed for single transaction by ref."""
     if row_index:
         matches = get_transactions_by_row_indices([row_index])
         return matches[0] if matches else None
@@ -1612,9 +1489,7 @@ def get_single_transaction_by_ref(
 
 
 def build_transaction_row_from_record(txn: dict) -> list:
-    """
-    Bentuk ulang row sesuai header transactions.
-    """
+    """Build the data structure or message text for transaction row from record."""
     return [
         txn.get("id", ""),
         txn.get("date", ""),
@@ -1635,16 +1510,11 @@ def build_transaction_row_from_record(txn: dict) -> list:
 
 
 def calculate_account_effect(txn: dict) -> dict:
-    """
-    Hitung efek saldo asli dari sebuah transaksi.
-
-    expense Cash 10k -> Cash -10k
-    income Cash 10k -> Cash +10k
-    transfer Cash ke BRI 10k -> Cash -10k, BRI +10k
-    """
+    """Calculate derived values for calculate account effect."""
     deltas = {}
 
     def add_delta(account_name: str, value: float):
+        """Helper for add delta in the finance service layer."""
         if not account_name:
             return
 
@@ -1676,12 +1546,7 @@ def calculate_account_effect(txn: dict) -> dict:
 
 
 def calculate_edit_net_deltas(old_txn: dict, new_txn: dict) -> dict:
-    """
-    Net delta saldo untuk edit transaksi.
-
-    Rumus:
-    net_delta = -old_effect + new_effect
-    """
+    """Calculate derived values for calculate edit net deltas."""
     old_effect = calculate_account_effect(old_txn)
     new_effect = calculate_account_effect(new_txn)
 
@@ -1698,6 +1563,7 @@ def calculate_edit_net_deltas(old_txn: dict, new_txn: dict) -> dict:
 
 
 def validate_edit_transaction(txn: dict) -> tuple[bool, str]:
+    """Validate data before it is used by the finance service layer."""
     txn_type = str(txn.get("type", "")).strip()
     amount = float(txn.get("amount", 0) or 0)
     account = str(txn.get("account", "")).strip()
@@ -1727,10 +1593,7 @@ def preview_edit_transaction_by_ref(
     row_index: int | None = None,
     txn_id: str | None = None,
 ) -> dict:
-    """
-    Preview edit transaksi.
-    Tidak mengubah sheet.
-    """
+    """Helper for preview edit transaction by ref in the finance service layer."""
     try:
         normalized_updates = normalize_edit_updates(updates)
     except Exception as e:
@@ -1755,8 +1618,8 @@ def preview_edit_transaction_by_ref(
 
     old_payment_category = str(old_txn.get("category", "") or "").strip()
     if old_payment_category in {"Pembayaran Piutang", "Bayar Utang"}:
-        # Payment debt boleh diedit nominalnya saja. Saat disimpan, efek payment
-        # lama akan dibalik lalu payment baru dialokasikan ulang ke debts.
+        # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
+        # Debt payment note: settlement and void actions must stay explicit for auditability.
         if set(normalized_updates.keys()) != {"amount"}:
             return {
                 "success": False,
@@ -1768,9 +1631,9 @@ def preview_edit_transaction_by_ref(
 
     old_has_debt_relation = transaction_has_debt_relation(old_txn)
 
-    # Transaksi debt-linked boleh diedit selama charge debt terkait bisa di-sync ulang.
-    # Yang tetap diblok adalah transaksi debt cashflow tanpa hutang_id, karena tidak
-    # ada target debt yang jelas untuk direkonsiliasi.
+    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Transaction service note for keeping account balance and related records consistent.
     if is_debt_cashflow_transaction(old_txn) and not old_has_debt_relation:
         return {
             "success": False,
@@ -1807,6 +1670,7 @@ def preview_edit_transaction_by_ref(
 
 
 def _payment_allocation_note(raw: str, allocations: list[dict], overpayment: float = 0.0, policy: str = "") -> str:
+    """Helper for payment allocation note in the finance service layer."""
     parts = [str(raw or "").strip()]
     alloc_parts = []
     for item in allocations or []:
@@ -1824,17 +1688,7 @@ def _payment_allocation_note(raw: str, allocations: list[dict], overpayment: flo
 
 
 def edit_debt_payment_transaction_amount(preview: dict) -> dict:
-    """Edit nominal transaksi pembayaran debt sambil menyinkronkan sheet debts.
-
-    Mekanisme:
-    1. Reverse alokasi payment lama dari catatan/hutang_id.
-    2. Alokasikan ulang payment baru secara global per orang.
-    3. Perbarui saldo rekening sesuai selisih nominal.
-    4. Perbarui row transaksi dengan allocation baru.
-
-    Kalau nominal baru overpaid, kelebihan otomatis dicatat sebagai debt lawan arah
-    agar tidak hilang. Untuk pilihan bonus/manual, lebih aman delete lalu input ulang.
-    """
+    """Helper for edit debt payment transaction amount in the finance service layer."""
     old_txn = preview["old_txn"]
     new_txn = preview["new_txn"]
     net_deltas = preview["net_deltas"]
@@ -1909,12 +1763,7 @@ def edit_transaction_by_ref(
     row_index: int | None = None,
     txn_id: str | None = None,
 ) -> dict:
-    """
-    Edit transaksi:
-    1. Preview dan validasi
-    2. Terapkan net delta saldo
-    3. Perbarui row transaksi
-    """
+    """Helper for edit transaction by ref in the finance service layer."""
     preview = preview_edit_transaction_by_ref(
         updates=updates,
         row_index=row_index,
@@ -1948,10 +1797,10 @@ def edit_transaction_by_ref(
     try:
         target_row_index = int(old_txn.get("_row_index"))
 
-        # Jangan ubah ID transaksi.
+        # Transaction service note for keeping account balance and related records consistent.
         new_txn["id"] = old_txn.get("id")
 
-        # Tandai raw_input agar kelihatan pernah diedit.
+        # Tandai raw_input so that kelihatan pernah diedit.
         old_raw = str(old_txn.get("raw_input", "") or "")
         if "[edited]" not in old_raw:
             new_txn["raw_input"] = f"{old_raw} [edited]".strip()

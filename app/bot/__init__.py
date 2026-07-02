@@ -1,2 +1,3 @@
-"""Package Telegram bot, berisi handler, keyboard, dan builder aplikasi Telegram."""
+"""Telegram bot package containing handlers, keyboards, and application setup."""
+
 

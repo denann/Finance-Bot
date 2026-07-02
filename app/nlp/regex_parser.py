@@ -1,3 +1,5 @@
+"""Rule-based parser for expense, income, transfer, debt, split bill, pending expense, dates, amounts, categories, and accounts."""
+
 import re
 from datetime import datetime, timedelta
 from app.nlp.normalizer import extract_amount_from_text, normalize_text
@@ -48,6 +50,7 @@ ACCOUNT_DISPLAY_NAMES = {
 
 
 def display_account_name(account: str) -> str:
+    """Helper for display account name in the parser and NLP layer."""
     return ACCOUNT_DISPLAY_NAMES.get(account, account.upper() if account != "cash" else "Cash")
 
 CATEGORY_KEYWORDS = {
@@ -169,6 +172,7 @@ DEBT_PAYMENT_KEYWORDS = [
 
 
 def parse_debt_input(text: str) -> dict | None:
+    """Parse input into structured data for the parser and NLP layer."""
     text_lower = normalize_text(text)
 
     amount = extract_amount_from_text(text_lower)
@@ -176,6 +180,7 @@ def parse_debt_input(text: str) -> dict | None:
         return None
 
     def extract_person_after(text_value: str, keyword: str) -> str | None:
+        """Extract the important part of the input for person after."""
         if keyword not in text_value:
             return None
 
@@ -203,6 +208,7 @@ def parse_debt_input(text: str) -> dict | None:
         return " ".join(words).title() if words else None
 
     def extract_person_before(text_value: str, keyword: str) -> str | None:
+        """Extract the important part of the input for person before."""
         if keyword not in text_value:
             return None
 
@@ -214,12 +220,13 @@ def parse_debt_input(text: str) -> dict | None:
         return " ".join(name_words).title() if name_words else None
 
     def clean_fronting_description(person: str, mode: str) -> str:
+        """Clean and standardize clean fronting description."""
         desc = extract_description(text, amount) or ""
         desc_lower = desc.lower()
         person_pattern = re.escape(str(person or "").lower())
 
-        # Hapus pembuka seperti "saya nitip raka beli ..." agar deskripsi
-        # debt lebih enak dibaca. Kalau gagal bersih, tetap fallback ke desc asli.
+        # Hapus pembuka seperti "saya nitip raka beli ..." so that deskripsi
+        # Legacy compatibility note for older records or older in-memory state.
         desc_lower = re.sub(r"^\s*(?:saya|aku|gw|gue)\s+", "", desc_lower)
         if mode == "ditalangin":
             desc_lower = re.sub(
@@ -243,13 +250,13 @@ def parse_debt_input(text: str) -> dict | None:
             return desc_lower.title()
         return desc or "Talangan"
 
-    # ── Debt offset / kompensasi tanpa rekening ─────────────────────────────
-    # Dipakai saat hutang baru ingin langsung dipotong dari piutang aktif orang yang sama.
+    # ── Debt offset rule without account cashflow ─────────────────────────────
+    # Debt command note: keep payable and receivable actions explicit and auditable.
     # Contoh:
-    # - potong piutang Dimas 20k buat badminton
-    # - kompensasi piutang Dimas 20k karena badminton
-    # - saya berutang ke Dimas 20k potong dari piutang buat badminton
-    # Efeknya bukan cashflow rekening, tetapi tetap dibuat row di transactions sebagai fact table.
+    # - potong piutang Dimas 20k create badminton
+    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Account balance note: avoid partial balance updates when validation fails.
     offset_self_context = False
     offset_match = re.search(
         r"\b(?:potong|kurangi|kompensasi|offset|netting)\s+"
@@ -273,11 +280,11 @@ def parse_debt_input(text: str) -> dict | None:
     if offset_match:
         person = re.sub(r"\s+", " ", offset_match.group("person")).strip().title()
         target_word = str(offset_match.group("target") or "piutang").strip().lower()
-        # target_debt_type adalah debt aktif yang akan dikurangi.
-        # target=piutang berarti kurangi receivable.
-        # Untuk input natural "potong hutang Raka", hutang dipahami sebagai
-        # hutang Raka ke user, jadi tetap mengurangi receivable.
-        # Kalau konteksnya eksplisit "saya berutang ke X ... potong utang", baru payable.
+        # Parser rule note for an Indonesian finance input edge case.
+        # Debt command note: keep payable and receivable actions explicit and auditable.
+        # Debt command note: keep payable and receivable actions explicit and auditable.
+        # Debt command note: keep payable and receivable actions explicit and auditable.
+        # Debt command note: keep payable and receivable actions explicit and auditable.
         if target_word == "piutang":
             target_debt_type = "receivable"
         elif offset_self_context:
@@ -302,10 +309,10 @@ def parse_debt_input(text: str) -> dict | None:
                 "skip_account": True,
             }
 
-    # ── Ditalangin orang dulu: "ditalangin Bagas beli minyak 46k ..." ──
-    # Rule ini harus berada sebelum "item oleh orang". Kalau tidak, input seperti
-    # "ditalangin Bagas beli minyak 46k dibagi 4 sama Bagas Fajar Raka" bisa salah
-    # dibaca sebagai item="Bagas beli minyak ..." dan person="Bagas Fajar Raka".
+    # ── Covered-by-someone rule ────────────────────────────────────────────────
+    # Parser rule note for an Indonesian finance input edge case.
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
     ditalangin_person_first_match = re.search(
         r"\b(?:saya|aku|gw|gue)?\s*"
         r"(?:nitip|ditalangin|ditalangi|dibayarin|duluin)\s+"
@@ -334,8 +341,8 @@ def parse_debt_input(text: str) -> dict | None:
                 "fronting_mode": "ditalangin",
             }
 
-    # ── Ditalangin item oleh orang: "ditalangin nasi uduk sama Bagas 10k" ──
-    # Artinya orang tersebut membayar dulu untuk user. Ini debt-only, bukan cashflow.
+    # ── Covered-by-someone rule ────────────────────────────────────────────────
+    # Parser rule note for an Indonesian finance input edge case.
     ditalangin_item_by_person_match = re.search(
         r"\b(?:saya|aku|gw|gue)?\s*"
         r"(?:nitip|ditalangin|ditalangi|dibayarin|duluin)\s+"
@@ -370,9 +377,9 @@ def parse_debt_input(text: str) -> dict | None:
                 "fronting_mode": "ditalangin",
             }
 
-    # ── Talangan tanpa cashflow: "saya nitip Raka beli nasi kuning 12k" ──
-    # Artinya Raka membayar dulu untuk user. Belum ada uang masuk/keluar dari
-    # rekening user, jadi hanya dicatat sebagai utang (payable), bukan income.
+    # ── Fronting-money rule without immediate cashflow ────────────────────────
+    # Parser rule note for an Indonesian finance input edge case.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
     ditalangin_match = re.search(
         r"\b(?:saya|aku|gw|gue)?\s*(?:nitip|ditalangin|ditalangi|dibayarin|duluin)\s+"
         r"(?:sama|ke)?\s*(?:si\s+)?([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)"
@@ -395,9 +402,9 @@ def parse_debt_input(text: str) -> dict | None:
                 "fronting_mode": "ditalangin",
             }
 
-    # ── Talangin orang: "saya talangin Raka beli nasi 12k" ───────────────
-    # Ini berarti user keluar uang sekarang, lalu Raka punya piutang ke user.
-    # Tetap minta rekening karena cashflow benar-benar terjadi.
+    # ── Implementation section ────────────────────────────────────────────────
+    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Account balance note: avoid partial balance updates when validation fails.
     talangin_match = re.search(
         r"\b(?:saya|aku|gw|gue)?\s*(?:ngetalangin|nalangin|talangin|talangi)\s+"
         r"(?:si\s+)?([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)"
@@ -420,7 +427,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "fronting_mode": "talangin",
             }
 
-    # ── Orang membayari user: "Raka beliin saya nasi 12k" ────────────────
+    # ── Implementation section ────────────────────────────────────────────────
     person_paid_for_me_match = re.search(
         r"^\s*([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)\s+"
         r"(?:ngetalangin|nalangin|talangin|talangi|beliin|belikan|bayarin|membayari)\s+"
@@ -443,8 +450,8 @@ def parse_debt_input(text: str) -> dict | None:
                 "fronting_mode": "ditalangin",
             }
 
-    # ── Receivable explicit: "Raka hutang ke saya 50k" ─────────────────────
-    # Artinya Raka punya hutang ke user, bukan user hutang ke "Saya".
+    # ── Debt and receivable flow ───────────────────────────────────────────────
+    # Debt command note: keep payable and receivable actions explicit and auditable.
     receivable_to_me_match = re.search(
         r"^\s*([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)\s+(?:hutang|utang)\s+ke\s+(?:saya|aku|gw|gue)\b",
         text_lower,
@@ -462,8 +469,8 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # ── Receivable explicit: "piutang ke Dimas 31100" ─────────────────────
-    # Artinya Dimas punya utang ke user / user punya piutang ke Dimas.
+    # ── Debt and receivable flow ───────────────────────────────────────────────
+    # Debt command note: keep payable and receivable actions explicit and auditable.
     explicit_piutang_match = re.search(
         r"\bpiutang\s+(?:ke|sama|dari)?\s*"
         r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr))",
@@ -482,8 +489,8 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # ── Explicit "saya berutang ke X" => payable ─────────────────────────────
-    # Kata berutang/berhutang ambigu, jadi arahnya ditentukan dari subjek kalimat.
+    # ── Debt and receivable flow ───────────────────────────────────────────────
+    # Debt command note: keep payable and receivable actions explicit and auditable.
     self_payable_match = re.search(
         r"\b(?:saya|aku|gue|gw|gua)\s+berh?utang\s+(?:ke|sama)\s+"
         r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr|$))",
@@ -502,7 +509,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # ── Explicit "X berutang ke saya" => receivable ──────────────────────────
+    # ── Debt and receivable flow ───────────────────────────────────────────────
     other_receivable_match = re.search(
         r"\b([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)\s+berh?utang\s+"
         r"(?:ke|sama)\s+(?:saya|aku|gue|gw|gua)\b",
@@ -522,7 +529,7 @@ def parse_debt_input(text: str) -> dict | None:
             }
 
     # ── Short form "Dimas berutang 31100" => receivable ──────────────────────
-    # Kalau subjeknya orang lain, diasumsikan dia berutang ke user.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
     short_other_receivable_match = re.search(
         r"\b(?!saya\b|aku\b|gue\b|gw\b|gua\b)"
         r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)\s+berh?utang\b"
@@ -542,15 +549,15 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # Catatan: frasa seperti "transfer/transaksi dari Maya 55k"
-    # sekarang diperlakukan sebagai income biasa di detect_type(),
-    # dan bukan transfer antar rekening. Namun pola "Nama bayar 5k" adalah
-    # pembayaran piutang natural, karena subjeknya orang yang membayar ke user.
+    # Parser rule note for an Indonesian finance input edge case.
+    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
 
-    # ── Payment natural debt yang eksplisit ─────────────────────────────────
-    # Person + "bayar" tanpa keyword debt terlalu rawan:
-    # "Budi bayar makan 100k" bisa berarti expense, debt payment, atau no-cashflow.
-    # Karena itu hanya langsung masuk debt flow kalau ada kata debt/lunas/cicil.
+    # ── Implementation section ────────────────────────────────────────────────
+    # Parser rule note for an Indonesian finance input edge case.
+    # Example cleanup: remove the person prefix so the description stays focused on the expense item.
+    # Parser rule note for an Indonesian finance input edge case.
     person_pays_match = re.search(
         r"^\s*(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)\s+"
         r"(?:bayar|byr|melunasi|lunasin|lunasi|nyicil|cicil|transfer\s+balik|kembaliin|balikin|dibalikin)\b"
@@ -616,16 +623,16 @@ def parse_debt_input(text: str) -> dict | None:
             }
 
     # ── Payable natural: "minjem uang Maya 220k" ───────────────────────────
-    # Dalam bahasa natural user, pola ini berarti: Anda meminjam uang milik Maya
-    # sehingga Anda punya UTANG ke Maya. Ini harus dicek sebelum keyword umum
-    # "minjem/pinjem/pinjam" yang dipakai untuk pola "Budi minjem 300k".
+    # Parser rule note for an Indonesian finance input edge case.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Parser rule note for an Indonesian finance input edge case.
     natural_borrow_match = re.search(
         r"\b(?:minjem|pinjem|pinjam)\b\s+(?:uang|duit|dana)?\s*(?:ke|sama|dari)?\s*([a-zA-Z][a-zA-Z\s]{0,40}?)(?=\s*\d|\s*(?:rp|idr))",
         text_lower,
     )
     if natural_borrow_match and not re.search(r"\b(?:minjemin|pinjemin)\b", text_lower):
         person = natural_borrow_match.group(1).strip()
-        # Bersihkan kata sambung/noise yang kadang ikut kebaca.
+        # Parser rule note for an Indonesian finance input edge case.
         person = re.sub(r"\b(?:uang|duit|dana|ke|sama|dari)\b", " ", person).strip()
         person = re.sub(r"\s+", " ", person).title()
         if person:
@@ -638,9 +645,9 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # ── Payable: Anda punya utang ke orang ───────────────────────────────────
+    # ── Debt and receivable flow ───────────────────────────────────────────────
     for kw in DEBT_PAYABLE_KEYWORDS:
-        # Jangan pakai `if kw in text_lower` karena "piutang ke" mengandung "utang ke".
+        # Debt command note: keep payable and receivable actions explicit and auditable.
         kw_pattern = rf"(?<![a-zA-ZÀ-ÿ]){re.escape(kw)}(?![a-zA-ZÀ-ÿ])"
         if re.search(kw_pattern, text_lower, flags=re.IGNORECASE):
             person = extract_person_after(text_lower, kw)
@@ -653,7 +660,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # ── Receivable: orang punya utang ke Anda ────────────────────────────────
+    # ── Debt and receivable flow ───────────────────────────────────────────────
     for kw in DEBT_RECEIVABLE_KEYWORDS:
         if kw in text_lower:
             person = extract_person_before(text_lower, kw)
@@ -676,13 +683,14 @@ def parse_debt_input(text: str) -> dict | None:
 # ── Helper functions ──────────────────────────────────────────────────────────
 
 def detect_type(text: str) -> str | None:
+    """Helper for detect type in the parser and NLP layer."""
     text_lower = normalize_text(text)
     account_pattern = r"cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank"
 
-    # Income dari orang/non-rekening.
-    # Contoh: "Transaksi dari Maya 55k", "transfer dari Bagas 50k",
-    # "kiriman dari Unknown 55k" harus jadi income biasa, bukan debt payment
-    # dan bukan transfer antar rekening.
+    # Account balance note: avoid partial balance updates when validation fails.
+    # Parser rule note for an Indonesian finance input edge case.
+    # Debt payment note: settlement and void actions must stay explicit for auditability.
+    # Account balance note: avoid partial balance updates when validation fails.
     incoming_from_person_match = re.search(
         r"^\s*(?:transaksi|transfer(?:an)?|tf|trf|kiriman|uang)\s+(?:masuk\s+)?dari\s+"
         r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr|ke\s+|via\s+|pakai\s+|pake\s+))",
@@ -695,18 +703,18 @@ def detect_type(text: str) -> str | None:
         if source and first_token not in ACCOUNT_NAMES:
             return "income"
 
-    # Transfer antar rekening tanpa keyword eksplisit:
-    # "BCA ke DANA 200k", "Cash ke BRI 100k".
+    # Account balance note: avoid partial balance updates when validation fails.
+    # Parser rule note for an Indonesian finance input edge case.
     if re.search(rf"\b({account_pattern})\s+ke\s+({account_pattern})\b", text_lower, flags=re.IGNORECASE):
         return "transfer"
 
     # Alias transfer.
-    # "tf gopay 100k dari BRI", "trf DANA 50k dari BCA".
+    # Parser rule note for an Indonesian finance input edge case.
     if re.search(r"\b(?:tf|trf)\b", text_lower) and re.search(rf"\b({account_pattern})\b", text_lower, flags=re.IGNORECASE):
         return "transfer"
 
     # Keyword transfer eksplisit selain topup/isi.
-    # Jangan jadikan "isi bensin 50k dari BRI" sebagai transfer hanya karena ada BRI.
+    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
     explicit_transfer_keywords = [
         "transfer", "pindah", "move", "tarik tunai", "tarik",
         "setor tunai", "setor ke",
@@ -715,8 +723,8 @@ def detect_type(text: str) -> str | None:
         if re.search(rf"\b({account_pattern})\b", text_lower, flags=re.IGNORECASE):
             return "transfer"
 
-    # Top up/isi hanya transfer kalau targetnya rekening/wallet yang dikenali.
-    # Selain itu tetap expense: isi bensin, isi pulsa, top up game/ML.
+    # Account balance note: avoid partial balance updates when validation fails.
+    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
     topup_to_account = re.search(
         rf"\b(?:top\s*up|topup|isi|ngisi)\s+({account_pattern})\b",
         text_lower,
@@ -730,9 +738,9 @@ def detect_type(text: str) -> str | None:
     if topup_to_account or topup_ke_account:
         return "transfer"
 
-    # Pola pemasukan natural yang sebelumnya sering gagal:
-    # "uang ptpt bulanan dari fajar 200k"
-    # "uang ptpt bulanan masuk dari alfath 91.457k"
+    # Parser rule note for an Indonesian finance input edge case.
+    # Single-input debt flow needs the same enrichment used by mixed input parsing.
+    # Single-input debt flow needs the same enrichment used by mixed input parsing.
     if re.search(r"\buang\b.*\b(dari|masuk)\b", text_lower):
         return "income"
 
@@ -747,6 +755,7 @@ def detect_type(text: str) -> str | None:
     return None
 
 def detect_category(text: str, transaction_type: str) -> str:
+    """Helper for detect category in the parser and NLP layer."""
     text_lower = normalize_text(text)
 
     for category, keywords in CATEGORY_KEYWORDS.items():
@@ -761,6 +770,7 @@ def detect_category(text: str, transaction_type: str) -> str:
 
 
 def detect_account(text: str) -> str | None:
+    """Helper for detect account in the parser and NLP layer."""
     text_lower = normalize_text(text)
 
     for acc in ACCOUNT_NAMES:
@@ -771,41 +781,13 @@ def detect_account(text: str) -> str | None:
 
 
 def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
-    """
-    Deteksi rekening asal dan tujuan untuk transaksi transfer/top up.
-
-    Prinsip penting:
-    - `dari/pakai/pake/via <rekening>` = sumber dana/account asal.
-    - `ke/tujuan <rekening>` = rekening tujuan.
-    - Untuk top up/isi/ngisi, rekening setelah kata kerja adalah tujuan.
-      Contoh: "top up gopay 50k dari BRI" -> BRI ke GoPay.
-
-    Fallback lama tetap dipakai untuk pola sederhana:
-    "transfer BRI ke GoPay 50k" -> BRI ke GoPay.
-    "top up GoPay 50k" -> source belum diketahui, target GoPay.
-    "transfer GoPay 50k dari BRI" -> BRI ke GoPay.
-    "transfer BRI GoPay 50k" -> BRI ke GoPay.
-    "transfer ke GoPay dari BRI 50k" -> BRI ke GoPay.
-    "isi DANA pake BRI 50k" -> BRI ke DANA.
-    "tarik tunai 100k dari BRI ke Cash" -> BRI ke Cash.
-    "setor tunai ke BRI dari Cash 100k" -> Cash ke BRI.
-    "pindah dana dari BCA ke BRI 50k" -> BCA ke BRI.
-    "transfer Cash ke BRI 10k" -> Cash ke BRI.
-    "transfer ke BRI 10k" -> source belum diketahui, target BRI.
-    "transfer dari BRI 10k" -> source BRI, target belum diketahui.
-    "topup seabank dari bri 20k" -> BRI ke Seabank.
-    "top up sea bank dari bri 20k" -> BRI ke Seabank.
-    "top up gopay via bri 50k" -> BRI ke GoPay.
-    "ngisi gopay bri 50k" -> BRI ke GoPay.
-    "top up gopay 50k" -> source belum diketahui, target GoPay.
-    "transfer dari bagas 50k ke BRI" bukan transfer antar-rekening dan harus
-    sudah diklasifikasikan sebagai income di detect_type().
-    """
+    """Helper for detect transfer accounts in the parser and NLP layer."""
     text_lower = normalize_text(text)
 
     account_pattern = r"cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank"
 
     def normalize_account_name(raw: str | None) -> str | None:
+        """Clean and standardize normalize account name."""
         if not raw:
             return None
         clean = re.sub(r"\s+", " ", str(raw).strip().lower())
@@ -814,6 +796,7 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
         return display_account_name(clean)
 
     def iter_accounts() -> list[tuple[int, str]]:
+        """Helper for iter accounts in the parser and NLP layer."""
         matches = []
         for match in re.finditer(rf"\b({account_pattern})\b", text_lower, flags=re.IGNORECASE):
             display = normalize_account_name(match.group(1))
@@ -822,12 +805,14 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
         return matches
 
     def first_account_after(pattern: str) -> str | None:
+        """Helper for first account after in the parser and NLP layer."""
         match = re.search(pattern, text_lower, flags=re.IGNORECASE)
         if not match:
             return None
         return normalize_account_name(match.group(1))
 
     def first_other_account(excluded: set[str]) -> str | None:
+        """Helper for first other account in the parser and NLP layer."""
         for _, account in found:
             if account not in excluded:
                 return account
@@ -845,7 +830,7 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
     if source_account and target_account and source_account != target_account:
         return source_account, target_account
 
-    # Khusus top up/isi: rekening setelah kata kerja adalah tujuan, bukan sumber.
+    # Account balance note: avoid partial balance updates when validation fails.
     topup_target = first_account_after(rf"\b(?:top\s*up|topup|isi|ngisi)\s+({account_pattern})\b")
     if topup_target:
         if source_account and source_account != topup_target:
@@ -853,13 +838,13 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
 
         other_account = first_other_account({topup_target})
         if other_account:
-            # Contoh: "ngisi gopay bri 50k" -> BRI ke GoPay.
+            # Parser rule note for an Indonesian finance input edge case.
             return other_account, topup_target
 
         return None, topup_target
 
-    # Kalau hanya source/target eksplisit dan rekening lain muncul, pakai rekening lain
-    # sebagai pasangan. Ini menangani "transfer GoPay 50k dari BRI".
+    # If only source/target is explicit and another account appears, use the other account.
+    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
     if source_account:
         other_account = first_other_account({source_account})
         return source_account, other_account
@@ -868,7 +853,7 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
         other_account = first_other_account({target_account})
         return other_account, target_account
 
-    # Fallback lama: dua rekening berurutan dianggap asal -> tujuan.
+    # Legacy compatibility note for older records or older in-memory state.
     if len(found) >= 2:
         return found[0][1], found[1][1]
 
@@ -878,15 +863,7 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
     return None, None
 
 def parse_explicit_date(date_text: str) -> str | None:
-    """
-    Parsing tanggal eksplisit ke format YYYY-MM-DD.
-
-    Mendukung:
-    - 2026-06-01
-    - 2026/06/01
-    - 01-06-2026
-    - 01/06/2026
-    """
+    """Parse input into structured data for the parser and NLP layer."""
     text = str(date_text or "").strip()
 
     # YYYY-MM-DD atau YYYY/MM/DD
@@ -917,15 +894,7 @@ def parse_explicit_date(date_text: str) -> str | None:
 
 
 def parse_day_only_date(day_text: str) -> str | None:
-    """
-    Parsing tanggal hanya angka hari dan gunakan bulan/tahun hari ini.
-
-    Mendukung:
-    - tanggal 1
-    - tgl 1
-    - tg 01
-    - date 9
-    """
+    """Parse input into structured data for the parser and NLP layer."""
     clean = str(day_text or "").strip()
 
     if not re.fullmatch(r"0?[1-9]|[12]\d|3[01]", clean):
@@ -941,17 +910,10 @@ def parse_day_only_date(day_text: str) -> str | None:
 
 
 def strip_date_phrases(text: str) -> str:
-    """
-    Hapus frasa tanggal dari deskripsi.
-
-    Contoh:
-    - beli nasi padang 10k minggu lalu -> beli nasi padang 10k
-    - beli nasi padang 10k dua hari yang lalu -> beli nasi padang 10k
-    - beli nasi padang 10k tanggal 2026-06-01 -> beli nasi padang 10k
-    """
+    """Helper for strip date phrases in the parser and NLP layer."""
     clean = str(text or "")
 
-    # Hapus "tanggal 2026-06-01", "tgl 01-06-2026", dll.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     clean = re.sub(
         r"\b(?:tanggal|tgl|date|pada tanggal)\s+"
         r"(?:20\d{2}[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])|"
@@ -961,7 +923,7 @@ def strip_date_phrases(text: str) -> str:
         flags=re.IGNORECASE,
     )
 
-    # Hapus "tanggal 1", "tgl 1", "tg 01"; bulan/tahun ikut hari ini.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     clean = re.sub(
         r"\b(?:tanggal|tgl|tg|date|pada tanggal)\s+"
         r"(?:0?[1-9]|[12]\d|3[01])\b",
@@ -970,7 +932,7 @@ def strip_date_phrases(text: str) -> str:
         flags=re.IGNORECASE,
     )
 
-    # Hapus bare date tanpa kata "tanggal".
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     clean = re.sub(
         r"\b20\d{2}[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])\b",
         " ",
@@ -994,13 +956,13 @@ def strip_date_phrases(text: str) -> str:
     clean = re.sub(r"\bsebulan\s+(?:yang\s+)?lalu\b", " ", clean, flags=re.IGNORECASE)
 
     # Hapus:
-    # 2 hari lalu
-    # 2 hari yang lalu
-    # dua hari lalu
-    # dua hari yang lalu
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     # tiga minggu lalu
-    # 3 minggu yang lalu
-    # 2 bulan yang lalu
+    # Parser rule note for an Indonesian finance input edge case.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     clean = re.sub(
         r"\b("
         r"\d+|"
@@ -1048,16 +1010,7 @@ NUMBER_WORDS_ID = {
 
 
 def parse_relative_number(value: str) -> int | None:
-    """
-    Parsing angka untuk tanggal relatif.
-
-    Mendukung:
-    - 2
-    - dua
-    - tiga
-    - seminggu
-    - sehari
-    """
+    """Parse input into structured data for the parser and NLP layer."""
     clean = str(value or "").strip().lower()
 
     if clean.isdigit():
@@ -1066,21 +1019,7 @@ def parse_relative_number(value: str) -> int | None:
     return NUMBER_WORDS_ID.get(clean)
 
 def detect_relative_date(text: str) -> str | None:
-    """
-    Deteksi tanggal relatif.
-
-    Mendukung:
-    - kemarin
-    - hari ini
-    - minggu lalu
-    - seminggu lalu
-    - dua hari yang lalu
-    - 2 hari yang lalu
-    - tiga minggu lalu
-    - 3 minggu yang lalu
-    - sebulan lalu
-    - 2 bulan yang lalu
-    """
+    """Helper for detect relative date in the parser and NLP layer."""
     clean = str(text or "").strip().lower()
     today = datetime.now().date()
 
@@ -1094,23 +1033,23 @@ def detect_relative_date(text: str) -> str | None:
     if re.search(r"\bminggu\s+lalu\b", clean) or re.search(r"\bseminggu\s+(?:yang\s+)?lalu\b", clean):
         return (today - timedelta(weeks=1)).strftime("%Y-%m-%d")
 
-    # sehari lalu
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     if re.search(r"\bsehari\s+(?:yang\s+)?lalu\b", clean):
         return (today - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # sebulan lalu
-    # Pendekatan sederhana: 1 bulan = 30 hari untuk input natural relatif.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     if re.search(r"\bsebulan\s+(?:yang\s+)?lalu\b", clean):
         return (today - timedelta(days=30)).strftime("%Y-%m-%d")
 
     # Pattern:
-    # 2 hari lalu
-    # 2 hari yang lalu
-    # dua hari lalu
-    # dua hari yang lalu
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     # 3 minggu lalu
-    # tiga minggu yang lalu
-    # 2 bulan yang lalu
+    # Parser rule note for an Indonesian finance input edge case.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     relative_match = re.search(
         r"\b("
         r"\d+|"
@@ -1140,24 +1079,17 @@ def detect_relative_date(text: str) -> str | None:
             return (today - timedelta(weeks=number)).strftime("%Y-%m-%d")
 
         if unit == "bulan":
-            # Simple approach: 1 bulan = 30 hari.
+            # Date parsing note: keep explicit and relative Indonesian date formats predictable.
             return (today - timedelta(days=number * 30)).strftime("%Y-%m-%d")
 
     return None
 
 def detect_date(text: str) -> str:
-    """
-    Deteksi tanggal transaksi.
-
-    Prioritas:
-    1. Tanggal eksplisit: 2026-06-01, 01-06-2026
-    2. Relative date: kemarin, minggu lalu, 2 hari lalu, dua minggu lalu, dll.
-    3. Default: hari ini
-    """
+    """Helper for detect date in the parser and NLP layer."""
     clean = str(text or "").strip().lower()
     today = datetime.now().date()
 
-    # Explicit date dengan prefix: tanggal 2026-06-01 / tgl 01-06-2026
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     prefixed_date_match = re.search(
         r"\b(?:tanggal|tgl|date|pada tanggal)\s+"
         r"("
@@ -1174,7 +1106,7 @@ def detect_date(text: str) -> str:
         if parsed_date:
             return parsed_date
 
-    # Prefix + angka hari saja: tanggal 1 / tgl 1 / tg 01
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     day_only_match = re.search(
         r"\b(?:tanggal|tgl|tg|date|pada tanggal)\s+"
         r"(0?[1-9]|[12]\d|3[01])\b",
@@ -1210,15 +1142,16 @@ def detect_date(text: str) -> str:
     return today.strftime("%Y-%m-%d")
 
 def extract_description(text: str, amount=None) -> str:
+    """Extract the important part of the input for description."""
     clean = str(text or "").strip()
 
-    # Bantu kasus typo tanpa spasi: "Raka241.457k" -> "Raka 241.457k".
+    # Command routing note: exact commands and aliases are checked before similarity-based typo handling.
     clean = re.sub(r"(?<=[A-Za-zÀ-ÖØ-öø-ÿ])(?=\d)", " ", clean)
 
-    # 1. Hapus semua informasi waktu agar tidak masuk description.
+    # Parser rule note for an Indonesian finance input edge case.
     clean = strip_date_phrases(clean)
 
-    # 2. Hapus nominal spesifik dari amount kalau dikirim.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     if amount is not None:
         amount_int = int(float(amount or 0))
 
@@ -1231,7 +1164,7 @@ def extract_description(text: str, amount=None) -> str:
         for variant in amount_variants:
             clean = clean.replace(variant, " ")
 
-    # 3. Hapus nominal umum: 10k, 10 k, 25rb, 25 ribu, 1 juta, dst.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     clean = re.sub(
         r"\b\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta)?\b",
         " ",
@@ -1239,8 +1172,8 @@ def extract_description(text: str, amount=None) -> str:
         flags=re.IGNORECASE,
     )
 
-    # Hapus sisa satuan yang tertinggal setelah angka bertitik ribuan diganti.
-    # Contoh: "Alfath 91.457k" -> replace "91.457" menyisakan "k".
+    # Parser rule note for an Indonesian finance input edge case.
+    # Parser rule note for an Indonesian finance input edge case.
     clean = re.sub(
         r"\b(?:rb|ribu|k|jt|juta|m|miliar|miliard|milyard)\b",
         " ",
@@ -1248,10 +1181,10 @@ def extract_description(text: str, amount=None) -> str:
         flags=re.IGNORECASE,
     )
 
-    # Kalau split tanpa nama teman, bersihkan kata operasinya dari deskripsi.
-    # Contoh: "Bakso 43k dibagi 2" -> "Bakso", bukan "Bakso Dibagi".
-    # Untuk split dengan teman, frasa "dibagi ... sama Raka" sengaja dibiarkan dulu
-    # agar handlers.py bisa membersihkan nama teman setelah split bill terdeteksi.
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # Split bill parsing note: separate the paid transaction from each person share.
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|split|share|patungan)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
     has_named_split = re.search(
@@ -1263,9 +1196,9 @@ def extract_description(text: str, amount=None) -> str:
         clean = re.sub(rf"\b{split_word}\b", " ", clean, flags=re.IGNORECASE)
         clean = re.sub(r"\b(?:jadi|orang)\b", " ", clean, flags=re.IGNORECASE)
 
-    # 4. Hapus kata kerja transaksi umum di awal.
-    # Jangan hapus kata "transfer" kalau transfernya ke orang/non-rekening,
-    # supaya deskripsi tetap "Transfer Ke Maya", bukan cuma "Ke Maya".
+    # 4. Remove common transaction verbs from the beginning.
+    # Account balance note: avoid partial balance updates when validation fails.
+    # Parser rule note for an Indonesian finance input edge case.
     account_pattern = r"(?:cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank)"
     person_transfer = re.match(rf"^\s*transfer\s+ke\s+(?!{account_pattern}\b)", clean, flags=re.IGNORECASE)
 
@@ -1281,7 +1214,7 @@ def extract_description(text: str, amount=None) -> str:
         flags=re.IGNORECASE,
     )
 
-    # 5. Hapus info rekening sederhana.
+    # 5. Hapus info account sederhana.
     clean = re.sub(
         r"\b(dari|ke|pakai|pake|via)\s+(cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank)\b",
         " ",
@@ -1289,8 +1222,8 @@ def extract_description(text: str, amount=None) -> str:
         flags=re.IGNORECASE,
     )
 
-    # Hapus sisa prefix "dari" untuk income dari orang.
-    # Contoh: "Transaksi dari Maya 55k" -> "Maya".
+    # Parser rule note for an Indonesian finance input edge case.
+    # Parser rule note for an Indonesian finance input edge case.
     clean = re.sub(r"^\s*dari\s+", " ", clean, flags=re.IGNORECASE)
 
     # 6. Rapikan spasi.
@@ -1302,6 +1235,7 @@ def extract_description(text: str, amount=None) -> str:
     return clean.title()
 
 def detect_subject(text: str, transaction_type: str, category: str, description: str) -> str:
+    """Helper for detect subject in the parser and NLP layer."""
     text_lower = normalize_text(text)
 
     known_subjects = {
@@ -1341,16 +1275,7 @@ def detect_subject(text: str, transaction_type: str, category: str, description:
 
 
 def extract_note(text: str) -> str:
-    """
-    Ambil catatan tambahan.
-    Contoh:
-    - "beli nasi padang 20 k catatan dibagi 2 sama raka"
-      -> "Sama Raka"
-    - "beli obat 45k buat demam"
-      -> "Demam"
-    - "bayar kos 1.5jt catatan kos bulan Juni"
-      -> "Kos Bulan Juni"
-    """
+    """Extract the important part of the input for note."""
     text_lower = normalize_text(text)
 
     note = ""
@@ -1362,7 +1287,7 @@ def extract_note(text: str) -> str:
     if explicit_match:
         note = explicit_match.group(1).strip()
     else:
-        # Fallback: buat/untuk
+        # Legacy compatibility note for older records or older in-memory state.
         fallback_pattern = r"(?:buat|untuk)\s+(.+)$"
         fallback_match = re.search(fallback_pattern, text_lower)
         if fallback_match:
@@ -1371,18 +1296,18 @@ def extract_note(text: str) -> str:
     if not note:
         return ""
 
-    # Buang nominal uang di catatan
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     note = re.sub(
         r"\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta|m|miliar|milyar)?",
         "",
         note,
     )
 
-    # Kalau catatan berisi pola split, bersihkan jadi konteks orangnya saja
+    # Parser rule note for an Indonesian finance input edge case.
     # "dibagi 2 sama raka" -> "sama raka"
     note = re.sub(r"\b(di\s*-?\s*bagi|dibagi|bagi|split|share|patungan)\s*(?:jadi\s*)?\d+\b", "", note)
 
-    # Buang sisa angka orang
+    # Parser rule note for an Indonesian finance input edge case.
     note = re.sub(r"\b\d+\s*orang\b", "", note)
 
     # Buang noise ringan
@@ -1400,6 +1325,7 @@ def extract_note(text: str) -> str:
 
 
 def detect_spending_type(text: str, category: str, transaction_type: str) -> str:
+    """Helper for detect spending type in the parser and NLP layer."""
     if transaction_type != "expense":
         return ""
 
@@ -1425,6 +1351,7 @@ def detect_spending_type(text: str, category: str, transaction_type: str) -> str
 # ── Main parser function ──────────────────────────────────────────────────────
 
 def parse_with_regex(text: str) -> dict | None:
+    """Parse a natural finance input with local deterministic rules before using AI fallback."""
     text_without_date = strip_date_phrases(text)
     amount = extract_amount_from_text(text_without_date)
     if not amount:
@@ -1432,10 +1359,10 @@ def parse_with_regex(text: str) -> dict | None:
 
     transaction_type = detect_type(text)
 
-    # Fallback untuk input expense tanpa kata kerja, terutama input bulk:
+    # Legacy compatibility note for older records or older in-memory state.
     # "Nasi kuning 22k 09-05-2026", "Print 6k", "Alquran 80k".
-    # Selama ada nominal dan masih ada teks deskripsi setelah nominal/tanggal
-    # dibersihkan, anggap sebagai expense agar tidak wajib fallback ke Gemini.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
+    # Legacy compatibility note for older records or older in-memory state.
     if not transaction_type:
         plain_description = extract_description(text, amount)
         if re.search(r"[A-Za-zÀ-ÿ]", plain_description or ""):

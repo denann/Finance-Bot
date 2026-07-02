@@ -1,18 +1,5 @@
-r"""
-Tester command AI untuk Personal Finance Telegram Bot.
+"""Local tester for parsers and bot commands without running Telegram."""
 
-Tujuan:
-- Testing parser dan flow command secara lokal, terpisah dari deployment.
-- Tidak kirim pesan Telegram.
-- Tidak menulis Google Sheets.
-- Bisa membaca file .txt berisi banyak case yang dipisah `---`.
-- Bisa membuat report Markdown agar gampang dibaca.
-
-Contoh PowerShell:
-  python scripts\ai_command_tester.py --input-file tests\input_Test.txt --decision unpaid --markdown report.md
-  python scripts\ai_command_tester.py --input "Nasi kuning 22k dibagi 2 sama sapto 09-05-2026" --decision unpaid --json
-  python scripts\ai_command_tester.py --sample --markdown report.md
-"""
 from __future__ import annotations
 
 import argparse
@@ -29,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# Biar print di Windows tidak crash karena emoji/UTF-8 dari dependency.
+# Test note for a project-specific regression case.
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -43,11 +30,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Environment lokal aman + stub import untuk dependency opsional
+# Local test environment note for optional external dependencies.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _ensure_test_env() -> None:
-    """Isi env dummy supaya import config tidak error saat testing lokal."""
+    """Ensure test env is ready before continuing."""
     defaults = {
         "TELEGRAM_BOT_TOKEN": "TEST_TOKEN",
         "TELEGRAM_WEBHOOK_SECRET": "TEST_SECRET",
@@ -62,27 +49,34 @@ def _ensure_test_env() -> None:
 
 
 class _Dummy:
+    """Dummy object used to replace optional external dependencies during lightweight local tests."""
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Helper for init in the utility script."""
         self.args = args
         self.kwargs = kwargs
         for key, value in kwargs.items():
             setattr(self, key, value)
 
     def __call__(self, *args: Any, **kwargs: Any) -> "_Dummy":
+        """Helper for call in the utility script."""
         return _Dummy(*args, **kwargs)
 
     def __iter__(self):
+        """Helper for iter in the utility script."""
         return iter([])
 
     def __bool__(self) -> bool:
+        """Helper for bool in the utility script."""
         return False
 
 
 class _DummyBadRequest(Exception):
+    """Dummy exception that mimics Telegram BadRequest when the real dependency is unavailable."""
     pass
 
 
 def _module_exists(module_name: str) -> bool:
+    """Helper for module exists in the utility script."""
     try:
         return importlib.util.find_spec(module_name) is not None
     except Exception:
@@ -90,10 +84,7 @@ def _module_exists(module_name: str) -> bool:
 
 
 def _install_optional_import_stubs() -> None:
-    """
-    Biar tester tetap bisa jalan di environment ringan yang belum install semua
-    dependency deployment. Stub hanya untuk import-time; fungsi write/deploy tidak dipakai.
-    """
+    """Helper for install optional import stubs in the utility script."""
     if not _module_exists("dotenv"):
         dotenv_mod = types.ModuleType("dotenv")
         dotenv_mod.load_dotenv = lambda *args, **kwargs: None
@@ -144,8 +135,10 @@ def _install_optional_import_stubs() -> None:
         service_account_mod = types.ModuleType("google.oauth2.service_account")
 
         class _Credentials:
+            """Google credential stub used so Sheets modules can be imported in local tests."""
             @classmethod
             def from_service_account_file(cls, *args: Any, **kwargs: Any) -> "_Credentials":
+                """Helper for from service account file in the utility script."""
                 return cls()
 
         service_account_mod.Credentials = _Credentials
@@ -160,7 +153,9 @@ def _install_optional_import_stubs() -> None:
         lc_messages_mod = types.ModuleType("langchain_core.messages")
 
         class HumanMessage:
+            """LangChain HumanMessage stub for test environments without full LangChain dependencies."""
             def __init__(self, content: Any):
+                """Helper for init in the utility script."""
                 self.content = content
 
         lc_messages_mod.HumanMessage = HumanMessage
@@ -171,10 +166,13 @@ def _install_optional_import_stubs() -> None:
         lc_google_mod = types.ModuleType("langchain_google_genai")
 
         class ChatGoogleGenerativeAI:
+            """Gemini chat model stub that prevents test runs from calling the real API."""
             def __init__(self, *args: Any, **kwargs: Any) -> None:
+                """Helper for init in the utility script."""
                 pass
 
             def invoke(self, *args: Any, **kwargs: Any) -> Any:
+                """Helper for invoke in the utility script."""
                 raise RuntimeError("LangChain Gemini belum terinstall di environment tester ini.")
 
         lc_google_mod.ChatGoogleGenerativeAI = ChatGoogleGenerativeAI
@@ -182,11 +180,12 @@ def _install_optional_import_stubs() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Model data inti untuk hasil testing
+# Regression test note for a previously fixed edge case.
 # ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class AssertionResult:
+    """Result model for one assertion in a command test case."""
     path: str
     expected: Any
     actual: Any
@@ -196,6 +195,7 @@ class AssertionResult:
 
 @dataclass
 class CommandRun:
+    """Result model for one simulated command or input run."""
     name: str
     input_text: str
     mode: str
@@ -220,11 +220,7 @@ KNOWN_SLASH_COMMANDS = {
 
 
 def classify_known_route(text: str) -> dict[str, Any] | None:
-    """
-    Simulasi routing Telegram/message_handler untuk command yang tidak seharusnya
-    masuk parser transaksi. Ini membuat tester tidak false-positive membaca `/bulanan 2026-06`
-    sebagai expense amount 2026.
-    """
+    """Helper for classify known route in the utility script."""
     raw = (text or "").strip()
     low = raw.lower()
     if not raw:
@@ -271,13 +267,16 @@ def classify_known_route(text: str) -> dict[str, Any] | None:
 
 
 class CommandTester:
+    """Main runner that loads test cases, executes parser/handler logic, and reports results."""
     def __init__(self) -> None:
+        """Helper for init in the utility script."""
         _ensure_test_env()
         _install_optional_import_stubs()
         self.import_warnings: list[str] = []
         self.handlers = self._import_handlers()
 
     def _import_handlers(self):
+        """Helper for import handlers in the utility script."""
         try:
             return importlib.import_module("app.bot.handlers")
         except Exception as first_error:
@@ -293,11 +292,12 @@ class CommandTester:
                 ) from second_error
 
     def run_command(self, input_text: str, *, name: str = "manual", decision: str | None = None) -> CommandRun:
+        """Run the command process."""
         h = self.handlers
         raw_text = (input_text or "").strip()
 
-        # Slash/natural command satu baris harus dites sebagai route command,
-        # bukan sebagai transaksi regex.
+        # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+        # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
         routed = classify_known_route(raw_text)
         if routed is not None and "\n" not in raw_text and ";" not in raw_text:
             return CommandRun(
@@ -427,6 +427,7 @@ class CommandTester:
         )
 
     def _summarize_decision(self, items: list[dict[str, Any]], decision: str) -> dict[str, Any]:
+        """Build a concise summary for the utility script."""
         split_items = []
         for idx, item in enumerate(items, 1):
             parsed = item.get("parsed", {}) or {}
@@ -445,9 +446,11 @@ class CommandTester:
         return {"decision": decision, "split_items": split_items}
 
     def _jsonable_item(self, item: dict[str, Any]) -> dict[str, Any]:
+        """Helper for jsonable item in the utility script."""
         return json.loads(json.dumps(item, ensure_ascii=False, default=str))
 
     def _jsonable_items(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Helper for jsonable items in the utility script."""
         return json.loads(json.dumps(items, ensure_ascii=False, default=str))
 
 
@@ -456,6 +459,7 @@ class CommandTester:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_path(data: Any, path: str) -> Any:
+    """Retrieve data needed for path."""
     current = data
     if not path:
         return current
@@ -473,6 +477,7 @@ def get_path(data: Any, path: str) -> Any:
 
 
 def compare_value(actual: Any, expected: Any) -> bool:
+    """Helper for compare value in the utility script."""
     if isinstance(expected, float) or isinstance(actual, float):
         try:
             return abs(float(actual) - float(expected)) < 1e-6
@@ -482,6 +487,7 @@ def compare_value(actual: Any, expected: Any) -> bool:
 
 
 def evaluate_expectations(run: CommandRun, expect: dict[str, Any] | None) -> list[AssertionResult]:
+    """Helper for evaluate expectations in the utility script."""
     results: list[AssertionResult] = []
     if not expect:
         return results
@@ -528,24 +534,26 @@ def evaluate_expectations(run: CommandRun, expect: dict[str, Any] | None) -> lis
 
 
 def _has_split_keyword(text: str) -> bool:
+    """Check a boolean condition for has split keyword."""
     return bool(re.search(r"\b(di\s*-?\s*bagi|dibagi|bagi|split|patungan)\b", text, flags=re.IGNORECASE))
 
 
 def _split_has_friend_name(text: str) -> bool:
+    """Helper for split has friend name in the utility script."""
     low = re.sub(r"\d{1,2}[-/]\d{1,2}[-/]\d{2,4}", " ", text.lower())
     if re.search(r"\bsama\s+[a-zA-Z][a-zA-Z\s,]+", low):
         return True
     m = re.search(r"\b(?:di\s*-?\s*bagi|dibagi|bagi|split|patungan)\s+(?:jadi\s+)?\d+\s+([a-zA-Z][a-zA-Z\s,]*)", low)
     if m:
         tail = m.group(1).strip()
-        # Hindari kata umum yang bukan nama.
+        # Split bill parsing note: separate the paid transaction from each person share.
         if tail and not re.fullmatch(r"(orang|org|x|kali|bagian)", tail):
             return True
     return False
 
 
 def evaluate_heuristics(run: CommandRun) -> list[AssertionResult]:
-    """Auto-check supaya file .txt tanpa expect tetap punya PASS/WARNING/FAIL yang bermakna."""
+    """Helper for evaluate heuristics in the utility script."""
     results: list[AssertionResult] = []
 
     if not run.items:
@@ -582,7 +590,7 @@ def evaluate_heuristics(run: CommandRun) -> list[AssertionResult]:
     elif any(str(item.get("raw", "")).strip().startswith("/") for item in run.items):
         results.append(AssertionResult("slash_command_route", "command route", "ok", "PASS"))
 
-    # Decimal koma Indonesia: 24,7k harus tetap satu item dan amount 24700.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     for item in run.items:
         raw = str(item.get("raw", ""))
         match = re.search(r"(\d+)\s*,\s*(\d+)\s*k\b", raw, flags=re.IGNORECASE)
@@ -599,7 +607,7 @@ def evaluate_heuristics(run: CommandRun) -> list[AssertionResult]:
             "Nominal koma seperti 24,7k harus dibaca 24700 dan tidak boleh pecah jadi 24 + 7k." if not ok else "",
         ))
 
-    # Jika input utuh punya desimal koma tetapi parts > 1 dan tidak ada item raw yang masih mengandung koma,
+    # Test note for a project-specific regression case.
     # kemungkinan split_user_inputs memecah koma decimal.
     if re.search(r"\d+\s*,\s*\d+\s*k\b", run.input_text, flags=re.IGNORECASE) and not any(
         re.search(r"\d+\s*,\s*\d+\s*k\b", str(item.get("raw", "")), flags=re.IGNORECASE) for item in run.items
@@ -612,9 +620,9 @@ def evaluate_heuristics(run: CommandRun) -> list[AssertionResult]:
             "Input decimal koma pecah saat split_user_inputs.",
         ))
 
-    # Incoming from person: "transfer/transaksi dari Annisa 55k" harus income biasa,
-    # bukan debt payment dan bukan expense/outcome. Kalau nominal belum ada,
-    # bot harus masuk flow tanya nominal.
+    # Test note for a project-specific regression case.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     own_accounts = {"cash", "bri", "bsi", "bca", "dana", "gopay", "seabank", "sea bank"}
     for idx, item in enumerate(run.items, 1):
         raw = str(item.get("raw", ""))
@@ -654,7 +662,7 @@ def evaluate_heuristics(run: CommandRun) -> list[AssertionResult]:
                     "Transfer/transaksi dari orang harus income biasa; kalau nominal belum ada, harus tanya nominal, bukan debt/outcome." if not ok else "",
                 ))
 
-    # Split bill: kalau ada nama teman, harus ada split_bill dan next_action harus tanya status.
+    # Split bill parsing note: separate the paid transaction from each person share.
     split_items = [item for item in run.items if _has_split_keyword(str(item.get("raw", "")))]
     for idx, item in enumerate(split_items, 1):
         raw = str(item.get("raw", ""))
@@ -697,6 +705,7 @@ def evaluate_heuristics(run: CommandRun) -> list[AssertionResult]:
 
 
 def case_status(assertions: list[AssertionResult]) -> str:
+    """Helper for case status in the utility script."""
     if any(a.status == "FAIL" for a in assertions):
         return "FAIL"
     if any(a.status == "WARNING" for a in assertions):
@@ -709,6 +718,7 @@ def case_status(assertions: list[AssertionResult]) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def deterministic_diagnosis(run: CommandRun, assertions: list[AssertionResult]) -> str:
+    """Helper for deterministic diagnosis in the utility script."""
     failed = [a for a in assertions if a.status == "FAIL"]
     warnings_ = [a for a in assertions if a.status == "WARNING"]
     if not failed and not warnings_:
@@ -737,6 +747,7 @@ def deterministic_diagnosis(run: CommandRun, assertions: list[AssertionResult]) 
 
 
 def ai_diagnosis(run: CommandRun, assertions: list[AssertionResult]) -> str:
+    """Helper for ai diagnosis in the utility script."""
     if not os.getenv("GEMINI_API_KEY"):
         return deterministic_diagnosis(run, assertions)
 
@@ -773,6 +784,7 @@ Berikan jawaban ringkas dalam Bahasa Indonesia dengan format:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def command_run_to_dict(run: CommandRun) -> dict[str, Any]:
+    """Helper for command run to dict in the utility script."""
     return {
         "name": run.name,
         "input_text": run.input_text,
@@ -788,7 +800,7 @@ def command_run_to_dict(run: CommandRun) -> dict[str, Any]:
 
 
 def resolve_input_path(path_text: str) -> Path:
-    """Dukung path Windows (`tests\\input_Test.txt`) maupun relatif root project."""
+    """Resolve the final value for input path from possible inputs."""
     raw = Path(path_text)
     candidates = [raw]
     if not raw.is_absolute():
@@ -801,6 +813,7 @@ def resolve_input_path(path_text: str) -> Path:
 
 
 def load_cases(path: Path) -> list[dict[str, Any]]:
+    """Load data for cases."""
     text = path.read_text(encoding="utf-8")
     data = json.loads(text)
     if isinstance(data, dict) and "cases" in data:
@@ -811,18 +824,12 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
 
 
 def load_text_cases(path: Path, *, decision: str | None = None) -> list[dict[str, Any]]:
-    """
-    Parsing input .txt untuk testing chat manual.
-
-    Format didukung:
-    - Teks biasa tanpa `---`: seluruh file dianggap satu input multi-line.
-    - Banyak case dipisah baris `---`: komentar `#` diabaikan dari input,
-      komentar pertama dalam block dipakai sebagai nama case.
-    """
+    """Load data for text cases."""
     text = path.read_text(encoding="utf-8-sig")
     raw_lines = text.splitlines()
 
     def is_sep(line: str) -> bool:
+        """Check a boolean condition for is sep."""
         return line.strip().strip("\ufeff") == "---"
 
     has_blocks = any(is_sep(line) for line in raw_lines)
@@ -834,6 +841,7 @@ def load_text_cases(path: Path, *, decision: str | None = None) -> list[dict[str
     current_name: str | None = None
 
     def flush() -> None:
+        """Helper for flush in the utility script."""
         nonlocal current_lines, current_name
         cleaned: list[str] = []
         for line in current_lines:
@@ -866,6 +874,7 @@ def load_text_cases(path: Path, *, decision: str | None = None) -> list[dict[str
 
 
 def default_sample_cases() -> list[dict[str, Any]]:
+    """Helper for default sample cases in the utility script."""
     return [
         {
             "name": "split bill single - dibagi",
@@ -935,6 +944,7 @@ def default_sample_cases() -> list[dict[str, Any]]:
 
 
 def write_sample(path: Path) -> None:
+    """Helper for write sample in the utility script."""
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"cases": default_sample_cases()}
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -942,12 +952,14 @@ def write_sample(path: Path) -> None:
 
 @dataclass
 class CaseResult:
+    """Summary model for one test case result."""
     run: CommandRun
     assertions: list[AssertionResult]
     diagnosis: str
 
 
 def run_one_case(tester: CommandTester, case: dict[str, Any], index: int, *, use_ai: bool) -> CaseResult:
+    """Run the one case process."""
     name = case.get("name") or f"case-{index}"
     input_text = case.get("input") or ""
     decision = case.get("decision")
@@ -958,6 +970,7 @@ def run_one_case(tester: CommandTester, case: dict[str, Any], index: int, *, use
 
 
 def print_case_report(result: CaseResult, *, show_json: bool, use_ai: bool) -> None:
+    """Helper for print case report in the utility script."""
     run = result.run
     assertions = result.assertions
     failed = [a for a in assertions if a.status == "FAIL"]
@@ -996,6 +1009,7 @@ def print_case_report(result: CaseResult, *, show_json: bool, use_ai: bool) -> N
 
 
 def make_markdown_report(results: list[CaseResult]) -> str:
+    """Helper for make markdown report in the utility script."""
     total = len(results)
     pass_count = sum(1 for r in results if case_status(r.assertions) == "PASS")
     warn_count = sum(1 for r in results if case_status(r.assertions) == "WARNING")
@@ -1077,6 +1091,7 @@ def make_markdown_report(results: list[CaseResult]) -> str:
 
 
 def run_cases(cases: list[dict[str, Any]], *, show_json: bool, use_ai: bool, markdown_path: Path | None = None) -> int:
+    """Run the cases process."""
     tester = CommandTester()
     results: list[CaseResult] = []
 
@@ -1109,6 +1124,7 @@ def run_cases(cases: list[dict[str, Any]], *, show_json: bool, use_ai: bool, mar
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse input into structured data for the utility script."""
     parser = argparse.ArgumentParser(description="AI/local command tester untuk finance bot.")
     src = parser.add_mutually_exclusive_group(required=False)
     src.add_argument("--input", help="Satu command/manual input untuk dites.")
@@ -1125,6 +1141,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    """Helper for main in the utility script."""
     args = parse_args()
 
     default_file = PROJECT_ROOT / "tests" / "command_cases.json"

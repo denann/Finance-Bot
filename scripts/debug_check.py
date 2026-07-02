@@ -1,3 +1,5 @@
+"""Developer diagnostic script for configuration, dependencies, Google Sheets access, Gemini, and project structure."""
+
 import os
 import sys
 import traceback
@@ -24,10 +26,12 @@ RESULTS = []
 
 
 def now_str():
+    """Helper for now str in the utility script."""
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def rupiah(amount):
+    """Helper for rupiah in the utility script."""
     try:
         return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
     except Exception:
@@ -35,6 +39,7 @@ def rupiah(amount):
 
 
 def add_result(area, name, status, expected, actual="", error=""):
+    """Helper for add result in the utility script."""
     RESULTS.append(
         {
             "area": area,
@@ -48,28 +53,34 @@ def add_result(area, name, status, expected, actual="", error=""):
 
 
 def ok(area, name, expected="OK", actual="OK"):
+    """Helper for ok in the utility script."""
     add_result(area, name, "PASS", expected, actual)
 
 
 def warn(area, name, expected="OK", actual="Warning", error=""):
+    """Helper for warn in the utility script."""
     add_result(area, name, "WARN", expected, actual, error)
 
 
 def fail(area, name, expected="OK", actual="Failed", error=""):
+    """Helper for fail in the utility script."""
     add_result(area, name, "FAIL", expected, actual, error)
 
 
 def skip(area, name, expected="Available", actual="Skipped", error=""):
+    """Helper for skip in the utility script."""
     add_result(area, name, "SKIP", expected, actual, error)
 
 
 def print_header(title):
+    """Helper for print header in the utility script."""
     print("\n" + "=" * 90)
     print(title)
     print("=" * 90)
 
 
 def print_summary():
+    """Helper for print summary in the utility script."""
     print_header("DEBUG SUMMARY")
 
     total = len(RESULTS)
@@ -112,6 +123,7 @@ def print_summary():
 
 
 def safe_run(area, name, expected, func):
+    """Helper for safe run in the utility script."""
     try:
         actual = func()
         ok(area, name, expected=expected, actual=actual)
@@ -128,6 +140,7 @@ def safe_run(area, name, expected, func):
 
 
 def import_module_safe(module_name, area="Import"):
+    """Helper for import module safe in the utility script."""
     try:
         module = importlib.import_module(module_name)
         ok(area, module_name, expected="Module import sukses", actual="Imported")
@@ -144,6 +157,7 @@ def import_module_safe(module_name, area="Import"):
 
 
 def has_function(module, func_name, area):
+    """Check a boolean condition for has function."""
     if module is None:
         skip(area, func_name, expected="Function tersedia", actual="Module tidak tersedia")
         return False
@@ -161,6 +175,7 @@ def has_function(module, func_name, area):
 # ── 1. Environment check ──────────────────────────────────────────────────────
 
 def check_environment():
+    """Helper for check environment in the utility script."""
     print_header("1. ENVIRONMENT CHECK")
 
     required_envs = [
@@ -188,6 +203,7 @@ def check_environment():
 # ── 2. Import check ───────────────────────────────────────────────────────────
 
 def check_imports():
+    """Helper for check imports in the utility script."""
     print_header("2. IMPORT CHECK")
 
     modules = {}
@@ -219,6 +235,7 @@ def check_imports():
 # ── 3. Config constants check ─────────────────────────────────────────────────
 
 def check_config(modules):
+    """Helper for check config in the utility script."""
     print_header("3. CONFIG CONSTANTS CHECK")
 
     config = modules.get("app.config")
@@ -255,6 +272,7 @@ def check_config(modules):
 # ── 4. Google Sheets read check ───────────────────────────────────────────────
 
 def check_google_sheets(modules):
+    """Helper for check google sheets in the utility script."""
     print_header("4. GOOGLE SHEETS CHECK")
 
     config = modules.get("app.config")
@@ -289,6 +307,7 @@ def check_google_sheets(modules):
             sheet_name = getattr(config, const_name)
 
             def read_sheet(sheet_name=sheet_name):
+                """Helper for read sheet in the utility script."""
                 records = sheets.get_all_records(sheet_name)
                 return f"{len(records)} row readable"
 
@@ -300,6 +319,7 @@ def check_google_sheets(modules):
 # ── 5. NLP parser check ───────────────────────────────────────────────────────
 
 def check_nlp(modules):
+    """Helper for check nlp in the utility script."""
     print_header("5. NLP PARSER CHECK")
 
     normalizer = modules.get("app.nlp.normalizer")
@@ -314,6 +334,7 @@ def check_nlp(modules):
 
         for text, expected_amount in samples:
             def run(text=text):
+                """Helper for run in the utility script."""
                 return normalizer.extract_amount_from_text(text)
 
             actual = safe_run("NLP", f"extract_amount_from_text('{text}')", f"{expected_amount}", run)
@@ -331,6 +352,7 @@ def check_nlp(modules):
 
         for text, expected_type in parser_samples:
             def run(text=text):
+                """Helper for run in the utility script."""
                 parsed = regex_parser.parse_with_regex(text)
                 if not parsed:
                     return "None"
@@ -352,6 +374,7 @@ def check_nlp(modules):
 
         for text in debt_samples:
             def run(text=text):
+                """Helper for run in the utility script."""
                 parsed = regex_parser.parse_debt_input(text)
                 if not parsed:
                     return "None"
@@ -365,6 +388,7 @@ def check_nlp(modules):
 # ── 6. Transaction service read-only check ────────────────────────────────────
 
 def check_transaction_service(modules):
+    """Helper for check transaction service in the utility script."""
     print_header("6. TRANSACTION SERVICE CHECK")
 
     tx = modules.get("app.services.transaction_service")
@@ -419,6 +443,7 @@ def check_transaction_service(modules):
 # ── 7. Report service check ───────────────────────────────────────────────────
 
 def check_report_service(modules):
+    """Helper for check report service in the utility script."""
     print_header("7. REPORT SERVICE CHECK")
 
     report = modules.get("app.services.report_service")
@@ -469,6 +494,7 @@ def check_report_service(modules):
 # ── 8. Budget service check ───────────────────────────────────────────────────
 
 def check_budget_service(modules):
+    """Helper for check budget service in the utility script."""
     print_header("8. BUDGET SERVICE CHECK")
 
     budget = modules.get("app.services.budget_service")
@@ -505,6 +531,7 @@ def check_budget_service(modules):
 # ── 9. Debt service check ─────────────────────────────────────────────────────
 
 def check_debt_service(modules):
+    """Helper for check debt service in the utility script."""
     print_header("9. DEBT SERVICE CHECK")
 
     debt = modules.get("app.services.debt_service")
@@ -539,6 +566,7 @@ def check_debt_service(modules):
 # ── 10. Recurring service check ───────────────────────────────────────────────
 
 def check_recurring_service(modules):
+    """Helper for check recurring service in the utility script."""
     print_header("10. RECURRING SERVICE CHECK")
 
     recurring = modules.get("app.services.recurring_service")
@@ -583,6 +611,7 @@ def check_recurring_service(modules):
 # ── 11. Net worth service check ───────────────────────────────────────────────
 
 def check_net_worth_service(modules):
+    """Helper for check net worth service in the utility script."""
     print_header("11. NET WORTH SERVICE CHECK")
 
     nw = modules.get("app.services.net_worth_service")
@@ -611,6 +640,7 @@ def check_net_worth_service(modules):
 
     if nw and hasattr(nw, "calculate_net_worth"):
         def run_networth():
+            """Run the networth process."""
             summary = nw.calculate_net_worth()
             return (
                 f"accounts={rupiah(summary.get('total_accounts'))}, "
@@ -645,6 +675,7 @@ def check_net_worth_service(modules):
 # ── 12. Bot handlers check ────────────────────────────────────────────────────
 
 def check_bot_handlers(modules):
+    """Helper for check bot handlers in the utility script."""
     print_header("12. BOT HANDLERS CHECK")
 
     handlers = modules.get("app.bot.handlers")
@@ -690,6 +721,7 @@ def check_bot_handlers(modules):
 # ── 13. Scheduler check ───────────────────────────────────────────────────────
 
 def check_scheduler(modules):
+    """Helper for check scheduler in the utility script."""
     print_header("13. SCHEDULER CHECK")
 
     jobs = modules.get("app.scheduler.jobs")
@@ -709,6 +741,7 @@ def check_scheduler(modules):
 
     if jobs and hasattr(jobs, "create_scheduler"):
         def run_scheduler_check():
+            """Run the scheduler check process."""
             scheduler = jobs.create_scheduler()
             job_ids = [job.id for job in scheduler.get_jobs()]
             try:
@@ -724,9 +757,10 @@ def check_scheduler(modules):
             run_scheduler_check,
         )
 
-# ── 14. Regression test command yang dulu bug ────────────────────────────────
+# ── Regression test section ───────────────────────────────────────────────
 
 def check_regression_commands(modules):
+    """Helper for check regression commands in the utility script."""
     print_header("14. REGRESSION TEST: COMMAND / NATURAL INPUT YANG DULU BUG")
 
     handlers = modules.get("app.bot.handlers")
@@ -734,9 +768,9 @@ def check_regression_commands(modules):
     tx = modules.get("app.services.transaction_service")
 
     # ── A. Static source order check ──────────────────────────────────────────
-    # Ini penting untuk bug:
-    # "cek hutang" dulu ketangkep parse_debt_input duluan,
-    # harusnya sekarang handle_local_natural_intent jalan sebelum parse_debt_input.
+    # Regression test note for a previously fixed edge case.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Test note for a project-specific regression case.
     if handlers and hasattr(handlers, "message_handler"):
         try:
             source = inspect.getsource(handlers.message_handler)
@@ -785,9 +819,9 @@ def check_regression_commands(modules):
     for helper_name in local_helper_names:
         has_function(handlers, helper_name, "Regression")
 
-    # ── C. maybe_text_is_command_typo tidak boleh nyamber multi-token ─────────
-    # Bug dulu:
-    # "cek hutang" -> dianggap Command /cek tidak tersedia.
+    # ── Implementation section ────────────────────────────────────────────────
+    # Regression test note for a previously fixed edge case.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
     if handlers and hasattr(handlers, "maybe_text_is_command_typo"):
         samples_should_return_none = [
             "cek hutang",
@@ -830,8 +864,8 @@ def check_regression_commands(modules):
                     error=f"{type(e).__name__}: {str(e)}",
                 )
 
-    # ── D. Typo pendek tetap harus ke-detect ──────────────────────────────────
-    # Ini memastikan fix multi-token tidak merusak typo resolver pendek.
+    # ── Implementation section ────────────────────────────────────────────────
+    # Command routing note: exact commands and aliases are checked before similarity-based typo handling.
     if handlers and hasattr(handlers, "maybe_text_is_command_typo"):
         samples_should_suggest = [
             "minguan",
@@ -868,10 +902,10 @@ def check_regression_commands(modules):
                     error=f"{type(e).__name__}: {str(e)}",
                 )
 
-    # ── E. parse_debt_input: command 'cek hutang' tidak ideal kalau dianggap debt
-    # Catatan:
-    # Kalau parse_debt_input('cek hutang') masih return dict, tidak masalah ASALKAN
-    # message_handler sudah menjalankan local natural intent sebelum debt parser.
+    # ── Debt and receivable flow ───────────────────────────────────────────────
+    # Note:
+    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Natural intent routing must run before debt parsing to prevent command-like text from being treated as debt.
     if regex_parser and hasattr(regex_parser, "parse_debt_input"):
         text = "cek hutang"
 
@@ -904,8 +938,8 @@ def check_regression_commands(modules):
             )
 
     # ── F. Local edit natural parser ──────────────────────────────────────────
-    # Bug dulu:
-    # "edit transaksi nomor 3 deskripsinya Kopi susu" -> Field description tidak dikenali.
+    # Regression test note for a previously fixed edge case.
+    # Test note for a project-specific regression case.
     if handlers and hasattr(handlers, "parse_local_edit_intent"):
         edit_samples = [
             (
@@ -986,9 +1020,9 @@ def check_regression_commands(modules):
             actual="Missing",
         )
 
-    # ── G. transaction_service harus menerima field description ───────────────
-    # Bug dulu:
-    # Field description tidak dikenali.
+    # ── Implementation section ────────────────────────────────────────────────
+    # Regression test note for a previously fixed edge case.
+    # Test note for a project-specific regression case.
     if tx and hasattr(tx, "normalize_edit_field"):
         field_samples = [
             ("description", "description"),
@@ -1035,8 +1069,8 @@ def check_regression_commands(modules):
             actual="Missing",
         )
 
-    # ── H. Sanity check router intent Gemini ──────────────────────────────────
-    # Ini tidak memanggil Gemini API. Cuma cek trigger-nya.
+    # ── Implementation section ────────────────────────────────────────────────
+    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
     router = modules.get("app.nlp.gemini_intent_router")
 
     if router and hasattr(router, "should_try_gemini_intent_router"):
@@ -1091,9 +1125,9 @@ def check_regression_commands(modules):
             actual="Missing",
         )
 
-    # ── I. Markdown safety check untuk /last ──────────────────────────────────
-    # Bug dulu:
-    # /last error Can't parse entities karena data transaksi dinamis ada underscore/dll.
+    # ── Latest transaction history flow ───────────────────────────────────────
+    # Regression test note for a previously fixed edge case.
+    # Test note for a project-specific regression case.
     if handlers and hasattr(handlers, "build_last_transactions_text"):
         unsafe_txns = [
             {
@@ -1152,7 +1186,7 @@ def check_regression_commands(modules):
             actual="Missing",
         )
 
-    # ── J. Ketersediaan handler untuk semua command besar ─────────────
+    # ── Implementation section ────────────────────────────────────────────────
     command_expectations = [
         ("/start", "start_handler"),
         ("/help", "help_handler"),
@@ -1208,6 +1242,7 @@ def check_regression_commands(modules):
 # ── Main runner ───────────────────────────────────────────────────────────────
 
 def main():
+    """Helper for main in the utility script."""
     print_header("FINANCE BOT DEBUG CHECK")
     print(f"Project root: {PROJECT_ROOT}")
     print("Mode        : READ ONLY")

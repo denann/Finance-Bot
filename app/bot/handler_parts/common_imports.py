@@ -1,9 +1,5 @@
-"""Import bersama untuk modul handler Telegram yang sudah dipisah.
+"""Shared handler utilities for formatting messages, reports, health checks, and common imports."""
 
-Setiap handler part mengimpor modul ini dengan ``from ...common_imports import *``
-agar blok import panjang tidak perlu disalin berulang, tetapi dependency tetap
-terlihat jelas di satu tempat.
-"""
 
 import re
 import ast
@@ -154,8 +150,8 @@ from app.services.pending_expense_service import (
 )
 
 # ── Cross-part shared helpers ────────────────────────────────────────────────
-# Konstanta ini ditaruh di common_imports agar modul handler yang sudah dipisah
-# tetap bisa di-import normal tanpa bergantung pada global variable di handlers.py.
+# Implementation note for this project-specific finance flow.
+# Implementation note for this project-specific finance flow.
 
 TELEGRAM_SAFE_MESSAGE_LIMIT = 3800
 GEMINI_INTENT_CONFIDENCE_EXECUTE = 0.80
@@ -163,13 +159,7 @@ GEMINI_INTENT_CONFIDENCE_CLARIFY = 0.60
 
 
 def format_rupiah(amount: float) -> str:
-    """Formatkan rupiah, termasuk nominal pecahan dari split bill.
-
-    Contoh:
-    - 71387    -> Rp71.387
-    - 71387.5  -> Rp71.387,5
-    - "71387,5" -> Rp71.387,5
-    """
+    """Format rupiah into readable text."""
     raw_amount = amount
     if isinstance(raw_amount, str):
         raw = raw_amount.strip().replace("Rp", "").replace("rp", "").replace(" ", "")
@@ -191,6 +181,7 @@ def format_rupiah(amount: float) -> str:
 
 
 def short_debt_id(debt_id: str) -> str:
+    """Helper for short debt id in the Telegram bot flow."""
     debt_id = str(debt_id or "")
     if len(debt_id) <= 18:
         return debt_id
@@ -198,20 +189,17 @@ def short_debt_id(debt_id: str) -> str:
 
 
 def md_safe(value) -> str:
+    """Helper for md safe in the Telegram bot flow."""
     return escape_markdown(str(value or "-"), version=1)
 
 
 def md_code_text(value) -> str:
-    """Text aman untuk ditaruh di dalam inline code Markdown Telegram.
-
-    Jangan pakai md_safe() di dalam backtick karena underscore akan menjadi \\_
-    dan Telegram menampilkannya literal di code span. Transaction ID memakai
-    underscore, jadi cukup amankan backtick saja.
-    """
+    """Helper for md code text in the Telegram bot flow."""
     return str(value or "-").replace("`", "'")
 
 
 def short_txn_id(txn_id: str) -> str:
+    """Helper for short txn id in the Telegram bot flow."""
     txn_id = str(txn_id or "")
     if len(txn_id) <= 18:
         return txn_id
@@ -221,10 +209,7 @@ def short_txn_id(txn_id: str) -> str:
 
 
 def format_indonesian_date_group_label(date_value) -> str:
-    """Formatkan heading grup tanggal: 🗓️ Senin, 30 Juni 2026:.
-
-    Fallback tetap rapi untuk nilai kosong/invalid.
-    """
+    """Format indonesian date group label into readable text."""
     raw = str(date_value or "").strip()
     if not raw or raw.lower() in {"-", "none", "nan", "tanpa tanggal"}:
         return "🗓️ Tanpa tanggal:"
@@ -246,6 +231,7 @@ def format_indonesian_date_group_label(date_value) -> str:
 
 
 def _safe_float_for_display(value, default: float = 0.0) -> float:
+    """Helper for safe float for display in the Telegram bot flow."""
     try:
         if isinstance(value, str):
             raw = value.strip().replace("Rp", "").replace("rp", "").replace(" ", "")
@@ -265,7 +251,7 @@ def _safe_float_for_display(value, default: float = 0.0) -> float:
 
 
 def get_transaction_receivable_parts(txn: dict) -> list[dict]:
-    """Ambil rincian piutang aktif per orang dari transaksi enriched."""
+    """Retrieve data needed for transaction receivable parts."""
     parts = (txn or {}).get("debt_receivable_parts") or []
     if parts:
         return [
@@ -277,7 +263,7 @@ def get_transaction_receivable_parts(txn: dict) -> list[dict]:
             if _safe_float_for_display((part or {}).get("remaining_amount", 0)) > 0
         ]
 
-    # Fallback untuk data lama yang hanya punya linked_debts / aggregate.
+    # Legacy compatibility note for older records or older in-memory state.
     receivable_by_person = {}
     for debt in (txn or {}).get("linked_debts") or []:
         debt_type = str((debt or {}).get("type", "") or "").strip().lower()
@@ -307,7 +293,7 @@ def get_transaction_receivable_parts(txn: dict) -> list[dict]:
 
 
 def get_transaction_payable_parts(txn: dict) -> list[dict]:
-    """Ambil rincian utang aktif per orang dari transaksi enriched."""
+    """Retrieve data needed for transaction payable parts."""
     parts = (txn or {}).get("debt_payable_parts") or []
     if parts:
         return [
@@ -336,12 +322,7 @@ def get_transaction_payable_parts(txn: dict) -> list[dict]:
 
 
 def get_net_expense_after_receivable(txn: dict) -> float:
-    """Gross expense dikurangi piutang split bill terkait.
-
-    Gunakan original_amount debt, bukan remaining_amount, supaya transaksi tetap
-    tampil Net (Gross) walaupun piutangnya sudah dibayar/settled. Jika debt
-    di-void, report_service tidak lagi menempelkan debt tersebut.
-    """
+    """Retrieve data needed for net expense after receivable."""
     amount = _safe_float_for_display((txn or {}).get("amount", 0))
     receivable = _safe_float_for_display(
         (txn or {}).get("debt_receivable_original", (txn or {}).get("debt_receivable_remaining", 0))
@@ -350,7 +331,7 @@ def get_net_expense_after_receivable(txn: dict) -> float:
 
 
 def build_debt_parts_text(parts: list[dict]) -> str:
-    """Format: Rp8.000 (Raka), Rp8.000 (Bagas)."""
+    """Build the data structure or message text for debt parts text."""
     chunks = []
     for part in parts or []:
         person = md_safe((part or {}).get("person_name") or "Tanpa nama")
@@ -362,7 +343,7 @@ def build_debt_parts_text(parts: list[dict]) -> str:
 
 
 def has_expense_transactions(transactions: list[dict] | None) -> bool:
-    """Cek apakah daftar transaksi memiliki minimal satu expense."""
+    """Check a boolean condition for has expense transactions."""
     return any(
         str((txn or {}).get("type", "") or "").strip().lower() == "expense"
         for txn in (transactions or [])
@@ -370,7 +351,7 @@ def has_expense_transactions(transactions: list[dict] | None) -> bool:
 
 
 def has_net_gross_difference(transactions: list[dict] | None) -> bool:
-    """Cek apakah ada expense yang net-nya berbeda dari gross karena piutang aktif."""
+    """Check a boolean condition for has net gross difference."""
     for txn in transactions or []:
         txn_type = str((txn or {}).get("type", "") or "").strip().lower()
         if txn_type != "expense":
@@ -383,14 +364,14 @@ def has_net_gross_difference(transactions: list[dict] | None) -> bool:
 
 
 def append_net_gross_note(lines: list[str], transactions: list[dict] | None = None, *, force: bool = False):
-    """Tambahkan catatan Net (Gross) di awal output yang menampilkan nominal expense."""
+    """Append data or text to net gross note."""
     if not force and not has_expense_transactions(transactions):
         return
     lines.append("ℹ️ Catatan: nominal pengeluaran ditampilkan sebagai *Net (Gross)* jika ada piutang split bill terkait.\n")
 
 
 def format_expense_net_gross(net_amount: float, gross_amount: float, *, always_show_gross: bool = False) -> str:
-    """Formatkan nominal expense: Net (Gross)."""
+    """Format expense net gross into readable text."""
     net = _safe_float_for_display(net_amount)
     gross = _safe_float_for_display(gross_amount)
     if always_show_gross or abs(net - gross) > 0.0001:
@@ -399,6 +380,7 @@ def format_expense_net_gross(net_amount: float, gross_amount: float, *, always_s
 
 
 def get_transaction_account_text(txn: dict) -> str:
+    """Retrieve data needed for transaction account text."""
     txn_type = str((txn or {}).get("type", "") or "").strip().lower()
     source_account = str((txn or {}).get("account", "") or "").strip()
     target_account = str((txn or {}).get("to_account", "") or "").strip()
@@ -416,7 +398,7 @@ def build_transaction_display_lines(
     contribution_pct: float | None = None,
     note: str | None = None,
 ) -> list[str]:
-    """Renderer transaksi ringkas yang konsisten untuk report, rekening, dan list transaksi."""
+    """Build the data structure or message text for transaction display lines."""
     txn = txn or {}
     txn_type = str(txn.get("type", "") or "").strip().lower()
     amount = _safe_float_for_display(txn.get("amount", 0))
@@ -482,11 +464,7 @@ def build_transactions_full_text_shared(
     *,
     current_balance: float | None = None,
 ) -> str:
-    """Render daftar transaksi lengkap + ringkasan periode.
-
-    Dipakai bersama oleh `/transaksi ...` dan `/rekening <nama>` agar
-    kedua command tidak punya format laporan rekening yang saling tabrakan.
-    """
+    """Build the data structure or message text for transactions full text shared."""
     transactions = enrich_transactions_with_debt_info(transactions or [])
     lines = [f"🧾 *{md_safe(title)}*\n"]
     append_net_gross_note(lines, transactions)
@@ -575,12 +553,14 @@ def build_transactions_full_text_shared(
 
 
 def is_authorized(update: Update) -> bool:
+    """Check a boolean condition for is authorized."""
     if not update.effective_user:
         return False
     return update.effective_user.id == ALLOWED_USER_ID
 
 
 async def reject_unauthorized(update: Update):
+    """Helper for reject unauthorized in the Telegram bot flow."""
     user_id = update.effective_user.id if update.effective_user else "unknown"
     message = (
         "⛔ Anda tidak punya akses ke bot ini.\n\n"
@@ -604,6 +584,7 @@ async def reject_unauthorized(update: Update):
 
 
 def split_long_message(text: str, max_len: int = TELEGRAM_SAFE_MESSAGE_LIMIT) -> list[str]:
+    """Helper for split long message in the Telegram bot flow."""
     text = str(text or "").strip()
     if not text:
         return [""]
@@ -656,6 +637,7 @@ def split_long_message(text: str, max_len: int = TELEGRAM_SAFE_MESSAGE_LIMIT) ->
 
 
 async def reply_long_markdown(update: Update, text: str):
+    """Send a Telegram response for reply long markdown."""
     for part in split_long_message(text):
         try:
             await update.message.reply_text(part, parse_mode="Markdown")
@@ -664,6 +646,7 @@ async def reply_long_markdown(update: Update, text: str):
 
 
 async def reply_message_safely(message, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
+    """Send a Telegram response for reply message safely."""
     text = str(text or "").strip() or " "
     chunks = split_long_message(text)
     for idx, chunk in enumerate(chunks):
@@ -675,11 +658,13 @@ async def reply_message_safely(message, text: str, parse_mode: str | None = None
 
 
 async def reply_update_safely(update: Update, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
+    """Send a Telegram response for reply update safely."""
     if update.message:
         await reply_message_safely(update.message, text, parse_mode=parse_mode, reply_markup=reply_markup, **kwargs)
 
 
 async def safe_edit_message(query, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
+    """Helper for safe edit message in the Telegram bot flow."""
     text = str(text or "").strip() or " "
     chunks = split_long_message(text)
     first = chunks[0]
@@ -690,6 +675,7 @@ async def safe_edit_message(query, text: str, parse_mode: str | None = None, rep
         first = first[:max_first_len].rstrip() + suffix
 
     async def _edit(payload: str, mode: str | None, markup):
+        """Helper for edit in the Telegram bot flow."""
         return await query.message.edit_text(
             payload,
             parse_mode=mode,
@@ -723,6 +709,7 @@ async def safe_edit_message(query, text: str, parse_mode: str | None = None, rep
 
 
 async def show_callback_loading(query, text: str = "⏳ *Memproses pilihan...*"):
+    """Handle Telegram inline-button callbacks for the Telegram bot flow."""
     try:
         await safe_edit_message(query, text, parse_mode="Markdown")
     except Exception:
@@ -730,12 +717,14 @@ async def show_callback_loading(query, text: str = "⏳ *Memproses pilihan...*")
 
 
 def build_progress_bar(pct: float, length: int = 10) -> str:
+    """Build the data structure or message text for progress bar."""
     filled = int(min(float(pct or 0), 100) / 100 * length)
     empty = length - filled
     return f"[{'█' * filled}{'░' * empty}]"
 
 
 def _parse_human_amount_atom(value: str | None) -> float:
+    """Parse input into structured data for the Telegram bot flow."""
     raw = str(value or "").strip().lower()
     if not raw:
         return 0.0
@@ -761,6 +750,7 @@ def _parse_human_amount_atom(value: str | None) -> float:
 
 
 def _safe_eval_amount_expression(expr: str) -> float:
+    """Helper for safe eval amount expression in the Telegram bot flow."""
     allowed_ops = {
         ast.Add: operator.add,
         ast.Sub: operator.sub,
@@ -771,6 +761,7 @@ def _safe_eval_amount_expression(expr: str) -> float:
     }
 
     def _eval(node):
+        """Helper for eval in the Telegram bot flow."""
         if isinstance(node, ast.Expression):
             return _eval(node.body)
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
@@ -791,6 +782,7 @@ def _safe_eval_amount_expression(expr: str) -> float:
 
 
 def parse_human_amount(value: str | None) -> float:
+    """Parse input into structured data for the Telegram bot flow."""
     raw = str(value or "").strip().lower()
     if not raw:
         return 0.0
@@ -803,6 +795,7 @@ def parse_human_amount(value: str | None) -> float:
         token_pattern = re.compile(r"\d+(?:[.,]\d+)?\s*(?:jt|juta|rb|ribu|k)?", re.IGNORECASE)
 
         def repl(match: re.Match) -> str:
+            """Helper for repl in the Telegram bot flow."""
             return str(_parse_human_amount_atom(match.group(0)))
 
         expr = token_pattern.sub(repl, raw)
@@ -820,6 +813,7 @@ def parse_human_amount(value: str | None) -> float:
 
 
 def parse_amount_text(value: str) -> float:
+    """Parse input into structured data for the Telegram bot flow."""
     raw = str(value or "").strip().lower().replace(" ", "").replace(",", ".")
     if not raw:
         return 0
@@ -833,7 +827,7 @@ def parse_amount_text(value: str) -> float:
 
     try:
         if unit in {"rb", "ribu", "k"}:
-            # 331.063k = 331.063 rupiah, bukan 331.063.000.
+            # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
             if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", raw):
                 return float(raw.replace(".", ""))
             return float(raw) * 1_000
@@ -848,6 +842,7 @@ def parse_amount_text(value: str) -> float:
         return 0
     
 def extract_split_bill_total_amount(raw_text: str) -> float | None:
+    """Extract the important part of the input for split bill total amount."""
     text = str(raw_text or "").strip()
     amount_token = r"(?P<amount>\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta|m)?)"
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"

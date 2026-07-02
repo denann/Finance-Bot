@@ -1,65 +1,42 @@
-# 08. Setup, Debugging, dan Deployment
+# 08. Setup, Debugging, and Deployment
 
-Dokumentasi ini menjelaskan script operasional dan cara debugging.
+This file explains the operational scripts and deployment path.
 
 ## Setup check
 
-File:
-
-```text
-scripts/setup_check.py
-```
-
-Command:
+Run:
 
 ```bash
 python scripts/setup_check.py
 ```
 
-Script ini cocok untuk user GitHub karena output-nya lebih ramah dibanding traceback Python.
+This script is built for new users. It checks whether the basic environment is ready before running the bot.
 
-Yang dicek:
+It validates:
 
-- file `.env` ada atau tidak,
-- env wajib sudah terisi,
-- `ALLOWED_USER_ID` berupa angka,
-- `service_account.json` ada,
-- package utama bisa di-import,
-- Google Sheets bisa diakses,
-- schema Google Sheets bisa disiapkan otomatis.
-
-Contoh hasil yang diharapkan:
-
-```text
-✅ .env ditemukan
-✅ TELEGRAM_BOT_TOKEN tersedia
-✅ GOOGLE_SHEET_ID tersedia
-✅ service_account.json ditemukan
-✅ Google Sheets bisa diakses
-```
+- `.env` file,
+- required environment variables,
+- `ALLOWED_USER_ID`,
+- service account JSON file,
+- required Python packages,
+- Google Sheets connection,
+- Google Sheets schema.
 
 ## Debug check
 
-File:
-
-```text
-scripts/debug_check.py
-```
-
-Command:
+Run:
 
 ```bash
 python scripts/debug_check.py
 ```
 
-Script ini lebih lengkap dan cocok untuk developer.
+This is deeper than setup check. It is useful for development and troubleshooting.
 
-Yang dicek:
+It checks:
 
-- environment,
-- import module,
-- config,
-- Google Sheets,
+- configuration,
+- module imports,
+- Google Sheets access,
 - NLP parser,
 - transaction service,
 - report service,
@@ -67,35 +44,28 @@ Yang dicek:
 - debt service,
 - recurring service,
 - net worth service,
-- bot handler,
-- scheduler,
-- regression command.
+- bot handlers,
+- scheduler.
 
 ## Local run
 
-Default mode:
+Default runtime:
 
 ```env
 BOT_MODE=polling
 ```
 
-Command:
+Run:
 
 ```bash
 python main.py
 ```
 
-Bot akan aktif selama terminal/proses Python tetap hidup.
+The bot is active while the Python process is alive.
 
-## Wispbyte polling 24/7
+## Wispbyte polling deployment
 
-Wispbyte bisa dipakai untuk menjalankan polling mode 24/7.
-
-Start command:
-
-```bash
-python main.py
-```
+For simple 24/7 deployment, keep polling mode.
 
 Install command:
 
@@ -103,56 +73,22 @@ Install command:
 pip install -r requirements.txt
 ```
 
-Kunci penting:
+Start command:
 
-- tetap pakai `BOT_MODE=polling`,
-- tidak perlu webhook URL,
-- tidak perlu FastAPI config,
-- proses Python harus tetap hidup,
-- jangan jalankan bot token yang sama di laptop dan Wispbyte bersamaan.
-
-## Deployment via GitHub
-
-Alur:
-
-```text
-push ke GitHub
-→ Wispbyte pull repository
-→ install dependencies
-→ run python main.py
+```bash
+python main.py
 ```
 
-Kelebihan:
+Important notes:
 
-- update lebih rapi,
-- tinggal push commit,
-- cocok untuk project portfolio.
+- Keep `BOT_MODE=polling`.
+- Do not run the same bot token on your laptop and Wispbyte at the same time.
+- Keep credentials private.
+- Share the Google Sheets file with the service account email.
 
-## Deployment upload manual
+## Webhook deployment
 
-Alur:
-
-```text
-zip/folder project
-→ upload/import ke Wispbyte
-→ install dependencies
-→ run python main.py
-```
-
-Kelebihan:
-
-- cepat untuk coba awal,
-- tidak perlu setup GitHub dulu.
-
-Kekurangan:
-
-- setiap update perlu upload ulang.
-
-## FastAPI webhook mode
-
-Webhook mode tetap tersedia sebagai advanced option.
-
-Env:
+Webhook mode is optional and more advanced.
 
 ```env
 BOT_MODE=webhook
@@ -161,60 +97,18 @@ TELEGRAM_WEBHOOK_SECRET=your_secret
 APP_PORT=8000
 ```
 
-Command:
+Run:
 
 ```bash
 BOT_MODE=webhook python main.py
 ```
 
-Atau:
+## Troubleshooting
 
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-## Troubleshooting cepat
-
-### Bot tidak merespons
-
-Cek:
-
-- `python main.py` masih berjalan,
-- `TELEGRAM_BOT_TOKEN` benar,
-- `ALLOWED_USER_ID` sesuai user Telegram kamu,
-- tidak ada proses lain memakai token bot yang sama,
-- jika pernah webhook, pastikan polling menghapus webhook lama.
-
-### Google Sheets error
-
-Cek:
-
-- `GOOGLE_SHEET_ID` benar,
-- file `service_account.json` ada,
-- Google Sheets sudah di-share ke `client_email`,
-- akses service account adalah Editor.
-
-### Gemini error
-
-Cek:
-
-- `GEMINI_API_KEY` benar,
-- model Gemini tersedia,
-- env model tidak typo.
-
-### Callback tombol error
-
-Cek:
-
-- log terminal,
-- `callback_handler.py`,
-- apakah context user_data masih lengkap,
-- apakah callback data cocok dengan branch handler.
-
-### Data setengah tersimpan
-
-Cek:
-
-- apakah handler sudah dibungkus `atomic_bot_handler`,
-- apakah write dilakukan via `app/sheets/client.py`,
-- apakah ada write langsung ke gspread tanpa transaction wrapper.
+| Problem | What to Check |
+|---|---|
+| Bot does not respond | Token, allowed user ID, running process, duplicate deployment |
+| Google Sheets error | Sheet ID, service account file, sheet sharing access |
+| Schema mismatch | Tab name and header order |
+| Gemini error | API key and model name |
+| Callback issue | `callback_handler.py` and user state in `context.user_data` |

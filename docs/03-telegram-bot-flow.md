@@ -1,8 +1,8 @@
 # 03. Telegram Bot Flow
 
-Layer Telegram berada di folder `app/bot/`.
+Telegram logic lives in `app/bot/`.
 
-File terpenting:
+The most important files are:
 
 ```text
 app/bot/application.py
@@ -10,17 +10,13 @@ app/bot/handlers.py
 app/bot/handler_parts/
 ```
 
-## Kenapa ada `application.py`?
+## Why `application.py` exists
 
-`application.py` dibuat agar proses register handler tidak ditulis ulang untuk polling dan webhook.
+`application.py` builds the Telegram Application and registers every handler in one place.
 
-Fungsi utamanya:
+This matters because polling mode and webhook mode should not have different handler behavior. Both modes use the same `build_telegram_app()` function.
 
-```python
-build_telegram_app()
-```
-
-Alurnya:
+High-level flow:
 
 ```text
 build_telegram_app()
@@ -30,129 +26,57 @@ build_telegram_app()
 → return telegram_app
 ```
 
-Dengan pola ini, runtime polling dan webhook memakai Telegram Application yang sama.
+## Atomic handler wrapper
 
-## Atomic wrapper untuk setiap handler
+Handlers are wrapped with `atomic_bot_handler()`.
 
-Di `application.py`, setiap command/message handler dibungkus oleh:
+The idea is practical: one Telegram input can trigger more than one Google Sheets write. For example, a split bill can save a transaction, create debt records, and update account balance. If one write fails, the wrapper allows the Sheets layer to attempt rollback.
 
-```python
-atomic_bot_handler(callback)
-```
+## Commands
 
-Tujuannya:
+Main command handlers include:
+
+| Command | Purpose |
+|---|---|
+| `/start` | Show welcome message |
+| `/help` | Show help |
+| `/examples`, `/contoh` | Show input examples |
+| `/saldo` | Show account balances |
+| `/transaksi` | Show transaction list |
+| `/budget` | Show budget status |
+| `/hutang` | Show debt summary |
+| `/pending` | Show pending expenses |
+| `/assets` | Show active assets |
+| `/networth` | Show net worth summary |
+| `/ask` | Ask a data-based finance question |
+| `/audit` | Audit data quality and anomalies |
+| `/coach` | Get finance coaching based on data |
+
+## Message handlers
+
+Message handlers are registered in this order:
 
 ```text
-setiap handler Telegram
-→ masuk context sheets_transaction(...)
-→ semua write Google Sheets bisa rollback kalau ada error
+unknown command handler
+→ image handler
+→ text message handler
 ```
 
-Ini penting karena satu input user bisa menyebabkan beberapa write sekaligus, misalnya:
-
-- transaksi expense tersimpan
-- saldo account berubah
-- debt baru dibuat
-- relasi hutang_id ditulis ke transaction
-
-Jika salah satu gagal, sistem berusaha rollback agar data tidak setengah tersimpan.
-
-## Register command
-
-`register_handlers()` memakai helper internal:
-
-```python
-def add_command(command_name: str, callback):
-    telegram_app.add_handler(CommandHandler(command_name, atomic_bot_handler(callback)))
-```
-
-Contoh command yang didaftarkan:
-
-| Command | Handler | Fungsi |
-|---|---|---|
-| `/start` | `start_handler` | Pesan awal |
-| `/help` | `help_handler` | Bantuan command |
-| `/examples`, `/contoh` | `examples_handler` | Contoh input bot |
-| `/saldo` | `saldo_handler` | Lihat saldo rekening |
-| `/transaksi` | `transaksi_handler` | Lihat transaksi |
-| `/budget` | `budget_handler` | Lihat budget |
-| `/hutang` | `hutang_handler` | Lihat ringkasan hutang/piutang |
-| `/ask` | `ask_handler` | Tanya jawab finance berbasis data |
-| `/audit` | `audit_handler` | Audit data quality dan anomali |
-| `/coach` | `coach_handler` | Saran finance personal |
-
-## Register message handler
-
-Selain command eksplisit, bot juga menerima pesan bebas.
-
-Urutan message handler penting:
-
-```python
-add_message(filters.COMMAND, unknown_command_handler)
-add_message(filters.PHOTO | filters.Document.IMAGE, image_handler)
-add_message(filters.TEXT & ~filters.COMMAND, message_handler)
-```
-
-Artinya:
-
-1. Command yang tidak dikenal masuk ke typo/suggestion handler.
-2. Foto atau dokumen gambar masuk ke image parser.
-3. Teks biasa masuk ke natural language transaction flow.
+This order matters. Commands are handled differently from free text, images are routed to image parsing, and natural-language transaction inputs go to `message_handler()`.
 
 ## Callback handler
 
-Semua tombol inline Telegram masuk ke:
+Inline buttons are handled by `callback_handler.py`.
 
-```python
-CallbackQueryHandler(atomic_bot_handler(callback_handler))
-```
+Examples:
 
-`callback_handler.py` menangani callback seperti:
-
-- pilih rekening
-- edit dulu
-- lanjut
-- simpan
-- batal
+- `Edit dulu`
+- `Lanjut`
+- `Simpan`
+- `Batal`
+- account selection
 - split bill decision
-- debt payment decision
-- parse clarification choice
-- recurring action
-- asset confirmation
+- debt decision
+- clarification choice
 
-## Handler facade: `app/bot/handlers.py`
-
-`handlers.py` bukan tempat logic utama. File ini hanya re-export dari modul kecil:
-
-```python
-from app.bot.handler_parts.core import *
-from app.bot.handler_parts.networth_assets import *
-from app.bot.handler_parts.health_recurring_export import *
-from app.bot.handler_parts.command_router import *
-from app.bot.handler_parts.transaction_flow import *
-from app.bot.handler_parts.command_handlers import *
-from app.bot.handler_parts.message_handlers import *
-from app.bot.handler_parts.callback_handler import *
-```
-
-Tujuannya menjaga kompatibilitas import lama:
-
-```python
-from app.bot.handlers import saldo_handler, message_handler, callback_handler
-```
-
-Namun logic sebenarnya ada di `app/bot/handler_parts/`.
-
-## File dalam `handler_parts`
-
-| File | Tanggung jawab |
-|---|---|
-| `core.py` | Reply aman, split long message, error handler |
-| `common_imports.py` | Helper shared: format rupiah, markdown safe, transaction display |
-| `command_handlers.py` | Command utama dan AI finance commands |
-| `command_router.py` | Typo resolver, natural command routing, delete/edit refs |
-| `message_handlers.py` | Input teks bebas, gambar, Gemini intent fallback |
-| `transaction_flow.py` | Preview, edit dulu, mixed transaction, parse safety UI |
-| `callback_handler.py` | Semua callback button dan final execution |
-| `health_recurring_export.py` | Health check, recurring, export |
-| `networth_assets.py` | Net worth, asset, liability flow |
+The callback layer is where preview flow becomes an actual user decision.

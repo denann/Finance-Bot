@@ -1,2 +1,3 @@
-"""Package utama aplikasi Finance Bot."""
+"""Main application package for the Personal Finance Bot."""
+
 

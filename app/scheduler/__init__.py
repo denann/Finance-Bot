@@ -1,2 +1,3 @@
-"""Package scheduler untuk job otomatis."""
+"""Scheduler package for automated jobs."""
+
 

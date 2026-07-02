@@ -1,3 +1,5 @@
+"""Context builder service for /ask, /audit, /coach, and /insight before sending data to Gemini."""
+
 from __future__ import annotations
 
 import re
@@ -88,11 +90,7 @@ CATEGORY_HINTS = {
 
 
 def safe_float(value, default: float = 0.0) -> float:
-    """Parsing angka rupiah dari Google Sheets tanpa mengalikan numeric float.
-
-    Bug lama: nilai numeric dari Sheets seperti 427500.0 diubah menjadi
-    4275000 karena titik desimal dianggap pemisah ribuan dan dihapus.
-    """
+    """Helper for safe float in the finance service layer."""
     if value is None or value == "":
         return default
 
@@ -119,7 +117,7 @@ def safe_float(value, default: float = 0.0) -> float:
     elif "." in raw:
         parts = raw.split(".")
         # 427.500 atau 1.427.500 = ribuan.
-        # 427500.0 dari numeric float string tetap desimal, jangan hapus titik.
+        # Implementation note for this project-specific finance flow.
         if len(parts) > 1 and all(len(part) == 3 for part in parts[1:]):
             raw = raw.replace(".", "")
 
@@ -132,15 +130,17 @@ def safe_float(value, default: float = 0.0) -> float:
 
 
 def format_rupiah(amount: float) -> str:
+    """Format rupiah into readable text."""
     return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
 
 
 def current_month() -> str:
+    """Helper for current month in the finance service layer."""
     return datetime.now().strftime("%Y-%m")
 
 
 def normalize_month_arg(value: str | None = None) -> str:
-    """Support None, YYYY-MM, YYYY/MM, bulan angka, bulan ini."""
+    """Clean and standardize normalize month arg."""
     today = datetime.now()
     if not value:
         return current_month()
@@ -163,6 +163,7 @@ def normalize_month_arg(value: str | None = None) -> str:
 
 
 def previous_month(month: str) -> str:
+    """Helper for previous month in the finance service layer."""
     year, month_num = map(int, month.split("-"))
     if month_num == 1:
         return f"{year - 1}-12"
@@ -170,6 +171,7 @@ def previous_month(month: str) -> str:
 
 
 def month_bounds(month: str) -> tuple[str, str]:
+    """Helper for month bounds in the finance service layer."""
     year, month_num = map(int, month.split("-"))
     first = datetime(year, month_num, 1)
     if month_num == 12:
@@ -181,6 +183,7 @@ def month_bounds(month: str) -> tuple[str, str]:
 
 
 def parse_period_from_text(text: str) -> dict:
+    """Parse input into structured data for the finance service layer."""
     raw = str(text or "").lower()
     today = datetime.now().date()
 
@@ -226,12 +229,14 @@ def parse_period_from_text(text: str) -> dict:
 
 
 def normalize_text(value: str) -> str:
+    """Clean and standardize normalize text."""
     value = str(value or "").lower()
     value = re.sub(r"[^a-z0-9\s]", " ", value)
     return re.sub(r"\s+", " ", value).strip()
 
 
 def is_date_between(date_value: str, date_from: str | None, date_to: str | None) -> bool:
+    """Check a boolean condition for is date between."""
     date_value = str(date_value or "").strip()
     if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", date_value):
         return False
@@ -243,23 +248,19 @@ def is_date_between(date_value: str, date_from: str | None, date_to: str | None)
 
 
 def filter_records_by_period(records: list[dict], date_from: str | None, date_to: str | None) -> list[dict]:
+    """Helper for filter records by period in the finance service layer."""
     return [r for r in records if is_date_between(r.get("date", ""), date_from, date_to)]
 
 
 def get_month_transactions(month: str) -> list[dict]:
+    """Retrieve data needed for month transactions."""
     date_from, date_to = month_bounds(month)
     records = get_all_records(SHEET_TRANSACTIONS)
     return filter_records_by_period(records, date_from, date_to)
 
 
 def enrich_finance_transactions(records: list[dict]) -> list[dict]:
-    """Attach debt metadata so AI finance sees expense as Net, not Gross.
-
-    Split bill/piutang membuat cash keluar secara gross, tetapi beban pribadi user
-    adalah gross dikurangi piutang yang dibuat dari transaksi itu. Konteks AI
-    sengaja memakai net supaya audit, anomali, budget, dan coach tidak
-    membesar-besarkan pengeluaran user.
-    """
+    """Helper for enrich finance transactions in the finance service layer."""
     records = records or []
     if any(
         str((r or {}).get("type", "")).strip().lower() == "expense"
@@ -271,7 +272,7 @@ def enrich_finance_transactions(records: list[dict]) -> list[dict]:
 
 
 def get_effective_expense_amount(record: dict) -> float:
-    """Nominal expense untuk analisis AI = net setelah piutang split bill."""
+    """Retrieve data needed for effective expense amount."""
     amount = safe_float((record or {}).get("amount"))
     if str((record or {}).get("type", "")).strip().lower() != "expense":
         return amount
@@ -286,6 +287,7 @@ def get_effective_expense_amount(record: dict) -> float:
 
 
 def summarize_transactions(records: list[dict]) -> dict:
+    """Build a concise summary for the finance service layer."""
     total_income = 0.0
     total_expense = 0.0  # Net expense setelah piutang split bill.
     total_transfer = 0.0
@@ -312,8 +314,8 @@ def summarize_transactions(records: list[dict]) -> dict:
             income_by_account[account] += amount
             cash_in_by_account[account] += amount
         elif txn_type == "expense":
-            # Untuk AI finance, expense selalu memakai beban bersih pribadi,
-            # bukan cashflow gross yang sudah ditagihkan sebagai piutang.
+            # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+            # Debt command note: keep payable and receivable actions explicit and auditable.
             total_expense += effective_amount
             expense_by_category[category] += effective_amount
             expense_by_account[account] += effective_amount
@@ -325,6 +327,7 @@ def summarize_transactions(records: list[dict]) -> dict:
                 cash_in_by_account[to_account] += amount
 
     def sorted_items(d: dict) -> list[dict]:
+        """Helper for sorted items in the finance service layer."""
         return [
             {"name": k, "amount": v, "amount_display": format_rupiah(v)}
             for k, v in sorted(d.items(), key=lambda x: x[1], reverse=True)
@@ -352,6 +355,7 @@ def summarize_transactions(records: list[dict]) -> dict:
 
 
 def add_contribution(items: list[dict], total: float, limit: int = 8) -> list[dict]:
+    """Helper for add contribution in the finance service layer."""
     result = []
     for item in items[:limit]:
         amount = float(item.get("amount", 0) or 0)
@@ -363,6 +367,7 @@ def add_contribution(items: list[dict], total: float, limit: int = 8) -> list[di
 
 
 def compact_transaction(r: dict) -> dict:
+    """Helper for compact transaction in the finance service layer."""
     amount = get_effective_expense_amount(r)
     item = {
         "date": r.get("date", ""),
@@ -383,6 +388,7 @@ def compact_transaction(r: dict) -> dict:
 
 
 def get_top_transactions(records: list[dict], txn_type: str | None = "expense", limit: int = 8) -> list[dict]:
+    """Retrieve data needed for top transactions."""
     records = enrich_finance_transactions(records)
     candidates = []
     for r in records:
@@ -400,6 +406,7 @@ def get_top_transactions(records: list[dict], txn_type: str | None = "expense", 
 
 
 def get_budget_status(month: str, transactions: list[dict]) -> list[dict]:
+    """Retrieve data needed for budget status."""
     budgets = [
         b for b in get_all_records(SHEET_BUDGETS)
         if str(b.get("month", "")).strip() == month
@@ -438,6 +445,7 @@ def get_budget_status(month: str, transactions: list[dict]) -> list[dict]:
 
 
 def get_accounts_summary() -> dict:
+    """Retrieve data needed for accounts summary."""
     accounts = []
     total = 0.0
     for acc in get_all_records(SHEET_ACCOUNTS):
@@ -454,6 +462,7 @@ def get_accounts_summary() -> dict:
 
 
 def get_debt_summary_compact() -> dict:
+    """Retrieve data needed for debt summary compact."""
     debts = get_all_records(SHEET_DEBTS)
     active = []
     totals = defaultdict(float)
@@ -464,7 +473,7 @@ def get_debt_summary_compact() -> dict:
             continue
         debt_type = str(d.get("type") or d.get("debt_type") or "").strip().lower()
         if not debt_type:
-            # fallback dari category/description
+            # Legacy compatibility note for older records or older in-memory state.
             text = normalize_text(" ".join(str(d.get(k, "")) for k in ["category", "description", "catatan"]))
             debt_type = "receivable" if "piutang" in text else "payable" if "utang" in text or "hutang" in text else "unknown"
         totals[debt_type] += remaining
@@ -488,6 +497,7 @@ def get_debt_summary_compact() -> dict:
 
 
 def get_net_worth_compact() -> dict:
+    """Retrieve data needed for net worth compact."""
     assets = get_all_records(SHEET_ASSETS)
     active_assets = []
 
@@ -527,6 +537,7 @@ def get_net_worth_compact() -> dict:
 
 
 def detect_anomalies(records: list[dict], month_summary: dict | None = None) -> list[dict]:
+    """Helper for detect anomalies in the finance service layer."""
     records = enrich_finance_transactions(records)
     expenses = [r for r in records if str(r.get("type", "")).strip().lower() == "expense"]
     amounts = [get_effective_expense_amount(r) for r in expenses if get_effective_expense_amount(r) > 0]
@@ -590,6 +601,7 @@ def detect_anomalies(records: list[dict], month_summary: dict | None = None) -> 
 
 
 def detect_data_quality_issues(records: list[dict]) -> list[dict]:
+    """Helper for detect data quality issues in the finance service layer."""
     issues = []
     counters = Counter()
     examples = defaultdict(list)
@@ -603,6 +615,7 @@ def detect_data_quality_issues(records: list[dict]) -> list[dict]:
         category = str(r.get("category") or "").strip()
 
         def add_issue(key: str):
+            """Helper for add issue in the finance service layer."""
             counters[key] += 1
             if len(examples[key]) < 5:
                 examples[key].append(compact_transaction(r))
@@ -633,7 +646,9 @@ def detect_data_quality_issues(records: list[dict]) -> list[dict]:
 
 
 def compare_summaries(current: dict, previous: dict) -> dict:
+    """Helper for compare summaries in the finance service layer."""
     def diff(key: str) -> dict:
+        """Helper for diff in the finance service layer."""
         cur = float(current.get(key, 0) or 0)
         prev = float(previous.get(key, 0) or 0)
         delta = cur - prev
@@ -656,6 +671,7 @@ def compare_summaries(current: dict, previous: dict) -> dict:
 
 
 def build_monthly_finance_context(month: str | None = None) -> dict:
+    """Build the data structure or message text for monthly finance context."""
     month = normalize_month_arg(month)
     prev_month = previous_month(month)
 
@@ -692,6 +708,7 @@ def build_monthly_finance_context(month: str | None = None) -> dict:
 
 
 def extract_keywords(question: str) -> list[str]:
+    """Extract the important part of the input for keywords."""
     clean = normalize_text(question)
     # Keep meaningful multi-token known phrases.
     keywords = []
@@ -721,6 +738,7 @@ def extract_keywords(question: str) -> list[str]:
 
 
 def search_relevant_transactions(question: str, date_from: str | None = None, date_to: str | None = None, limit: int = 12) -> list[dict]:
+    """Helper for search relevant transactions in the finance service layer."""
     records = get_all_records(SHEET_TRANSACTIONS)
     records = filter_records_by_period(records, date_from, date_to) if (date_from or date_to) else records
     records = enrich_finance_transactions(records)
@@ -746,6 +764,7 @@ def search_relevant_transactions(question: str, date_from: str | None = None, da
 
 
 def has_explicit_period(question: str) -> bool:
+    """Check a boolean condition for has explicit period."""
     raw = str(question or "").lower()
     if re.search(r"20\d{2}[-/](0?[1-9]|1[0-2])", raw):
         return True
@@ -760,11 +779,12 @@ def has_explicit_period(question: str) -> bool:
 
 
 def build_ask_finance_context(question: str) -> dict:
+    """Build the most relevant finance context for a natural /ask question."""
     period = parse_period_from_text(question)
     month_context = build_monthly_finance_context(period.get("month"))
 
-    # Untuk pertanyaan transaksi spesifik seperti "kapan terakhir saya beli kopi?",
-    # jangan batasi ke bulan berjalan kecuali user menyebut periode eksplisit.
+    # Implementation note for this project-specific finance flow.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     explicit_period = has_explicit_period(question)
     relevant = search_relevant_transactions(
         question,
@@ -784,6 +804,7 @@ def build_ask_finance_context(question: str) -> dict:
 
 
 def build_audit_context(month: str | None = None) -> dict:
+    """Build the data structure or message text for audit context."""
     month = normalize_month_arg(month)
     records = get_month_transactions(month)
     summary = summarize_transactions(records)
@@ -797,6 +818,7 @@ def build_audit_context(month: str | None = None) -> dict:
 
 
 def build_coach_context(month: str | None = None, question: str = "") -> dict:
+    """Build the data structure or message text for coach context."""
     context = build_monthly_finance_context(month)
     target_saving = None
     raw = str(question or "").lower()
@@ -816,12 +838,13 @@ def build_coach_context(month: str | None = None, question: str = "") -> dict:
 
 
 def should_handle_finance_question(text: str) -> bool:
+    """Check a boolean condition for should handle finance question."""
     raw = str(text or "").strip().lower()
     if not raw:
         return False
-    # Jangan ganggu input transaksi/debt yang punya nominal.
-    # Bug yang dicegah: "ditalangin X bayar tabungan Y 100k" mengandung kata
-    # "tabungan", tapi itu tetap input debt, bukan pertanyaan RAG/coach.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
+    # Fronting-money note: distinguish actual account cashflow from payable or receivable records.
+    # Implementation note for this project-specific finance flow.
     has_amount = bool(re.search(r"\b\d+(?:[.,]\d+)?\s*(rb|ribu|k|jt|juta)?\b", raw))
     transaction_or_debt_markers = [
         "ditalangin", "ditalangi", "dibayarin", "duluin", "nitip",
@@ -834,17 +857,18 @@ def should_handle_finance_question(text: str) -> bool:
     if has_amount and any(k in raw for k in transaction_or_debt_markers):
         return False
 
-    # Kalau ada nominal tapi bukan transaksi/debt, finance question tetap boleh
-    # hanya jika kalimatnya jelas minta saran/target/budget.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
+    # hanya if kalimatnya jelas minta saran/target/budget.
     if has_amount and not any(k in raw for k in ["nabung", "tabung", "target", "budget", "saran", "coach", "hemat"]):
         return False
-    # Jangan ganggu token pendek yang mirip command.
+    # Implementation note for this project-specific finance flow.
     if len(raw.split()) == 1 and raw not in {"insight", "audit", "coach"}:
         return False
     return any(k in raw for k in FINANCE_QUESTION_KEYWORDS)
 
 
 def route_finance_question_mode(text: str) -> str:
+    """Helper for route finance question mode in the finance service layer."""
     raw = str(text or "").lower()
     if any(k in raw for k in ["audit", "anomali", "aneh", "duplikat", "data quality", "data yang salah"]):
         return "audit"
@@ -858,6 +882,7 @@ def route_finance_question_mode(text: str) -> str:
 
 
 def deterministic_audit_text(context: dict) -> str:
+    """Helper for deterministic audit text in the finance service layer."""
     lines = [f"🧹 Audit Data {context.get('period', {}).get('month', '-')}"]
     issues = context.get("data_quality_issues", [])
     anomalies = context.get("anomalies", [])
@@ -885,6 +910,7 @@ def deterministic_audit_text(context: dict) -> str:
 
 
 def deterministic_monthly_text(context: dict) -> str:
+    """Helper for deterministic monthly text in the finance service layer."""
     period = context.get("period", {})
     summary = context.get("summary", {})
     lines = [f"📌 Insight {period.get('month', '-')}"]

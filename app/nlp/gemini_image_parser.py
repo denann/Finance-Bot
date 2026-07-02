@@ -1,3 +1,5 @@
+"""Gemini Vision parser that converts receipt or transaction images into transaction drafts."""
+
 import json
 import os
 from datetime import datetime
@@ -6,7 +8,7 @@ from app.config import GEMINI_API_KEY
 from app.nlp.gemini_langchain_client import generate_text_from_image_with_gemini
 
 
-# Samakan daftar kategori ini dengan Gemini text parser agar hasil gambar/teks konsisten.
+# Image parsing note: receipt output still goes through preview before saving.
 VALID_CATEGORIES = [
     "Food & Beverage", "Transport", "Bills & Utilities", "Shopping",
     "Health", "Entertainment", "Education", "Personal Care",
@@ -18,11 +20,12 @@ VALID_ACCOUNTS = ["Cash", "BRI", "BSI", "DANA", "GoPay"]
 VALID_SPENDING_TYPES = ["Bulanan", "Harian", "Darurat", "Keinginan"]
 
 
-# Model bisa di-override dari env Wispbyte kalau akun Gemini memakai nama model berbeda.
+# Split bill parsing note: separate the paid transaction from each person share.
 GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash")
 
 
 def clean_gemini_json(raw_text: str) -> str:
+    """Clean and standardize clean gemini json."""
     raw_text = str(raw_text or "").strip()
 
     if raw_text.startswith("```"):
@@ -35,6 +38,7 @@ def clean_gemini_json(raw_text: str) -> str:
 
 
 def build_image_prompt(caption: str = "") -> str:
+    """Build the data structure or message text for image prompt."""
     today = datetime.now().strftime("%Y-%m-%d")
 
     expense_categories = [
@@ -130,6 +134,7 @@ Maka output yang benar adalah:
 """.strip()
 
 def normalize_item(item: dict) -> dict | None:
+    """Clean and standardize normalize item."""
     if not isinstance(item, dict):
         return None
 
@@ -166,7 +171,7 @@ def normalize_item(item: dict) -> dict | None:
         tipe_pengeluaran = "Harian"
 
     date_value = str(item.get("date") or datetime.now().strftime("%Y-%m-%d")).strip()
-    # Jaga bot tetap stabil: tanggal invalid dari OCR/Gemini akan fallback ke hari ini.
+    # Legacy compatibility note for older records or older in-memory state.
     try:
         datetime.strptime(date_value, "%Y-%m-%d")
     except Exception:
@@ -193,17 +198,7 @@ def normalize_item(item: dict) -> dict | None:
 
 
 def parse_transactions_from_image(image_bytes: bytes, mime_type: str = "image/jpeg", caption: str = "") -> dict:
-    """
-    Parsing foto struk/nota/screenshot transaksi menjadi item transaksi bot.
-
-    Output:
-    {
-      "success": bool,
-      "items": list[dict],
-      "message": str,
-      "raw_response": str,
-    }
-    """
+    """Parse input into structured data for the parser and NLP layer."""
     if not GEMINI_API_KEY:
         return {
             "success": False,

@@ -1,4 +1,6 @@
-# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
+"""Core handler utilities for user authorization, safe replies, and basic message normalization."""
+
+# Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
@@ -9,7 +11,7 @@ TELEGRAM_SAFE_MESSAGE_LIMIT = 3800
 
 
 def split_long_message(text: str, max_len: int = TELEGRAM_SAFE_MESSAGE_LIMIT) -> list[str]:
-    """Split pesan panjang Telegram menjadi beberapa bagian aman."""
+    """Helper for split long message in the Telegram bot flow."""
     text = str(text or "").strip()
     if not text:
         return [""]
@@ -62,7 +64,7 @@ def split_long_message(text: str, max_len: int = TELEGRAM_SAFE_MESSAGE_LIMIT) ->
 
 
 async def reply_long_markdown(update: Update, text: str):
-    """Kirim Markdown panjang dengan fallback ke teks biasa kalau Markdown error."""
+    """Send a Telegram response for reply long markdown."""
     for part in split_long_message(text):
         try:
             await update.message.reply_text(part, parse_mode="Markdown")
@@ -71,11 +73,7 @@ async def reply_long_markdown(update: Update, text: str):
 
 
 async def reply_message_safely(message, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
-    """Kirim pesan biasa secara aman, termasuk pesan panjang dan Markdown error.
-
-    Jika pesan di-split, tombol ditempel di chunk terakhir supaya user baca dulu
-    lalu tombol muncul di bawah.
-    """
+    """Send a Telegram response for reply message safely."""
     text = str(text or "").strip() or " "
     chunks = split_long_message(text)
     for idx, chunk in enumerate(chunks):
@@ -87,18 +85,13 @@ async def reply_message_safely(message, text: str, parse_mode: str | None = None
 
 
 async def reply_update_safely(update: Update, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
+    """Send a Telegram response for reply update safely."""
     if update.message:
         await reply_message_safely(update.message, text, parse_mode=parse_mode, reply_markup=reply_markup, **kwargs)
 
 
 async def safe_edit_message(query, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
-    """Edit pesan callback secara aman.
-
-    Telegram membatasi panjang edit_message_text sekitar 4096 karakter.
-    Kalau pesan terlalu panjang, bagian pertama akan diedit ke message lama,
-    sisanya dikirim sebagai reply lanjutan supaya callback tidak crash.
-    Markdown error juga otomatis fallback ke plain text.
-    """
+    """Helper for safe edit message in the Telegram bot flow."""
     text = str(text or "").strip()
     if not text:
         text = " "
@@ -112,6 +105,7 @@ async def safe_edit_message(query, text: str, parse_mode: str | None = None, rep
         first = first[:max_first_len].rstrip() + suffix
 
     async def _edit(payload: str, mode: str | None, markup):
+        """Helper for edit in the Telegram bot flow."""
         return await query.message.edit_text(
             payload,
             parse_mode=mode,
@@ -145,16 +139,16 @@ async def safe_edit_message(query, text: str, parse_mode: str | None = None, rep
 
 
 async def show_callback_loading(query, text: str = "⏳ *Memproses pilihan...*"):
-    """Tampilkan loading singkat dan hapus inline keyboard agar tombol tidak double-click."""
+    """Handle Telegram inline-button callbacks for the Telegram bot flow."""
     try:
         await safe_edit_message(query, text, parse_mode="Markdown")
     except Exception:
-        # Loading tidak boleh menggagalkan action utama.
+        # Loading feedback must never break the main action.
         pass
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    """Handler error global agar exception callback tetap diberi tahu ke Telegram."""
+    """Handle the Telegram request for error."""
     error = getattr(context, "error", None)
     err_text = str(error or "Unknown error")
 

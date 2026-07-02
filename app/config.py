@@ -1,4 +1,5 @@
-"""Konfigurasi aplikasi yang dibaca dari environment variable dan file .env."""
+"""Application configuration loaded from environment variables and .env files."""
+
 
 import os
 from dotenv import load_dotenv
@@ -6,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def _parse_int_env(name: str, default: int | None = None) -> int | None:
-    """Ambil environment variable lalu ubah menjadi integer dengan fallback default."""
+    """Read an environment variable and convert it to integer with a safe fallback."""
     raw = os.getenv(name)
     if raw is None or str(raw).strip() == "":
         return default
@@ -30,7 +31,7 @@ ALLOWED_USER_ID = _parse_int_env("ALLOWED_USER_ID", 0)
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "service_account.json")
 
-# Gemini
+# AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # App

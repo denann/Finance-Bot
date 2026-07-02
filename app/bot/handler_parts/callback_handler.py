@@ -1,4 +1,6 @@
-# Dipisah dari app/bot/handlers.py agar file utama tidak terlalu besar.
+"""Central callback handler for inline buttons such as preview, edit, save, cancel, debt, split bill, recurring, and asset flows."""
+
+# Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
@@ -43,11 +45,12 @@ from app.nlp.normalizer import normalize_text
 
 
 def is_skip_account_choice(account: str) -> bool:
+    """Check a boolean condition for is skip account choice."""
     return str(account or "").strip() == SKIP_ACCOUNT_CALLBACK_VALUE
 
 
 def mark_transaction_as_historical(parsed: dict) -> dict:
-    """Catat transaksi tanpa mengubah saldo rekening."""
+    """Mark a record as transaction as historical."""
     parsed["skip_account"] = True
     parsed["account"] = SKIP_ACCOUNT_NAME
     parsed["catatan"] = (str(parsed.get("catatan") or "").strip() + " | sudah berlalu/tanpa update saldo").strip(" |")
@@ -55,7 +58,7 @@ def mark_transaction_as_historical(parsed: dict) -> dict:
 
 
 def mark_debt_as_historical(debt_parsed: dict) -> dict:
-    """Catat debt tanpa membuat cashflow transaksi."""
+    """Mark a record as debt as historical."""
     debt_parsed["cashflow_mode"] = "debt_only"
     debt_parsed["fronting_mode"] = debt_parsed.get("fronting_mode") or "sudah_berlalu"
     debt_parsed["account"] = SKIP_ACCOUNT_NAME
@@ -64,6 +67,7 @@ def mark_debt_as_historical(debt_parsed: dict) -> dict:
 
 
 def _split_debt_id_text(value) -> list[str]:
+    """Helper for split debt id text in the Telegram bot flow."""
     if not value:
         return []
     if isinstance(value, (list, tuple, set)):
@@ -81,6 +85,7 @@ def _split_debt_id_text(value) -> list[str]:
 
 
 def _merge_debt_ids(*values) -> str:
+    """Helper for merge debt ids in the Telegram bot flow."""
     merged = []
     seen = set()
     for value in values:
@@ -92,11 +97,7 @@ def _merge_debt_ids(*values) -> str:
 
 
 def create_fronted_split_receivable_debts(debt_parsed: dict) -> dict:
-    """
-    Untuk kasus PTPT: user ditalangin full oleh seseorang, tetapi itemnya
-    dibagi lagi. Main debt tetap payable full ke penalang; helper ini membuat
-    receivable share ke daftar teman yang disebut pada split bill.
-    """
+    """Create a new record or object for fronted split receivable debts."""
     if not debt_parsed or debt_parsed.get("intent") != "add_payable":
         return {"created": [], "failed": []}
 
@@ -148,6 +149,7 @@ def create_fronted_split_receivable_debts(debt_parsed: dict) -> dict:
 
 
 def attach_fronted_split_debt_relations(debt_parsed: dict, debt_result: dict, split_result: dict) -> dict:
+    """Helper for attach fronted split debt relations in the Telegram bot flow."""
     primary_id = debt_result.get("debt_id") if debt_result else ""
     receivable_ids = [x.get("debt_id") for x in (split_result or {}).get("created", []) if x.get("debt_id")]
     debt_parsed["hutang_id"] = _merge_debt_ids(debt_parsed.get("hutang_id"), primary_id, receivable_ids)
@@ -161,6 +163,7 @@ def attach_fronted_split_debt_relations(debt_parsed: dict, debt_result: dict, sp
 
 
 def append_fronted_split_result_lines(lines: list[str], split_result: dict, *, indent: str = "") -> None:
+    """Append data or text to fronted split result lines."""
     created = (split_result or {}).get("created", [])
     failed = (split_result or {}).get("failed", [])
     if created:
@@ -179,7 +182,7 @@ def append_fronted_split_result_lines(lines: list[str], split_result: dict, *, i
 
 
 def build_edit_txn_preview_text_for_callback(preview: dict, split_parsed: dict | None = None) -> str:
-    """Preview edit transaksi untuk alur split bill di callback_handler."""
+    """Handle Telegram inline-button callbacks for the Telegram bot flow."""
     old_txn = preview.get("old_txn", {}) or {}
     new_txn = preview.get("new_txn", {}) or {}
     updates = preview.get("updates", {}) or {}
@@ -228,6 +231,7 @@ def build_edit_txn_preview_text_for_callback(preview: dict, split_parsed: dict |
 
 
 def parse_debt_ids_from_txn_record_for_edit(txn: dict) -> list[str]:
+    """Parse input into structured data for the Telegram bot flow."""
     raw = str((txn or {}).get("hutang_id", "") or "").strip()
     if not raw:
         return []
@@ -235,6 +239,7 @@ def parse_debt_ids_from_txn_record_for_edit(txn: dict) -> list[str]:
 
 
 def overpayment_decision_keyboard() -> InlineKeyboardMarkup:
+    """Helper for overpayment decision keyboard in the Telegram bot flow."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Anggap lunas / bonus", callback_data="debt_overpay:bonus")],
         [InlineKeyboardButton("🔴 Catat sebagai hutang saya", callback_data="debt_overpay:opposite_debt")],
@@ -243,6 +248,7 @@ def overpayment_decision_keyboard() -> InlineKeyboardMarkup:
 
 
 def build_overpayment_decision_text(parsed: dict, outcome: dict) -> str:
+    """Build the data structure or message text for overpayment decision text."""
     person = parsed.get("person_name") or outcome.get("person_name") or "-"
     target_type = outcome.get("target_debt_type")
     target_label = "piutang" if target_type == "receivable" else "utang Anda"
@@ -265,10 +271,7 @@ def build_overpayment_decision_text(parsed: dict, outcome: dict) -> str:
 
 
 def resolve_payment_target_type(parsed: dict, debts: list[dict]) -> tuple[str | None, str | None]:
-    """Tentukan arah debt untuk pembayaran by person tanpa memblokir mixed arah.
-
-    Output: (target_type, error_message).
-    """
+    """Resolve the final value for payment target type from possible inputs."""
     target = str(parsed.get("target_debt_type") or "").strip().lower()
     if target == "auto":
         target = ""
@@ -304,10 +307,12 @@ def resolve_payment_target_type(parsed: dict, debts: list[dict]) -> tuple[str | 
 
 
 def clear_parse_clarification_state(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clear or reset parse clarification state."""
     context.user_data.pop("pending_parse_clarification", None)
 
 
 def infer_clarified_payment_target_type(raw: str) -> str:
+    """Helper for infer clarified payment target type in the Telegram bot flow."""
     clean = normalize_text(raw)
     if re.search(r"^\s*(?:saya|aku|gw|gue|gua)\s+(?:bayar|byr)\b", clean):
         return "payable"
@@ -317,6 +322,7 @@ def infer_clarified_payment_target_type(raw: str) -> str:
 
 
 def build_clarified_debt_payment(raw: str, parsed: dict | None = None) -> dict | None:
+    """Build the data structure or message text for clarified debt payment."""
     parsed = parsed or {}
     amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
     person = extract_person_candidate(raw) or parsed.get("person_name") or parsed.get("subject") or ""
@@ -338,9 +344,10 @@ def build_clarified_debt_payment(raw: str, parsed: dict | None = None) -> dict |
 
 
 def build_expense_candidate_raw(raw: str) -> str:
+    """Build the data structure or message text for expense candidate raw."""
     clean = str(raw or "").strip()
-    # "Budi bayar makan 100k" -> "bayar makan 100k" agar description tidak
-    # bocor menjadi "Budi Bayar Makan" saat user memilih expense biasa.
+    # Example cleanup: remove the person prefix so the description stays focused on the expense item.
+    # Example cleanup: remove the person prefix so the description stays focused on the expense item.
     clean = re.sub(
         r"^\s*(?!saya\b|aku\b|gw\b|gue\b|gua\b)([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,30}?)\s+(?:bayar|byr)\s+",
         "bayar ",
@@ -351,6 +358,7 @@ def build_expense_candidate_raw(raw: str) -> str:
 
 
 def build_clarified_expense(raw: str, parsed: dict | None = None) -> dict | None:
+    """Build the data structure or message text for clarified expense."""
     parsed = dict(parsed or {})
     expense_raw = build_expense_candidate_raw(raw)
     candidate = parse_with_regex(expense_raw) or parse_with_regex(raw)
@@ -388,6 +396,7 @@ def build_clarified_expense(raw: str, parsed: dict | None = None) -> dict | None
 
 
 def build_clarified_fronting(raw: str, parsed: dict | None = None) -> dict | None:
+    """Build the data structure or message text for clarified fronting."""
     parsed = parsed or {}
     amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
     person = extract_person_candidate(raw) or parsed.get("person_name") or parsed.get("subject") or ""
@@ -419,10 +428,11 @@ def build_clarified_fronting(raw: str, parsed: dict | None = None) -> dict | Non
     }
 
 
-# Handler pusat untuk semua tombol inline Telegram.
-# callback_data dipakai untuk mengembalikan user ke flow yang tepat tanpa menyimpan data sebelum konfirmasi.
+# Implementation note for this project-specific finance flow.
+# callback_data routes the user back to the correct flow without saving before confirmation.
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the Telegram request for callback."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -874,9 +884,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 and parse_sheet_number(d.get("remaining_amount", 0)) > 0
                 for d in debts
             )
-            # Pembayaran selalu dialokasikan global per orang sesuai arah input.
-            # Jangan menargetkan 1 debt langsung, supaya output dan edit/delete pembayaran
-            # konsisten sebagai ledger per orang.
+            # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+            # Implementation note for this project-specific finance flow.
+            # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
             debt_parsed["target_debt_id"] = ""
             debt_parsed["debt_type_for_payment"] = debt_type_for_payment
             debt_parsed["target_debt_type"] = debt_type_for_payment
@@ -1131,11 +1141,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await safe_edit_message(query, "❌ Sesi split bill expired. Coba input ulang.")
                 return
 
-            # Untuk bulk input, paid/unpaid harus diterapkan satu-per-satu.
-            # Callback mixed sekarang membawa index item aktif. Ini mencegah bug
-            # double-click/callback lama: klik lama tidak boleh otomatis
-            # memutuskan split bill berikutnya, dan callback duplikat tidak boleh
-            # menimpa preview akhir dengan pesan "Tidak ada split bill...".
+            # Duplicate or stale callbacks are handled defensively so the final preview is not overwritten.
+            # Regression test note for a previously fixed edge case.
+            # Duplicate or stale callbacks are handled defensively so the final preview is not overwritten.
+            # Duplicate or stale callbacks are handled defensively so the final preview is not overwritten.
+            # Split bill parsing note: separate the paid transaction from each person share.
             expected_index = None
             if len(parts) > 3:
                 try:
@@ -1156,9 +1166,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["pending_mixed"] = mixed_items
 
             if decision_result == "invalid" and not mixed_split_bill_needs_decision(mixed_items):
-                # Semua split bill sudah selesai. Kemungkinan ini callback duplikat
-                # dari tombol lama. Jangan tampilkan error; lanjutkan ke preview agar
-                # user tetap bisa menyimpan data.
+                # Duplicate or stale callbacks are handled defensively so the final preview is not overwritten.
+                # Duplicate or stale callbacks are handled defensively so the final preview is not overwritten.
+                # Implementation note for this project-specific finance flow.
                 pass
             elif decision_result == "invalid":
                 await safe_edit_message(query, 

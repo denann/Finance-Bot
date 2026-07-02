@@ -1,17 +1,17 @@
 # 06. Data Layer & Services
 
-Data utama project disimpan di Google Sheets.
+The project uses Google Sheets as the operational data store.
 
-Layer data terdiri dari dua bagian:
+The data layer is split into two parts:
 
 ```text
-app/services/      # business operation
-app/sheets/        # low-level Google Sheets read/write
+app/services/      # business logic
+app/sheets/        # low-level Google Sheets access
 ```
 
-## Google Sheets sebagai operational data store
+## Google Sheets tabs
 
-Sheet yang dipakai:
+The required tabs are:
 
 ```text
 transactions
@@ -28,257 +28,45 @@ pending_expenses
 net_worth_snapshots
 ```
 
-Auto-setup schema dilakukan oleh:
-
-```python
-ensure_spreadsheet_schema()
-```
-
-File:
-
-```text
-app/sheets/client.py
-```
+`ensure_spreadsheet_schema()` creates missing tabs and writes headers when a sheet is empty.
 
 ## Sheets client
 
-`app/sheets/client.py` adalah wrapper untuk Google Sheets API/gspread.
+`app/sheets/client.py` handles:
 
-Tanggung jawab utama:
-
-- koneksi spreadsheet,
-- ambil worksheet,
-- buat worksheet jika belum ada,
-- tulis header jika kosong,
-- seed default account,
-- read records,
-- append row,
-- update cell/range,
-- delete row,
-- retry write/read,
+- spreadsheet connection,
+- worksheet lookup,
+- schema validation,
+- default row seeding,
+- reads and writes,
+- retry handling,
 - best-effort rollback.
 
-## Auto schema bootstrap
-
-Saat startup, `main.py` memanggil:
-
-```python
-ensure_schema_on_startup()
-```
-
-Di dalamnya:
-
-```python
-schema_results = ensure_spreadsheet_schema()
-```
-
-Jika spreadsheet kosong atau belum lengkap, sistem menyiapkan:
-
-- tab sheet,
-- header,
-- default rows untuk sheet tertentu.
-
-Default account yang dibuat jika `accounts` kosong:
-
-```text
-Cash, BRI, BSI, BCA, DANA, GoPay, Seabank
-```
-
-## Atomic write dan rollback
-
-Class penting:
-
-```python
-class SheetsTransaction
-```
-
-Context manager:
-
-```python
-with sheets_transaction(label="telegram_handler"):
-    ...
-```
-
-Handler Telegram dibungkus oleh `atomic_bot_handler()` di `application.py`, sehingga setiap handler berjalan di dalam context ini.
-
-Tujuannya:
-
-```text
-jika operasi write ke Google Sheets gagal
-→ sistem berusaha rollback write sebelumnya
-→ data tidak setengah jadi
-```
-
-Catatan: rollback Google Sheets bersifat best-effort, karena Google Sheets bukan database transaksi ACID.
+Google Sheets is transparent and easy to inspect, but it is not a transactional database. Because of that, rollback is implemented as a best-effort compensation strategy.
 
 ## Service layer
 
-Service layer menyimpan business logic yang tidak cocok ditaruh di handler.
-
-| File | Tanggung jawab |
+| File | Responsibility |
 |---|---|
-| `transaction_service.py` | Save transaksi, update saldo, edit/delete transaksi, export data |
-| `debt_service.py` | Hutang/piutang, payment, settlement, void, edit, offset |
-| `budget_service.py` | Set budget, actual expense, status budget |
-| `report_service.py` | Harian, mingguan, bulanan, transaksi terakhir, filter rekening/kategori |
-| `pending_expense_service.py` | Pending/rencana expense, mark paid, cancel |
-| `recurring_service.py` | Rule recurring, next run, recurring logs |
-| `net_worth_service.py` | Aset, liability, snapshot net worth, gold price helper |
-| `finance_insight_service.py` | Build context finance untuk Gemini insight |
+| `transaction_service.py` | Save, edit, delete, batch write, account balance update, and transaction-debt relation |
+| `debt_service.py` | Debt creation, payment, settlement, void, edit, offset, and summaries |
+| `budget_service.py` | Monthly budget setup, actual spending, and remaining budget |
+| `report_service.py` | Daily, weekly, monthly, account, search, and category summaries |
+| `pending_expense_service.py` | Pending expense creation, paid status, and cancellation |
+| `recurring_service.py` | Recurring rules, next run date, recurring logs, and automatic transaction creation |
+| `net_worth_service.py` | Assets, net worth summary, snapshots, and history |
+| `finance_insight_service.py` | Finance context building for AI insight commands |
 
-## Transaction service
+## Why service layer matters
 
-File:
+Handlers should not directly manipulate spreadsheet rows. They should call services.
 
-```text
-app/services/transaction_service.py
-```
-
-Fungsi inti:
-
-| Fungsi | Tujuan |
-|---|---|
-| `validate_transaction()` | Validasi field wajib sebelum save |
-| `build_transaction_row()` | Membentuk row sesuai header sheet |
-| `calculate_account_deltas()` | Hitung perubahan saldo account |
-| `apply_account_deltas()` | Terapkan perubahan saldo rekening |
-| `save_transaction()` | Save satu transaksi |
-| `save_transactions_batch()` | Save beberapa transaksi sekaligus |
-| `get_recent_transactions()` | Ambil transaksi terakhir |
-| `update_transaction_by_id()` | Edit transaksi |
-| `delete_transaction_by_id()` | Delete transaksi |
-
-Prinsip penting:
+This keeps the system easier to maintain:
 
 ```text
-parser menghasilkan dict
-service memvalidasi dict
-sheets client menulis data
+Telegram handler
+→ service function
+→ Sheets client
 ```
 
-## Debt service
-
-File:
-
-```text
-app/services/debt_service.py
-```
-
-Konsep debt:
-
-| Konsep | Makna |
-|---|---|
-| receivable/piutang | Orang lain berutang ke user |
-| payable/utang | User berutang ke orang lain |
-| payment | Pembayaran sebagian/penuh |
-| settlement | Penyelesaian debt |
-| offset | Kompensasi utang dan piutang antar orang |
-| void | Pembatalan debt |
-
-Fungsi inti:
-
-- `add_debt()`
-- `add_payment()`
-- `add_payment_by_person()`
-- `settle_selected_debt_ids()`
-- `offset_debt_by_person()`
-- `void_debt()`
-- `edit_debt()`
-
-## Budget service
-
-File:
-
-```text
-app/services/budget_service.py
-```
-
-Tugas utama:
-
-- set/update budget kategori,
-- hitung actual expense dari transaksi,
-- buat summary budget,
-- cek status budget setelah transaksi.
-
-## Report service
-
-File:
-
-```text
-app/services/report_service.py
-```
-
-Tugas utama:
-
-- filter transaksi berdasarkan periode,
-- filter rekening/kategori,
-- hitung net expense setelah piutang split bill,
-- buat summary per hari/minggu/bulan,
-- enrich transaksi dengan debt info.
-
-## Pending expense service
-
-File:
-
-```text
-app/services/pending_expense_service.py
-```
-
-Tugas utama:
-
-- deteksi kalimat rencana/tagihan,
-- menentukan due date,
-- save pending expense,
-- mark paid,
-- cancel.
-
-## Recurring service
-
-File:
-
-```text
-app/services/recurring_service.py
-```
-
-Tugas utama:
-
-- menyimpan recurring rule,
-- menghitung next run,
-- membuat transaksi dari recurring rule,
-- menulis recurring log,
-- disable recurring.
-
-## Net worth service
-
-File:
-
-```text
-app/services/net_worth_service.py
-```
-
-Tugas utama:
-
-- simpan aset,
-- simpan liability,
-- hitung net worth,
-- snapshot histori,
-- update/off asset,
-- kalkulasi gain/loss.
-
-## Finance insight service
-
-File:
-
-```text
-app/services/finance_insight_service.py
-```
-
-Tugas utama:
-
-- mengambil transaksi bulan/periode tertentu,
-- meringkas expense/income,
-- mengambil status budget,
-- mengambil debt summary,
-- mengambil net worth,
-- mendeteksi anomali dan data quality issue,
-- membuat context JSON untuk Gemini.
+If a bug happens, the layer boundary helps identify whether the issue is in user flow, finance logic, or data writing.

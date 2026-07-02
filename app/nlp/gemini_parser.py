@@ -1,4 +1,5 @@
-"""Parser bantuan Gemini untuk membuat draft parsing ketika regex lokal kurang yakin."""
+"""Gemini-assisted transaction parser used when local regex parsing is not confident enough."""
+
 
 import json
 import os
@@ -23,7 +24,7 @@ VALID_SPENDING_TYPES = ["Bulanan", "Harian", "Darurat", "Keinginan"]
 
 
 def build_prompt(user_input: str) -> str:
-    """Bentuk struktur data atau teks tampilan untuk prompt."""
+    """Build the data structure or message text for prompt."""
     today = datetime.now().strftime("%Y-%m-%d")
 
     expense_categories = [
@@ -109,7 +110,7 @@ Balas HANYA JSON dengan format berikut:
 
 
 def clean_gemini_json(raw_text: str) -> str:
-    """Rapikan dan standarkan nilai input untuk clean gemini json."""
+    """Clean and standardize clean gemini json."""
     raw_text = raw_text.strip()
 
     if raw_text.startswith("```"):
@@ -122,7 +123,7 @@ def clean_gemini_json(raw_text: str) -> str:
 
 
 def parse_with_gemini(user_input: str) -> dict | None:
-    """Parse input menjadi struktur data yang dipakai oleh parser dan NLP."""
+    """Parse input into structured data for the parser and NLP layer."""
     try:
         prompt = build_prompt(user_input)
         if not GEMINI_API_KEY:
@@ -186,7 +187,7 @@ def parse_with_gemini(user_input: str) -> dict | None:
 
 
 def parse_with_pending_fallback(user_input: str) -> dict:
-    """Parse input menjadi struktur data yang dipakai oleh parser dan NLP."""
+    """Parse input into structured data for the parser and NLP layer."""
     result = parse_with_gemini(user_input)
 
     if result is None:

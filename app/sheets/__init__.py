@@ -1,2 +1,3 @@
-"""Package akses Google Sheets."""
+"""Google Sheets access package."""
+
 

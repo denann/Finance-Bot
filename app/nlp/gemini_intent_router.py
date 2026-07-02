@@ -1,4 +1,5 @@
-"""Router intent berbasis Gemini untuk membantu memahami command natural yang bersifat read-only atau insight."""
+"""Gemini-based intent router for natural read-only commands and AI insight requests."""
+
 
 import json
 import re
@@ -66,14 +67,7 @@ INTENT_KEYWORDS = [
 
 
 def should_try_gemini_intent_router(text: str) -> bool:
-    """
-    Rule trigger Gemini intent router.
-
-    Gemini hanya dipanggil kalau:
-    1. input bukan slash command
-    2. input tidak terlalu panjang
-    3. mengandung keyword intent command
-    """
+    """Check a boolean condition for should try gemini intent router."""
     clean = str(text or "").strip().lower()
 
     if not clean:
@@ -91,10 +85,7 @@ def should_try_gemini_intent_router(text: str) -> bool:
 
 
 def extract_json_object(text: str) -> dict:
-    """
-    Ambil JSON object dari response Gemini.
-    Aman untuk response yang kadang dibungkus ```json.
-    """
+    """Extract the important part of the input for json object."""
     if not text:
         return {}
 
@@ -119,9 +110,7 @@ def extract_json_object(text: str) -> dict:
 
 
 def normalize_router_result(data: dict) -> dict:
-    """
-    Normalisasi output Gemini supaya selalu punya struktur aman.
-    """
+    """Clean and standardize normalize router result."""
     intent = str(data.get("intent", "unknown") or "unknown").strip().lower()
     confidence = data.get("confidence", 0)
     args = data.get("args", {}) or {}
@@ -148,12 +137,7 @@ def normalize_router_result(data: dict) -> dict:
 
 
 def route_intent_with_gemini(user_text: str) -> dict:
-    """
-    Gemini natural-language intent router.
-
-    Fungsi ini tidak menjalankan aksi apa pun.
-    Ia hanya mengubah teks user menjadi intent terstruktur.
-    """
+    """Helper for route intent with gemini in the parser and NLP layer."""
     prompt = f"""
 Anda adalah intent router untuk personal finance Telegram bot.
 

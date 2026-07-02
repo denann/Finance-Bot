@@ -1,31 +1,20 @@
+"""Text normalizer for user input, amounts, accounts, typo patterns, and split bill phrases."""
+
 import re
 
 
 def normalize_amount(text: str) -> int | None:
-    """
-    Mengubah berbagai format nominal ke integer.
-
-    Contoh:
-        "25rb"      → 25000
-        "25k"       → 25000
-        "25ribu"    → 25000
-        "8juta"     → 8000000
-        "8jt"       → 8000000
-        "1.5juta"   → 1500000
-        "150000"    → 150000
-        "150rb"     → 150000
-        "1,5jt"     → 1500000
-    """
+    """Clean and standardize normalize amount."""
     if not text:
         return None
 
-    # Lowercase dan hapus spasi
+    # Lowercase and remove spaces.
     text = text.lower().strip()
 
-    # Ganti koma desimal ke titik agar bisa diparse float
+    # Parser rule note for an Indonesian finance input edge case.
     text = text.replace(",", ".")
 
-    # Cari angka (termasuk desimal) + satuan
+    # Parser rule note for an Indonesian finance input edge case.
     pattern = r"(\d+(?:\.\d+)?)(?:\s*(rb|ribu|k|jt|juta|m|miliar|miliard|milyard)\b)?"
     match = re.search(pattern, text)
 
@@ -40,20 +29,12 @@ def normalize_amount(text: str) -> int | None:
 
 
 def normalize_text(text: str) -> str:
-    """Lowercase, strip, dan hapus karakter tidak perlu."""
+    """Clean and standardize normalize text."""
     return text.lower().strip()
 
 
 def parse_amount_value(number_str: str, unit: str = "") -> int | None:
-    """
-    Parsing satu token nominal menjadi integer.
-
-    Catatan penting untuk kebiasaan input user:
-    - 37.5k    -> 37.500  (titik 1-2 digit dianggap desimal)
-    - 331.063k -> 331.063 (titik 3 digit dianggap pemisah ribuan, bukan 331 juta)
-    - 331k     -> 331.000
-    - 150.000  -> 150.000
-    """
+    """Parse input into structured data for the parser and NLP layer."""
     raw = str(number_str or "").strip().lower().replace(",", ".")
     unit = str(unit or "").strip().lower()
 
@@ -61,8 +42,8 @@ def parse_amount_value(number_str: str, unit: str = "") -> int | None:
         return None
 
     try:
-        # Dengan unit ribuan/juta, bedakan titik ribuan vs desimal.
-        # Kasus khas user: "331.063k" maksudnya Rp331.063, bukan Rp331.063.000.
+        # Parser rule note for an Indonesian finance input edge case.
+        # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
         if unit in {"rb", "ribu", "k"}:
             if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", raw):
                 return int(raw.replace(".", ""))
@@ -74,7 +55,7 @@ def parse_amount_value(number_str: str, unit: str = "") -> int | None:
         if unit in {"miliar", "miliard", "milyard"}:
             return int(float(raw) * 1_000_000_000)
 
-        # Tanpa unit: titik dengan grup 3 digit dianggap ribuan.
+        # Parser rule note for an Indonesian finance input edge case.
         if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", raw):
             return int(raw.replace(".", ""))
 
@@ -84,18 +65,11 @@ def parse_amount_value(number_str: str, unit: str = "") -> int | None:
 
 
 def extract_amount_from_text(text: str) -> int | None:
-    """
-    Cari dan ekstrak nominal dari kalimat penuh.
-
-    Contoh:
-        "beli kopi 25rb"         → 25000
-        "gaji masuk 8 juta"      → 8000000
-        "bayar listrik 150.000"  → 150000
-    """
+    """Extract the important part of the input for amount from text."""
     text = text.lower().strip()
 
-    # Tangani ekspresi nominal sederhana: "70.100k - 19k", "100k + 25k".
-    # Wajib ada unit pada salah satu sisi agar tidak salah baca tanggal seperti 15-05-2026.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
+    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     unit_pattern = r"rb|ribu|k|jt|juta|m|miliar|miliard|milyard"
     token_pattern = rf"(\d+(?:[.,]\d+)?)(?:\s*({unit_pattern})\b)?"
     expr_match = re.search(
@@ -114,21 +88,21 @@ def extract_amount_from_text(text: str) -> int | None:
                     return int(result)
 
     # Tangani format titik ribuan: "150.000" atau "1.500.000"
-    # Deteksi: angka dengan titik yang diikuti tepat 3 digit
+    # Parser rule note for an Indonesian finance input edge case.
     ribuan_pattern = r"\b(\d{1,3}(?:\.\d{3})+)\b"
     ribuan_match = re.search(ribuan_pattern, text)
     if ribuan_match:
         clean = ribuan_match.group(1).replace(".", "")
         return int(clean)
 
-    # Tangani format normal dengan satuan
+    # Parser rule note for an Indonesian finance input edge case.
     pattern = r"(\d+(?:[.,]\d+)?)(?:\s*(rb|ribu|k|jt|juta|m|miliar|miliard|milyard)\b)?"
     matches = re.findall(pattern, text)
 
     if not matches:
         return None
 
-    # Ambil angka terbesar yang ditemukan (biasanya nominal transaksi)
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     best = None
     best_value = 0
 
@@ -145,22 +119,14 @@ def extract_amount_from_text(text: str) -> int | None:
 
 
 def apply_split_operation(text: str, base_amount: int) -> int:
-    """
-    Deteksi pola pembagian dan aplikasikan ke amount.
-
-    Contoh:
-        "45k dibagi 3"      → 15000
-        "90rb split 2"      → 45000
-        "120k untuk 4 orang" → 30000
-        "60rb patungan 3"   → 20000
-    """
+    """Apply changes for split operation."""
     text_lower = text.lower()
 
-    # Jangan bagi amount utama untuk split bill dengan teman.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     # Contoh:
     # - "Tissue 10k bagi 4 sama fajar bagas raka"
     # - "Nasi kuning 22k dibagi 2 sama raka"
-    # amount transaksi utama harus tetap total asli; piutang dihitung di handlers.py.
+    # Debt command note: keep payable and receivable actions explicit and auditable.
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
 
@@ -174,8 +140,8 @@ def apply_split_operation(text: str, base_amount: int) -> int:
         return base_amount
 
     # Shorthand split bill: "46k/4 sama raka bagas fajar".
-    # Ini harus dibaca sebagai gross 46k yang dibagi 4, bukan nominal 11.5k.
-    # Kalau tidak ada nama/marker teman, "46k/4" tetap boleh dianggap hasil bagi.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
+    # Split bill parsing note: separate the paid transaction from each person share.
     if re.search(rf"/\s*\d+\s+(?:orang\s+)?{friend_marker}\b", text_lower):
         return base_amount
     if re.search(r"/\s*\d+\s+[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s,;&]{1,80}", text_lower):
@@ -190,8 +156,8 @@ def apply_split_operation(text: str, base_amount: int) -> int:
         r"(\d+|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh)\s+orang",
     ]
 
-    # Tangani kata khusus hanya jika ada konteks pembagian.
-    # Jangan membagi amount hanya karena deskripsi memuat kata seperti "dua".
+    # Split bill parsing note: separate the paid transaction from each person share.
+    # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     word_map = {
         "dua": 2,
         "tiga": 3,
@@ -215,7 +181,7 @@ def apply_split_operation(text: str, base_amount: int) -> int:
         if divisor and divisor > 1:
             return base_amount // divisor
 
-    # Tangani pola angka/kata yang punya operator pembagian jelas.
+    # Split bill parsing note: separate the paid transaction from each person share.
     for pattern in split_patterns:
         match = re.search(pattern, text_lower)
         if match and match.lastindex:

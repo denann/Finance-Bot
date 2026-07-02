@@ -1,3 +1,5 @@
+"""LangChain wrapper for calling Gemini consistently across AI features."""
+
 from __future__ import annotations
 
 import base64
@@ -17,6 +19,7 @@ DEFAULT_INSIGHT_MODEL = os.getenv("GEMINI_INSIGHT_MODEL", "gemini-2.5-flash")
 
 
 def _require_api_key() -> str:
+    """Helper for require api key in the parser and NLP layer."""
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY belum tersedia.")
     return GEMINI_API_KEY
@@ -24,14 +27,7 @@ def _require_api_key() -> str:
 
 @lru_cache(maxsize=32)
 def get_gemini_llm(model_name: str, temperature: float = 0.0) -> ChatGoogleGenerativeAI:
-    """
-    Client Gemini terpusat melalui LangChain.
-
-    Semua pemanggilan Gemini sebaiknya lewat helper ini supaya:
-    - model gampang diganti dari env,
-    - tidak perlu import google.generativeai langsung di banyak file,
-    - text/image/insight punya pola error handling yang sama.
-    """
+    """Retrieve data needed for gemini llm."""
     return ChatGoogleGenerativeAI(
         model=model_name,
         google_api_key=_require_api_key(),
@@ -40,7 +36,7 @@ def get_gemini_llm(model_name: str, temperature: float = 0.0) -> ChatGoogleGener
 
 
 def _extract_text(response: Any) -> str:
-    """Ambil teks dari AIMessage LangChain secara aman."""
+    """Extract the important part of the input for text."""
     content = getattr(response, "content", "")
 
     if isinstance(content, str):
@@ -66,13 +62,14 @@ def generate_text_with_gemini(
     model_name: str | None = None,
     temperature: float = 0.0,
 ) -> str:
-    """Buat teks melalui Gemini menggunakan LangChain."""
+    """Helper for generate text with gemini in the parser and NLP layer."""
     llm = get_gemini_llm(model_name or DEFAULT_TEXT_MODEL, float(temperature))
     response = llm.invoke([HumanMessage(content=prompt)])
     return _extract_text(response)
 
 
 def _make_data_url(image_bytes: bytes, mime_type: str) -> str:
+    """Helper for make data url in the parser and NLP layer."""
     encoded = base64.b64encode(image_bytes).decode("utf-8")
     return f"data:{mime_type or 'image/jpeg'};base64,{encoded}"
 
@@ -85,7 +82,7 @@ def generate_text_from_image_with_gemini(
     model_name: str | None = None,
     temperature: float = 0.0,
 ) -> str:
-    """Buat teks dari gambar melalui Gemini Vision menggunakan LangChain."""
+    """Helper for generate text from image with gemini in the parser and NLP layer."""
     if not image_bytes:
         raise ValueError("File gambar kosong atau gagal dibaca.")
 
@@ -102,7 +99,7 @@ def generate_text_from_image_with_gemini(
         response = llm.invoke([HumanMessage(content=content)])
         return _extract_text(response)
     except Exception as first_error:
-        # Beberapa versi adapter menerima bentuk {"url": ...}.
+        # Parser rule note for an Indonesian finance input edge case.
         alt_content = [
             {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": data_url}},

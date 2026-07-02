@@ -1,9 +1,11 @@
 # 01. Project Map
 
-Project ini adalah Telegram personal finance bot. Secara sederhana, alurnya adalah:
+This project is a Telegram-based personal finance assistant.
+
+The practical flow is simple:
 
 ```text
-User Telegram
+User Telegram message
 → Telegram Bot API
 → python-telegram-bot handler
 → Python business logic
@@ -11,67 +13,54 @@ User Telegram
 → Google Sheets
 ```
 
-Untuk fitur AI:
+For AI features:
 
 ```text
-User question / image
-→ handler Telegram
-→ context builder / parser
+User question or image
+→ Telegram handler
+→ context builder or parser
 → Gemini
-→ jawaban ke user
+→ response to user
 ```
 
-## Struktur folder utama
+## Main folders
 
 ```text
 app/
-├── api/                 # FastAPI webhook endpoint, hanya untuk mode webhook
-├── bot/                 # Telegram Application, command handler, message handler, callback flow
-├── nlp/                 # Regex parser, normalizer, Gemini parser, image parser, intent router, parse safety
-├── scheduler/           # APScheduler jobs untuk reminder, summary, recurring task
-├── services/            # Business logic finansial: transaksi, debt, budget, report, net worth, dst.
-├── sheets/              # Google Sheets client, schema bootstrap, atomic write/rollback
-└── config.py            # Load konfigurasi dari environment variable
+├── api/                 # Optional FastAPI webhook endpoint
+├── bot/                 # Telegram application, commands, messages, callbacks
+├── nlp/                 # Regex parser, normalizer, Gemini parser, parse safety
+├── scheduler/           # Scheduled jobs
+├── services/            # Finance business logic
+├── sheets/              # Google Sheets access, schema bootstrap, rollback helper
+└── config.py            # Environment configuration
 
-scripts/
-├── setup_check.py       # Cek setup awal untuk user GitHub
-└── debug_check.py       # Diagnostic lebih lengkap untuk developer
-
-main.py                  # Entrypoint runtime polling/webhook
-README.md                # Dokumentasi utama untuk user
-.env.example             # Env minimal untuk polling mode
-.env.webhook.example     # Env tambahan untuk webhook mode
+scripts/                 # Setup checks, debug checks, and local testers
+docs/                    # Architecture and code documentation
+assets/                  # README images and diagrams
+main.py                  # Runtime entry point
 ```
 
-## Layer dan tanggung jawab
+## Layer responsibility
 
-| Layer | File utama | Tanggung jawab |
+| Layer | Main Files | Responsibility |
 |---|---|---|
-| Runtime | `main.py` | Memilih mode `polling` atau `webhook`, startup scheduler, setup schema Sheets |
-| Config | `app/config.py` | Membaca `.env`, validasi mode, nama sheet |
-| Telegram app | `app/bot/application.py` | Membuat Telegram Application dan register semua handler |
-| Handler facade | `app/bot/handlers.py` | Re-export handler dari file kecil di `handler_parts` |
-| Command handler | `app/bot/handler_parts/command_handlers.py` | `/start`, `/help`, `/saldo`, `/ask`, `/audit`, `/budget`, dll. |
-| Message handler | `app/bot/handler_parts/message_handlers.py` | Input natural language, gambar, Gemini intent fallback |
-| Callback handler | `app/bot/handler_parts/callback_handler.py` | Tombol inline: lanjut, simpan, batal, edit, account choice, debt decision |
-| Transaction flow | `app/bot/handler_parts/transaction_flow.py` | Preview, edit dulu, mixed transaction, parse safety preview |
-| NLP/parser | `app/nlp/` | Regex parser, normalisasi nominal, Gemini parser, parse safety routing |
-| Service layer | `app/services/` | Operasi bisnis yang mengubah/membaca data finance |
-| Sheets layer | `app/sheets/client.py` | Read/write Google Sheets, auto schema, retry, rollback |
+| Runtime | `main.py` | Select polling or webhook mode, start scheduler, prepare Sheets schema |
+| Config | `app/config.py` | Load environment variables and sheet names |
+| Telegram App | `app/bot/application.py` | Build the Telegram Application and register handlers |
+| Commands | `app/bot/handler_parts/command_handlers.py` | Handle explicit commands such as `/saldo`, `/budget`, `/ask`, `/audit` |
+| Messages | `app/bot/handler_parts/message_handlers.py` | Handle natural-language text and image input |
+| Callbacks | `app/bot/handler_parts/callback_handler.py` | Handle inline buttons such as edit, continue, save, and cancel |
+| Parser | `app/nlp/` | Parse Indonesian finance input into structured data |
+| Services | `app/services/` | Apply finance business rules and read/write records |
+| Data Layer | `app/sheets/client.py` | Connect to Google Sheets, validate schema, retry writes, and rollback when possible |
 
-## Mental model paling penting
+## Mental model
 
-Project ini sengaja memisahkan tiga hal:
+The project intentionally separates three responsibilities:
 
-1. **Handler** menjawab: user sedang mengirim apa?
-2. **Service** menjawab: perubahan data finance apa yang harus terjadi?
-3. **Sheets client** menjawab: bagaimana data ditulis ke Google Sheets dengan aman?
+1. **Handler layer** decides what the user is trying to do.
+2. **Service layer** decides what finance data should change.
+3. **Sheets layer** decides how data is read or written safely.
 
-Jadi kalau ada bug, jangan langsung ubah semua file. Cari dulu bug-nya ada di layer mana.
-
-Contoh:
-
-- Input salah dibaca → cek `app/nlp/regex_parser.py`, `normalizer.py`, atau `parse_safety.py`.
-- Preview/tombol tidak sesuai → cek `transaction_flow.py` atau `callback_handler.py`.
-- Data tersimpan salah → cek service terkait, misalnya `transaction_service.py` atau `debt_service.py`.
-- Error Google Sheets → cek `app/sheets/client.py` dan env credential.
+This makes debugging easier. If the parser reads an input incorrectly, start from `app/nlp/`. If a button flow is wrong, check `transaction_flow.py` or `callback_handler.py`. If saved data is wrong, check the relevant service file. If Sheets fails, check `app/sheets/client.py` and the environment setup.
