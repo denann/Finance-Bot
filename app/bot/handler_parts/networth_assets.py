@@ -667,11 +667,11 @@ def build_asset_added_text(asset: dict) -> str:
 
 
 def asset_edit_or_continue_keyboard() -> InlineKeyboardMarkup:
-    """Helper for asset edit or continue keyboard in the Telegram bot flow."""
+    """Build the save/edit/cancel keyboard for asset preview."""
     return InlineKeyboardMarkup([
         [
+            InlineKeyboardButton("✅ Simpan", callback_data="confirm:asset"),
             InlineKeyboardButton("✏️ Edit dulu", callback_data="editflow:edit:asset"),
-            InlineKeyboardButton("➡️ Lanjut", callback_data="editflow:continue:asset"),
         ],
         [InlineKeyboardButton("❌ Batal", callback_data="cancel:asset")],
     ])
@@ -987,7 +987,7 @@ async def handle_pending_asset_add_flow(update: Update, context: ContextTypes.DE
         context.user_data.pop(ASSET_ADD_FLOW_KEY, None)
 
         await update.message.reply_text(
-            f"{build_asset_confirm_preview(asset_data)}\n\nMau edit dulu atau lanjut ke simpan?",
+            f"{build_asset_confirm_preview(asset_data)}\n\nMau simpan, edit dulu, atau batal?",
             parse_mode="Markdown",
             reply_markup=asset_edit_or_continue_keyboard(),
         )
@@ -1028,7 +1028,7 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_asset_price", None)
 
         await update.message.reply_text(
-            f"{build_asset_confirm_preview(data)}\n\nMau edit dulu atau lanjut ke simpan?",
+            f"{build_asset_confirm_preview(data)}\n\nMau simpan, edit dulu, atau batal?",
             parse_mode="Markdown",
             reply_markup=asset_edit_or_continue_keyboard(),
         )

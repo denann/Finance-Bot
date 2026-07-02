@@ -38,6 +38,11 @@ from app.bot.handler_parts.transaction_flow import (
     debt_uses_cashflow,
     enrich_ditalangin_split_bill_if_any,
     edit_or_continue_keyboard,
+    preview_action_keyboard,
+    preview_action_question,
+    single_ready_to_save,
+    mixed_ready_to_save,
+    debt_ready_to_save,
     handle_pending_missing_amount,
     handle_pending_preview_edit,
     mixed_needs_account,
@@ -178,10 +183,11 @@ async def debt_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data.pop("pending_batch", None)
     context.user_data.pop("pending_debt_batch", None)
 
+    ready_to_save = debt_ready_to_save(debt_parsed)
     await update.message.reply_text(
-        f"{build_debt_initial_preview(debt_parsed)}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+        f"{build_debt_initial_preview(debt_parsed)}\n\n{preview_action_question(ready_to_save)}",
         parse_mode="Markdown",
-        reply_markup=edit_or_continue_keyboard("debt"),
+        reply_markup=preview_action_keyboard("debt", ready_to_save),
     )
 
     return True
@@ -859,10 +865,11 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         preview = build_preview(parsed)
+        ready_to_save = single_ready_to_save(parsed)
         await status_msg.edit_text(
-            f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+            f"{preview}\n\n{preview_action_question(ready_to_save)}",
             parse_mode="Markdown",
-            reply_markup=edit_or_continue_keyboard("single"),
+            reply_markup=preview_action_keyboard("single", ready_to_save),
         )
         return
 
@@ -894,10 +901,11 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=mixed_split_bill_keyboard(mixed_items),
         )
     else:
+        ready_to_save = mixed_ready_to_save(mixed_items)
         await status_msg.edit_text(
-            f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+            f"{preview}\n\n{preview_action_question(ready_to_save)}",
             parse_mode="Markdown",
-            reply_markup=edit_or_continue_keyboard("mixed"),
+            reply_markup=preview_action_keyboard("mixed", ready_to_save),
         )
 
 # ── Message Handler ──────────────────────────────────────────────────────────
@@ -948,9 +956,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_asset_price", None)
 
         await update.message.reply_text(
-            f"{build_asset_confirm_preview(pending_asset)}\n\nMau edit dulu atau lanjut ke simpan?",
+            f"{build_asset_confirm_preview(pending_asset)}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
-            reply_markup=edit_or_continue_keyboard("asset"),
+            reply_markup=preview_action_keyboard("asset", True),
         )
         return
 
@@ -1009,9 +1017,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["pending_expense_confirm"] = item
         await update.message.reply_text(
-            f"{build_pending_expense_confirm_preview(item, include_question=False)}\n\nMau edit dulu atau lanjut ke simpan?",
+            f"{build_pending_expense_confirm_preview(item, include_question=False)}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
-            reply_markup=edit_or_continue_keyboard("pending_expense"),
+            reply_markup=preview_action_keyboard("pending_expense", True),
         )
         return
 
@@ -1129,11 +1137,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=mixed_split_bill_keyboard(mixed_items),
                 )
             else:
+                ready_to_save = mixed_ready_to_save(mixed_items)
                 await reply_update_safely(
                     update,
-                    f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+                    f"{preview}\n\n{preview_action_question(ready_to_save)}",
                     parse_mode="Markdown",
-                    reply_markup=edit_or_continue_keyboard("mixed"),
+                    reply_markup=preview_action_keyboard("mixed", ready_to_save),
                 )
 
             return
@@ -1246,11 +1255,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=split_bill_keyboard("single"),
         )
     else:
+        ready_to_save = single_ready_to_save(parsed)
         await reply_update_safely(
             update,
-            f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+            f"{preview}\n\n{preview_action_question(ready_to_save)}",
             parse_mode="Markdown",
-            reply_markup=edit_or_continue_keyboard("single"),
+            reply_markup=preview_action_keyboard("single", ready_to_save),
         )
 
 

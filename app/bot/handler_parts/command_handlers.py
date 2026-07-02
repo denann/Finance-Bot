@@ -4,7 +4,7 @@
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
-from app.bot.handler_parts.transaction_flow import build_pending_expense_confirm_preview, edit_or_continue_keyboard
+from app.bot.handler_parts.transaction_flow import build_pending_expense_confirm_preview, preview_action_keyboard, preview_action_question
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1350,9 +1350,9 @@ async def pending_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     context.user_data["pending_expense_confirm"] = item
     await update.message.reply_text(
-        f"{build_pending_expense_confirm_preview(item, include_question=False)}\n\nMau edit dulu atau lanjut ke simpan?",
+        f"{build_pending_expense_confirm_preview(item, include_question=False)}\n\n{preview_action_question(True)}",
         parse_mode="Markdown",
-        reply_markup=edit_or_continue_keyboard("pending_expense"),
+        reply_markup=preview_action_keyboard("pending_expense", True),
     )
 
 

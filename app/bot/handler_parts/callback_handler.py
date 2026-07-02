@@ -30,6 +30,11 @@ from app.bot.handler_parts.transaction_flow import (
     create_split_bill_debt,
     debt_uses_cashflow,
     edit_or_continue_keyboard,
+    preview_action_keyboard,
+    preview_action_question,
+    single_ready_to_save,
+    mixed_ready_to_save,
+    debt_ready_to_save,
     format_split_debt_result_lines,
     mixed_split_bill_keyboard,
     mixed_split_bill_needs_decision,
@@ -489,11 +494,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_mixed", None)
             clear_parse_clarification_state(context)
 
+            ready_to_save = debt_ready_to_save(debt_parsed)
             await safe_edit_message(
                 query,
-                f"{build_debt_initial_preview(debt_parsed)}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+                f"{build_debt_initial_preview(debt_parsed)}\n\n{preview_action_question(ready_to_save)}",
                 parse_mode="Markdown",
-                reply_markup=edit_or_continue_keyboard("debt"),
+                reply_markup=preview_action_keyboard("debt", ready_to_save),
             )
             return
 
@@ -515,11 +521,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_mixed", None)
             clear_parse_clarification_state(context)
 
+            ready_to_save = debt_ready_to_save(debt_parsed)
             await safe_edit_message(
                 query,
-                f"{build_debt_initial_preview(debt_parsed)}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+                f"{build_debt_initial_preview(debt_parsed)}\n\n{preview_action_question(ready_to_save)}",
                 parse_mode="Markdown",
-                reply_markup=edit_or_continue_keyboard("debt"),
+                reply_markup=preview_action_keyboard("debt", ready_to_save),
             )
             return
 
@@ -551,11 +558,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
+            ready_to_save = single_ready_to_save(clarified)
             await safe_edit_message(
                 query,
-                f"{build_preview(clarified)}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+                f"{build_preview(clarified)}\n\n{preview_action_question(ready_to_save)}",
                 parse_mode="Markdown",
-                reply_markup=edit_or_continue_keyboard("single"),
+                reply_markup=preview_action_keyboard("single", ready_to_save),
             )
             return
 
@@ -1188,20 +1196,22 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if context.user_data.get("mixed_review_preview_sent"):
                 short_summary = build_mixed_short_summary(mixed_items)
+                ready_to_save = mixed_ready_to_save(mixed_items)
                 await safe_edit_message(query, 
-                    f"✅ Split bill sudah diproses.\n\n{short_summary}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+                    f"✅ Split bill sudah diproses.\n\n{short_summary}\n\n{preview_action_question(ready_to_save)}",
                     parse_mode="Markdown",
-                    reply_markup=edit_or_continue_keyboard("mixed"),
+                    reply_markup=preview_action_keyboard("mixed", ready_to_save),
                 )
                 return
 
             preview = build_mixed_preview(mixed_items)
             context.user_data["mixed_review_preview_sent"] = True
 
+            ready_to_save = mixed_ready_to_save(mixed_items)
             await safe_edit_message(query, 
-                f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+                f"{preview}\n\n{preview_action_question(ready_to_save)}",
                 parse_mode="Markdown",
-                reply_markup=edit_or_continue_keyboard("mixed"),
+                reply_markup=preview_action_keyboard("mixed", ready_to_save),
             )
             return
 
@@ -1249,10 +1259,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["pending_parsed"] = parsed
         preview = build_preview(parsed)
 
+        ready_to_save = single_ready_to_save(parsed)
         await safe_edit_message(query, 
-            f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+            f"{preview}\n\n{preview_action_question(ready_to_save)}",
             parse_mode="Markdown",
-            reply_markup=edit_or_continue_keyboard("single"),
+            reply_markup=preview_action_keyboard("single", ready_to_save),
         )
         return
 

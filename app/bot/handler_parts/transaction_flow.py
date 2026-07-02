@@ -329,11 +329,12 @@ async def continue_after_missing_amount_mixed(update: Update, context: ContextTy
             reply_markup=mixed_split_bill_keyboard(mixed_items),
         )
     else:
+        ready_to_save = mixed_ready_to_save(mixed_items)
         await reply_update_safely(
             update,
-            f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+            f"{preview}\n\n{preview_action_question(ready_to_save)}",
             parse_mode="Markdown",
-            reply_markup=edit_or_continue_keyboard("mixed"),
+            reply_markup=preview_action_keyboard("mixed", ready_to_save),
         )
 
 
@@ -396,11 +397,12 @@ async def handle_pending_missing_amount(update: Update, context: ContextTypes.DE
         context.user_data.pop("pending_mixed", None)
 
         preview = build_preview(parsed)
+        ready_to_save = single_ready_to_save(parsed)
         await reply_update_safely(
             update,
-            f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
+            f"{preview}\n\n{preview_action_question(ready_to_save)}",
             parse_mode="Markdown",
-            reply_markup=edit_or_continue_keyboard("single"),
+            reply_markup=preview_action_keyboard("single", ready_to_save),
         )
         return True
 
@@ -457,7 +459,7 @@ def mixed_needs_account(mixed_items: list[dict]) -> bool:
 
 
 def edit_or_continue_keyboard(scope: str) -> InlineKeyboardMarkup:
-    """Helper for edit or continue keyboard in the Telegram bot flow."""
+    """Build keyboard for previews that still need an extra step before save."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✏️ Edit dulu", callback_data=f"editflow:edit:{scope}"),
@@ -465,6 +467,51 @@ def edit_or_continue_keyboard(scope: str) -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{scope}")],
     ])
+
+
+def _confirm_target_for_edit_scope(scope: str) -> str:
+    """Map edit-preview scope to the confirm callback target."""
+    return "pending" if scope == "single" else scope
+
+
+def save_edit_cancel_keyboard(scope: str) -> InlineKeyboardMarkup:
+    """Build keyboard for previews that are already ready to save."""
+    confirm_target = _confirm_target_for_edit_scope(scope)
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Simpan", callback_data=f"confirm:{confirm_target}"),
+            InlineKeyboardButton("✏️ Edit dulu", callback_data=f"editflow:edit:{scope}"),
+        ],
+        [InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{scope}")],
+    ])
+
+
+def preview_action_keyboard(scope: str, ready_to_save: bool) -> InlineKeyboardMarkup:
+    """Choose the right preview keyboard based on whether the item can be saved now."""
+    return save_edit_cancel_keyboard(scope) if ready_to_save else edit_or_continue_keyboard(scope)
+
+
+def preview_action_question(ready_to_save: bool) -> str:
+    """Return the short question shown below a preview."""
+    if ready_to_save:
+        return "Mau simpan, edit dulu, atau batal?"
+    return "Mau edit dulu atau lanjut ke rekening/simpan?"
+
+
+def single_ready_to_save(parsed: dict) -> bool:
+    """Check whether a single transaction can be saved from the preview screen."""
+    return not split_bill_needs_decision(parsed) and not needs_account(parsed)
+
+
+def mixed_ready_to_save(mixed_items: list[dict]) -> bool:
+    """Check whether mixed input can be saved from the preview screen."""
+    return not mixed_split_bill_needs_decision(mixed_items) and not mixed_needs_account(mixed_items)
+
+
+def debt_ready_to_save(debt_parsed: dict) -> bool:
+    """Check whether a debt preview can be saved without asking another question."""
+    intent = (debt_parsed or {}).get("intent")
+    return not (debt_uses_cashflow(debt_parsed or {}) and intent != "offset_debt" and not (debt_parsed or {}).get("account"))
 
 
 def build_parse_safety_notice(assessment: dict, mode: str = "warning") -> str:
@@ -1052,11 +1099,12 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
 
         item_summary = build_updated_item_summary(item, item_index + 1)
         short_summary = build_mixed_short_summary(mixed_items)
+        ready_to_save = mixed_ready_to_save(mixed_items)
         await reply_update_safely(
             update,
-            f"{item_summary}\n\n{short_summary}\n\nMau edit lagi atau lanjut?",
+            f"{item_summary}\n\n{short_summary}\n\n{preview_action_question(ready_to_save)}",
             parse_mode="Markdown",
-            reply_markup=edit_or_continue_keyboard("mixed"),
+            reply_markup=preview_action_keyboard("mixed", ready_to_save),
         )
         return True
 
@@ -1078,11 +1126,12 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
         context.user_data.pop("pending_preview_edit", None)
 
         short_summary = build_debt_short_summary(debt_parsed)
+        ready_to_save = debt_ready_to_save(debt_parsed)
         await reply_update_safely(
             update,
-            f"✅ Preview debt sudah diupdate.\n\n{short_summary}\n\nMau edit lagi atau lanjut?",
+            f"✅ Preview debt sudah diupdate.\n\n{short_summary}\n\n{preview_action_question(ready_to_save)}",
             parse_mode="Markdown",
-            reply_markup=edit_or_continue_keyboard("debt"),
+            reply_markup=preview_action_keyboard("debt", ready_to_save),
         )
         return True
 
@@ -1112,9 +1161,9 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
 
         await reply_update_safely(
             update,
-            f"✅ Preview pending expense sudah diupdate.\n\n{build_pending_expense_confirm_preview(item, include_question=False)}\n\nMau edit lagi atau lanjut?",
+            f"✅ Preview pending expense sudah diupdate.\n\n{build_pending_expense_confirm_preview(item, include_question=False)}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
-            reply_markup=edit_or_continue_keyboard("pending_expense"),
+            reply_markup=preview_action_keyboard("pending_expense", True),
         )
         return True
 
@@ -1143,9 +1192,9 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
 
         await reply_update_safely(
             update,
-            f"✅ Preview aset sudah diupdate.\n\n{build_asset_confirm_preview(asset)}\n\nMau edit lagi atau lanjut?",
+            f"✅ Preview aset sudah diupdate.\n\n{build_asset_confirm_preview(asset)}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
-            reply_markup=edit_or_continue_keyboard("asset"),
+            reply_markup=preview_action_keyboard("asset", True),
         )
         return True
 
@@ -1160,11 +1209,12 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
     context.user_data.pop("pending_preview_edit", None)
 
     short_summary = build_single_short_summary(parsed)
+    ready_to_save = single_ready_to_save(parsed)
     await reply_update_safely(
         update,
-        f"✅ Preview sudah diupdate.\n\n{short_summary}\n\nMau edit lagi atau lanjut?",
+        f"✅ Preview sudah diupdate.\n\n{short_summary}\n\n{preview_action_question(ready_to_save)}",
         parse_mode="Markdown",
-        reply_markup=edit_or_continue_keyboard("single"),
+        reply_markup=preview_action_keyboard("single", ready_to_save),
     )
     return True
 
