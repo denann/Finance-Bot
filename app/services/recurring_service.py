@@ -1,4 +1,5 @@
-"""Recurring transaction service for recurring rules, next run dates, reminders, and automatic transaction creation."""
+"""Recurring transaction service for rules, due dates, logs, and generated transactions."""
+
 
 import calendar
 import uuid
@@ -66,7 +67,7 @@ def generate_recurring_log_id() -> str:
 
 
 def parse_date(value: str) -> date | None:
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for date."""
     try:
         return datetime.strptime(str(value), "%Y-%m-%d").date()
     except Exception:
@@ -82,7 +83,7 @@ def safe_float(value) -> float:
 
 
 def normalize_day_of_month(day) -> int:
-    """Clean and standardize normalize day of month."""
+    """Normalize and clean input for day of month."""
     try:
         day_int = int(day)
     except Exception:
@@ -95,7 +96,7 @@ def normalize_day_of_month(day) -> int:
 
 
 def normalize_frequency(value: str) -> str:
-    """Clean and standardize normalize frequency."""
+    """Normalize and clean input for frequency."""
     clean = str(value or "").strip().lower()
 
     aliases = {
@@ -114,7 +115,7 @@ def normalize_frequency(value: str) -> str:
 
 
 def get_last_day_of_month(year: int, month: int) -> int:
-    """Retrieve data needed for last day of month."""
+    """Get data needed for last day of month."""
     return calendar.monthrange(year, month)[1]
 
 
@@ -125,7 +126,7 @@ def clamp_day(year: int, month: int, day: int) -> int:
 
 
 def calculate_next_monthly_run(day_of_month: int, from_date: date | None = None) -> str:
-    """Calculate derived values for calculate next monthly run."""
+    """Calculate derived values for next monthly run."""
     base = from_date or datetime.now().date()
 
     target_day = clamp_day(base.year, base.month, day_of_month)
@@ -148,7 +149,7 @@ def calculate_next_monthly_run(day_of_month: int, from_date: date | None = None)
 
 
 def calculate_next_run_after_execution(rule: dict, run_date: date | None = None) -> str:
-    """Calculate derived values for calculate next run after execution."""
+    """Calculate derived values for next run after execution."""
     frequency = normalize_frequency(rule.get("frequency"))
     day_of_month = normalize_day_of_month(rule.get("day_of_month"))
 
@@ -234,7 +235,7 @@ def add_recurring_rule(
 
 
 def get_recurring_rules(active_only: bool = False) -> list[dict]:
-    """Retrieve data needed for recurring rules."""
+    """Get data needed for recurring rules."""
     records = get_all_records(SHEET_RECURRING_RULES)
 
     if not active_only:
@@ -247,7 +248,7 @@ def get_recurring_rules(active_only: bool = False) -> list[dict]:
 
 
 def get_due_recurring_rules(target_date: date | None = None) -> list[dict]:
-    """Retrieve data needed for due recurring rules."""
+    """Get data needed for due recurring rules."""
     target = target_date or datetime.now().date()
     active_rules = get_recurring_rules(active_only=True)
 
@@ -266,7 +267,7 @@ def get_due_recurring_rules(target_date: date | None = None) -> list[dict]:
 
 
 def find_recurring_rule_row_index(rule_id: str) -> int | None:
-    """Helper for find recurring rule row index in the finance service layer."""
+    """Find a record for recurring rule row index."""
     records = get_all_records(SHEET_RECURRING_RULES)
 
     for idx, record in enumerate(records, start=2):
@@ -277,7 +278,7 @@ def find_recurring_rule_row_index(rule_id: str) -> int | None:
 
 
 def update_recurring_rule_cells(rule_id: str, updates: dict) -> bool:
-    """Update recurring rule cells while keeping related data consistent."""
+    """Update existing data for recurring rule cells."""
     row_index = find_recurring_rule_row_index(rule_id)
 
     if not row_index:
@@ -304,7 +305,7 @@ def disable_recurring_rule(rule_id: str) -> bool:
     )
 
 def get_recurring_rule_by_id(rule_id: str) -> dict | None:
-    """Retrieve data needed for recurring rule by id."""
+    """Get data needed for recurring rule by id."""
     records = get_all_records(SHEET_RECURRING_RULES)
 
     for record in records:
@@ -315,7 +316,7 @@ def get_recurring_rule_by_id(rule_id: str) -> dict | None:
 
 
 def normalize_recurring_edit_field(field: str) -> str | None:
-    """Clean and standardize normalize recurring edit field."""
+    """Normalize and clean input for recurring edit field."""
     key = str(field or "").strip().lower()
 
     aliases = {
@@ -375,7 +376,7 @@ def normalize_recurring_edit_field(field: str) -> str | None:
 
 
 def normalize_recurring_edit_value(field: str, value):
-    """Clean and standardize normalize recurring edit value."""
+    """Normalize and clean input for recurring edit value."""
     value = str(value or "").strip()
 
     if field == "type":
@@ -664,7 +665,7 @@ def process_due_recurring_rules(target_date: date | None = None) -> dict:
             message = str(e)
 
             # Recurring command note: this handles repeated bills or scheduled transactions.
-            # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+            # Debt flow section
             results["success"] = []
             results["failed"].append(
                 {

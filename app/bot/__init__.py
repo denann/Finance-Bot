@@ -1,3 +1,4 @@
-"""Telegram bot package containing handlers, keyboards, and application setup."""
+"""Telegram bot package containing application setup, handlers, and keyboards."""
+
 
 

@@ -1,4 +1,5 @@
-"""Pending expense service for planned or incomplete expenses that should not immediately affect cash balance."""
+"""Pending expense service for planned expenses or bills that should not immediately affect account balances."""
+
 
 from __future__ import annotations
 
@@ -101,7 +102,7 @@ def current_month() -> str:
 
 
 def format_rupiah(amount: float) -> str:
-    """Format rupiah into readable text."""
+    """Format data into a readable display for rupiah."""
     return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
 
 
@@ -121,7 +122,7 @@ def generate_pending_id() -> str:
 
 
 def normalize_month(month: str | None = None) -> str:
-    """Clean and standardize normalize month."""
+    """Normalize and clean input for month."""
     if not month:
         return current_month()
 
@@ -168,7 +169,7 @@ def month_last_day(year: int, month_num: int) -> int:
 
 
 def parse_day_current_or_next_month(day_raw: str) -> str | None:
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for day current or next month."""
     try:
         day_num = int(day_raw)
     except Exception:
@@ -180,7 +181,7 @@ def parse_day_current_or_next_month(day_raw: str) -> str | None:
     target_day = min(day_num, month_last_day(base.year, base.month))
     target = date(base.year, base.month, target_day)
 
-    # Pending expense note: planned items should not be recorded as actual transactions yet.
+    # Pending expense section
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     if target < base:
         next_month = add_months(base.strftime("%Y-%m"), 1)
@@ -192,7 +193,7 @@ def parse_day_current_or_next_month(day_raw: str) -> str | None:
 
 
 def parse_month_only_from_text(text: str) -> str | None:
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for month only from text."""
     clean = str(text or "").strip().lower().replace("/", "-")
 
     if re.search(r"\bbulan\s+ini\b", clean):
@@ -274,12 +275,12 @@ def detect_pending_due(text: str) -> tuple[str, str, str]:
 
 
 def has_past_time_marker(text: str) -> bool:
-    """Check a boolean condition for has past time marker."""
+    """Check whether data has past time marker."""
     clean = str(text or "").strip().lower().replace("/", "-")
     if not clean:
         return False
 
-    # Implementation note for this project-specific finance flow.
+    # Implementation section
     if re.search(
         r"\b(kemarin|tadi|barusan|baru aja|minggu lalu|pekan lalu|bulan lalu|tahun lalu)\b",
         clean,
@@ -318,12 +319,12 @@ def has_past_time_marker(text: str) -> bool:
     return False
 
 def clean_pending_text(text: str) -> str:
-    """Clean and standardize clean pending text."""
+    """Clean input values for pending text."""
     clean = str(text or "").strip()
     clean = re.sub(r"^/(pending_add|pending|rencana)\b", "", clean, flags=re.IGNORECASE).strip()
 
-    # Pending expense note: planned items should not be recorded as actual transactions yet.
-    # Contoh:
+    # Pending expense section
+    # Implementation note for this project-specific finance flow.
     # - nanti perlu bayar wisuda 750k -> bayar wisuda 750k
     # - perlu 750k create bayar wisuda -> 750k create bayar wisuda
     # - bakal service motor 300k -> service motor 300k
@@ -343,7 +344,7 @@ def clean_pending_text(text: str) -> str:
 
 
 def is_pending_expense_text(text: str) -> bool:
-    """Check a boolean condition for is pending expense text."""
+    """Check whether a condition is true for pending expense text."""
     raw = str(text or "").strip()
     if not raw or raw.startswith("/"):
         return False
@@ -358,7 +359,7 @@ def is_pending_expense_text(text: str) -> bool:
         return False
 
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
-    # Pending expense note: planned items should not be recorded as actual transactions yet.
+    # Pending expense section
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     if any(keyword in clean for keyword in PAST_OR_ACTUAL_KEYWORDS) or has_past_time_marker(clean):
         return False
@@ -370,21 +371,21 @@ def is_pending_expense_text(text: str) -> bool:
     if starts_with_pending:
         return True
 
-    # Implementation note for this project-specific finance flow.
+    # Implementation section
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
-    # Pending expense note: planned items should not be recorded as actual transactions yet.
+    # Pending expense section
     if re.search(r"\b(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)\b", clean):
         return False
 
-    # Pending expense note: planned items should not be recorded as actual transactions yet.
+    # Pending expense section
     # marker waktunya jelas masa depan, misalnya:
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     # - "minggu depan service motor 300k"
     # - "besok service motor 300k"
-    # 
+    #
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
-    # Implementation note for this project-specific finance flow.
+    # Implementation section
     future_time_marker = re.search(
         r"\b(besok|lusa|minggu depan|pekan depan|bulan depan|akhir bulan)\b",
         clean,
@@ -489,7 +490,7 @@ def build_pending_expense_from_text(text: str) -> dict:
 
 
 def save_pending_expense(item: dict) -> dict:
-    """Save pending expense after validation and confirmation."""
+    """Save data after validation and confirmation for pending expense."""
     item = dict(item or {})
     if not item.get("id"):
         item["id"] = generate_pending_id()
@@ -508,7 +509,7 @@ def add_pending_expense_from_text(text: str) -> dict:
 
 
 def get_pending_expenses(period: str | None = None, active_only: bool = True) -> dict:
-    """Retrieve data needed for pending expenses."""
+    """Get data needed for pending expenses."""
     records = get_all_records(SHEET_PENDING_EXPENSES)
     clean_period = str(period or "").strip().lower()
 
@@ -569,7 +570,7 @@ def get_pending_expenses(period: str | None = None, active_only: bool = True) ->
 
 
 def find_pending_by_ref(ref: str) -> tuple[int | None, dict | None]:
-    """Helper for find pending by ref in the finance service layer."""
+    """Find a record for pending by ref."""
     ref = str(ref or "").strip()
     if not ref:
         return None, None
@@ -584,7 +585,7 @@ def find_pending_by_ref(ref: str) -> tuple[int | None, dict | None]:
 
 def update_pending_status(row_index: int, status: str, paid_transaction_id: str = "") -> None:
     # Columns: status=10, updated_at=12, paid_transaction_id=13
-    """Update pending status while keeping related data consistent."""
+    """Update existing data for pending status."""
     update_cell(SHEET_PENDING_EXPENSES, row_index, 10, status)
     update_cell(SHEET_PENDING_EXPENSES, row_index, 12, now_str())
     if paid_transaction_id:

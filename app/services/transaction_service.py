@@ -1,4 +1,5 @@
-"""Transaction service for saving, editing, deleting, batch writing, balance updates, and debt relation updates."""
+"""Transaction service for saving, editing, deleting, batching, account balance updates, and debt relation updates."""
+
 
 from datetime import datetime, timedelta
 import re
@@ -42,12 +43,12 @@ TIPE_HUTANG_COL = 15
 
 
 def get_current_month_str() -> str:
-    """Retrieve data needed for current month str."""
+    """Get data needed for current month str."""
     return datetime.now().strftime("%Y-%m")
 
 
 def normalize_export_period(period: str | None = None) -> dict:
-    """Clean and standardize normalize export period."""
+    """Normalize and clean input for export period."""
     today = datetime.now().date()
 
     if not period:
@@ -119,7 +120,7 @@ def normalize_export_period(period: str | None = None) -> dict:
 
 
 def parse_date_safe(value):
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for date safe."""
     try:
         return datetime.strptime(str(value), "%Y-%m-%d").date()
     except Exception:
@@ -127,7 +128,7 @@ def parse_date_safe(value):
 
 
 def get_transactions_for_export(period: str | None = None) -> dict:
-    """Retrieve data needed for transactions for export."""
+    """Get data needed for transactions for export."""
     try:
         filter_info = normalize_export_period(period)
     except Exception as e:
@@ -209,7 +210,7 @@ SKIP_ACCOUNT_NAMES = {
 
 
 def is_skip_account_transaction(parsed: dict) -> bool:
-    """Check a boolean condition for is skip account transaction."""
+    """Check whether a condition is true for skip account transaction."""
     account = str(parsed.get("account") or "").strip().lower()
     return bool(parsed.get("skip_account")) or account in SKIP_ACCOUNT_NAMES
 
@@ -268,7 +269,7 @@ def update_transaction_debt_relation(
     debt_ids: list[str],
     tipe_hutang: str = "piutang",
 ) -> dict:
-    """Update transaction debt relation while keeping related data consistent."""
+    """Update existing data for transaction debt relation."""
     transaction_id = str(transaction_id or "").strip()
     clean_debt_ids = [str(x).strip() for x in (debt_ids or []) if str(x or "").strip()]
     tipe_hutang = str(tipe_hutang or "").strip()
@@ -303,7 +304,7 @@ def update_transaction_debt_relation(
 
 
 def clear_transaction_debt_relation(transaction_id: str) -> dict:
-    """Clear or reset transaction debt relation."""
+    """Helper for clear transaction debt relation in the finance service layer."""
     transaction_id = str(transaction_id or "").strip()
     if not transaction_id:
         return {"success": False, "message": "transaction_id kosong."}
@@ -319,7 +320,7 @@ def clear_transaction_debt_relation(transaction_id: str) -> dict:
 
 
 def validate_transaction(parsed: dict) -> tuple[bool, str]:
-    """Validate data before it is used by the finance service layer."""
+    """Validate data before it is used by transaction."""
     txn_type = str(parsed.get("type") or "").strip().lower()
 
     try:
@@ -333,7 +334,7 @@ def validate_transaction(parsed: dict) -> tuple[bool, str]:
     if txn_type not in ["expense", "income", "transfer", "debt_offset", "debt_only"]:
         return False, "Tipe transaksi tidak valid."
 
-    # Transaction service note for keeping account balance and related records consistent.
+    # Account flow section
     parsed["type"] = txn_type
 
     if amount <= 0:
@@ -361,10 +362,10 @@ def validate_transaction(parsed: dict) -> tuple[bool, str]:
     return True, "ok"
 
 
-# ── Account helpers ───────────────────────────────────────────────────────────
+# Account flow section
 
 def get_account_balance(account_name: str) -> float | None:
-    """Retrieve data needed for account balance."""
+    """Get data needed for account balance."""
     records = get_all_records(SHEET_ACCOUNTS)
 
     for record in records:
@@ -375,7 +376,7 @@ def get_account_balance(account_name: str) -> float | None:
 
 
 def update_account_balance(account_name: str, new_balance: float) -> bool:
-    """Update account balance while keeping related data consistent."""
+    """Update existing data for account balance."""
     ACCOUNT_NAME_COL = 1
     BALANCE_COL = 3
     LAST_UPDATED_COL = 5
@@ -395,12 +396,12 @@ def update_account_balance(account_name: str, new_balance: float) -> bool:
 
 
 def get_all_accounts() -> list[dict]:
-    """Retrieve data needed for all accounts."""
+    """Get data needed for all accounts."""
     return get_all_records(SHEET_ACCOUNTS)
 
 
 def get_account_index_map() -> dict:
-    """Retrieve data needed for account index map."""
+    """Get data needed for account index map."""
     records = get_all_records(SHEET_ACCOUNTS)
     result = {}
 
@@ -410,7 +411,7 @@ def get_account_index_map() -> dict:
             continue
 
         result[name.lower()] = {
-            "row": i + 2,  # +2 karena row 1 adalah header
+            "row": i + 2,  # +2 because row 1 is the header.
             "name": name,
             "balance": float(record.get("balance", 0) or 0),
         }
@@ -419,7 +420,7 @@ def get_account_index_map() -> dict:
 
 
 def validate_accounts_exist(account_deltas: dict) -> tuple[bool, list[str]]:
-    """Validate data before it is used by the finance service layer."""
+    """Validate data before it is used by accounts exist."""
     if not account_deltas:
         return True, []
 
@@ -435,7 +436,7 @@ def validate_accounts_exist(account_deltas: dict) -> tuple[bool, list[str]]:
 
 
 def calculate_account_deltas(parsed_items: list[dict]) -> dict:
-    """Calculate derived values for calculate account deltas."""
+    """Calculate derived values for account deltas."""
     deltas = {}
 
     def add_delta(account_name: str, value: float):
@@ -509,7 +510,7 @@ def apply_account_deltas(account_deltas: dict) -> dict:
         account_info = accounts_map.get(account_key)
 
         if not account_info:
-            # Transaction service note for keeping account balance and related records consistent.
+            # Account flow section
             failed_accounts.append(account_name)
             continue
 
@@ -530,7 +531,7 @@ def apply_account_deltas(account_deltas: dict) -> dict:
 # ── Core transaction functions ────────────────────────────────────────────────
 
 def save_transaction(parsed: dict, raw_input: str) -> dict:
-    """Validate and save one transaction, then update related account balances."""
+    """Save data after validation and confirmation for transaction."""
     is_valid, validation_message = validate_transaction(parsed)
     if not is_valid:
         return {
@@ -616,7 +617,7 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
 
 
 def save_transactions_batch(parsed_items: list[dict]) -> dict:
-    """Save multiple transactions in one batch and apply account balance changes safely."""
+    """Save data after validation and confirmation for transactions batch."""
     if not parsed_items:
         return {
             "success": False,
@@ -735,20 +736,20 @@ def save_transactions_batch(parsed_items: list[dict]) -> dict:
 # ── Query functions ───────────────────────────────────────────────────────────
 
 def get_transactions_by_month(year: int, month: int) -> list[dict]:
-    """Retrieve data needed for transactions by month."""
+    """Get data needed for transactions by month."""
     records = get_all_records(SHEET_TRANSACTIONS)
     prefix = f"{year}-{month:02d}"
     return [r for r in records if str(r.get("date", "")).startswith(prefix)]
 
 
 def get_transactions_by_date(date_str: str) -> list[dict]:
-    """Retrieve data needed for transactions by date."""
+    """Get data needed for transactions by date."""
     records = get_all_records(SHEET_TRANSACTIONS)
     return [r for r in records if r.get("date") == date_str]
 
 
 def get_expense_by_category(year: int, month: int) -> dict:
-    """Retrieve data needed for expense by category."""
+    """Get data needed for expense by category."""
     transactions = get_transactions_by_month(year, month)
     result = {}
 
@@ -763,7 +764,7 @@ def get_expense_by_category(year: int, month: int) -> dict:
     return result
 
 def is_debt_cashflow_transaction(txn: dict) -> bool:
-    """Check a boolean condition for is debt cashflow transaction."""
+    """Check whether a condition is true for debt cashflow transaction."""
     category = str(txn.get("category", "")).strip()
     parsed_by = str(txn.get("parsed_by", "")).strip().lower()
 
@@ -771,7 +772,7 @@ def is_debt_cashflow_transaction(txn: dict) -> bool:
 
 
 def parse_transaction_date(date_value: str):
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for transaction date."""
     try:
         return datetime.strptime(str(date_value), "%Y-%m-%d").date()
     except Exception:
@@ -814,7 +815,7 @@ def sort_transactions_sheet_by_date(desc: bool = True) -> dict:
 
 
 def get_transactions_with_row_index() -> list[dict]:
-    """Retrieve data needed for transactions with row index."""
+    """Get data needed for transactions with row index."""
     records = get_all_records(SHEET_TRANSACTIONS)
     result = []
 
@@ -830,7 +831,7 @@ def get_recent_transactions(
     period: str | None = None,
     month: str | None = None,
 ) -> list[dict]:
-    """Retrieve data needed for recent transactions."""
+    """Get data needed for recent transactions."""
     records = get_transactions_with_row_index()
     today = datetime.now().date()
 
@@ -878,7 +879,7 @@ def get_recent_transactions(
     return records[:limit]
 
 def get_transaction_by_id(txn_id: str) -> dict | None:
-    """Retrieve data needed for transaction by id."""
+    """Get data needed for transaction by id."""
     records = get_transactions_with_row_index()
 
     for record in records:
@@ -889,7 +890,7 @@ def get_transaction_by_id(txn_id: str) -> dict | None:
 
 
 def get_transactions_by_ids(txn_ids: list[str]) -> list[dict]:
-    """Retrieve data needed for transactions by ids."""
+    """Get data needed for transactions by ids."""
     target_ids = {str(x).strip() for x in txn_ids if str(x).strip()}
     records = get_transactions_with_row_index()
 
@@ -899,7 +900,7 @@ def get_transactions_by_ids(txn_ids: list[str]) -> list[dict]:
     ]
 
 def get_transactions_by_row_indices(row_indices: list[int]) -> list[dict]:
-    """Retrieve data needed for transactions by row indices."""
+    """Get data needed for transactions by row indices."""
     target_rows = {int(x) for x in row_indices}
     records = get_transactions_with_row_index()
 
@@ -910,7 +911,7 @@ def get_transactions_by_row_indices(row_indices: list[int]) -> list[dict]:
 
 
 def calculate_reverse_deltas_for_delete(transactions: list[dict]) -> dict:
-    """Calculate derived values for calculate reverse deltas for delete."""
+    """Calculate derived values for reverse deltas for delete."""
     deltas = {}
 
     def add_delta(account_name: str, value: float):
@@ -947,7 +948,7 @@ def calculate_reverse_deltas_for_delete(transactions: list[dict]) -> dict:
 
 
 def parse_transaction_debt_ids(txn: dict) -> list[str]:
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for transaction debt ids."""
     raw = str(txn.get("hutang_id", "") or "").strip()
     if not raw:
         return []
@@ -1040,7 +1041,7 @@ def preview_delete_transactions(txn_ids: list[str]) -> dict:
 
 
 def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
-    """Delete transactions by ids with validation for related data."""
+    """Delete data safely for transactions by ids."""
     preview = preview_delete_transactions(txn_ids)
 
     deletable = preview["deletable"]
@@ -1093,8 +1094,8 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
             linked_ids = parse_transaction_debt_ids(txn)
             category = str(txn.get("category", "") or "").strip()
 
-            # Transaction service note for keeping account balance and related records consistent.
-            # Debt payment note: settlement and void actions must stay explicit for auditability.
+            # Account flow section
+            # Debt flow section
             if category in {"Pembayaran Piutang", "Bayar Utang"}:
                 reverse_result = reverse_debt_payment_transaction(txn)
                 if not reverse_result.get("success"):
@@ -1180,7 +1181,7 @@ def delete_transactions_by_refs(
     row_indices: list[int] | None = None,
     txn_ids: list[str] | None = None,
 ) -> dict:
-    """Delete transactions by refs with validation for related data."""
+    """Delete data safely for transactions by refs."""
     preview = preview_delete_transactions_by_refs(row_indices, txn_ids)
 
     deletable = preview["deletable"]
@@ -1406,11 +1407,11 @@ FIELD_ALIASES = {
 
 
 def normalize_edit_field(field: str) -> str | None:
-    """Clean and standardize normalize edit field."""
+    """Normalize and clean input for edit field."""
     key = str(field or "").strip().lower()
 
     # Split bill parsing note: separate the paid transaction from each person share.
-    # Transaction service note for keeping account balance and related records consistent.
+    # Account flow section
     if key in EDITABLE_TRANSACTION_FIELDS:
         return key
 
@@ -1418,7 +1419,7 @@ def normalize_edit_field(field: str) -> str | None:
 
 
 def normalize_edit_updates(updates: dict) -> dict:
-    """Clean and standardize normalize edit updates."""
+    """Normalize and clean input for edit updates."""
     normalized = {}
 
     for raw_field, value in updates.items():
@@ -1469,7 +1470,7 @@ def get_single_transaction_by_ref(
     row_index: int | None = None,
     txn_id: str | None = None,
 ) -> dict | None:
-    """Retrieve data needed for single transaction by ref."""
+    """Get data needed for single transaction by ref."""
     if row_index:
         matches = get_transactions_by_row_indices([row_index])
         return matches[0] if matches else None
@@ -1510,7 +1511,7 @@ def build_transaction_row_from_record(txn: dict) -> list:
 
 
 def calculate_account_effect(txn: dict) -> dict:
-    """Calculate derived values for calculate account effect."""
+    """Calculate derived values for account effect."""
     deltas = {}
 
     def add_delta(account_name: str, value: float):
@@ -1546,7 +1547,7 @@ def calculate_account_effect(txn: dict) -> dict:
 
 
 def calculate_edit_net_deltas(old_txn: dict, new_txn: dict) -> dict:
-    """Calculate derived values for calculate edit net deltas."""
+    """Calculate derived values for edit net deltas."""
     old_effect = calculate_account_effect(old_txn)
     new_effect = calculate_account_effect(new_txn)
 
@@ -1563,7 +1564,7 @@ def calculate_edit_net_deltas(old_txn: dict, new_txn: dict) -> dict:
 
 
 def validate_edit_transaction(txn: dict) -> tuple[bool, str]:
-    """Validate data before it is used by the finance service layer."""
+    """Validate data before it is used by edit transaction."""
     txn_type = str(txn.get("type", "")).strip()
     amount = float(txn.get("amount", 0) or 0)
     account = str(txn.get("account", "")).strip()
@@ -1619,7 +1620,7 @@ def preview_edit_transaction_by_ref(
     old_payment_category = str(old_txn.get("category", "") or "").strip()
     if old_payment_category in {"Pembayaran Piutang", "Bayar Utang"}:
         # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
-        # Debt payment note: settlement and void actions must stay explicit for auditability.
+        # Debt flow section
         if set(normalized_updates.keys()) != {"amount"}:
             return {
                 "success": False,
@@ -1631,9 +1632,9 @@ def preview_edit_transaction_by_ref(
 
     old_has_debt_relation = transaction_has_debt_relation(old_txn)
 
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
-    # Debt command note: keep payable and receivable actions explicit and auditable.
-    # Transaction service note for keeping account balance and related records consistent.
+    # Debt flow section
+    # Debt flow section
+    # Account flow section
     if is_debt_cashflow_transaction(old_txn) and not old_has_debt_relation:
         return {
             "success": False,
@@ -1797,10 +1798,10 @@ def edit_transaction_by_ref(
     try:
         target_row_index = int(old_txn.get("_row_index"))
 
-        # Transaction service note for keeping account balance and related records consistent.
+        # Account flow section
         new_txn["id"] = old_txn.get("id")
 
-        # Tandai raw_input so that kelihatan pernah diedit.
+        # Implementation note for this project-specific finance flow.
         old_raw = str(old_txn.get("raw_input", "") or "")
         if "[edited]" not in old_raw:
             new_txn["raw_input"] = f"{old_raw} [edited]".strip()

@@ -1,4 +1,5 @@
-"""Report service for daily, weekly, monthly, account, search, export, and category summaries."""
+"""Reporting service for daily, weekly, monthly, account-based, category-based, and search reports."""
+
 
 from datetime import datetime, timedelta
 import re
@@ -10,7 +11,7 @@ from app.config import SHEET_TRANSACTIONS, SHEET_DEBTS, SHEET_ACCOUNTS
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def get_transaction_records_for_report() -> list[dict]:
-    """Retrieve data needed for transaction records for report."""
+    """Get data needed for transaction records for report."""
     records = get_all_records(SHEET_TRANSACTIONS)
     result = []
 
@@ -23,7 +24,7 @@ def get_transaction_records_for_report() -> list[dict]:
 
 
 def format_rupiah(amount: float) -> str:
-    """Format rupiah into readable text."""
+    """Format data into a readable display for rupiah."""
     return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
 
 
@@ -42,10 +43,10 @@ def safe_float(value, default: float = 0.0) -> float:
     # Format Indonesia umum: 10.000, 10,000, Rp10.000
     raw = raw.replace("Rp", "").replace("rp", "").strip()
 
-    # Implementation note for this project-specific finance flow.
+    # Implementation section
     if "." in raw and "," in raw:
         raw = raw.replace(".", "").replace(",", ".")
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Debt flow section
     elif "," in raw:
         parts = raw.split(",")
         if len(parts[-1]) == 2:
@@ -68,7 +69,7 @@ def safe_float(value, default: float = 0.0) -> float:
 
 
 def normalize_category_key(value: str | None) -> str:
-    """Clean and standardize normalize category key."""
+    """Normalize and clean input for category key."""
     raw = str(value or "").strip().lower()
     raw = raw.replace("&", " and ")
     raw = re.sub(r"[^a-z0-9]+", " ", raw)
@@ -76,14 +77,14 @@ def normalize_category_key(value: str | None) -> str:
 
 
 def normalize_account_key(value: str | None) -> str:
-    """Clean and standardize normalize account key."""
+    """Normalize and clean input for account key."""
     raw = str(value or "").strip().lower()
     raw = re.sub(r"[^a-z0-9]+", " ", raw)
     return re.sub(r"\s+", " ", raw).strip()
 
 
 def get_known_report_accounts(records: list[dict] | None = None) -> list[str]:
-    """Retrieve data needed for known report accounts."""
+    """Get data needed for known report accounts."""
     accounts = []
     seen = set()
 
@@ -109,7 +110,7 @@ def get_known_report_accounts(records: list[dict] | None = None) -> list[str]:
 
 
 def resolve_account_filter(account_query: str | None, records: list[dict] | None = None) -> str | None:
-    """Resolve the final value for account filter from possible inputs."""
+    """Resolve a user input or reference for account filter."""
     query = str(account_query or "").strip()
     if not query:
         return None
@@ -136,14 +137,14 @@ def resolve_account_filter(account_query: str | None, records: list[dict] | None
 
 
 def is_account_match(value: str | None, account_key: str | None) -> bool:
-    """Check a boolean condition for is account match."""
+    """Check whether a condition is true for account match."""
     if not account_key:
         return False
     return normalize_account_key(value) == account_key
 
 
 def is_account_transaction(record: dict, account: str | None) -> bool:
-    """Check a boolean condition for is account transaction."""
+    """Check whether a condition is true for account transaction."""
     account_key = normalize_account_key(account)
     if not account_key:
         return True
@@ -266,7 +267,7 @@ CATEGORY_ALIASES = {
 
 
 def get_known_report_categories(records: list[dict] | None = None) -> list[str]:
-    """Retrieve data needed for known report categories."""
+    """Get data needed for known report categories."""
     categories = []
     seen = set()
 
@@ -288,7 +289,7 @@ def get_known_report_categories(records: list[dict] | None = None) -> list[str]:
 
 
 def resolve_category_filter(category_query: str | None, records: list[dict] | None = None) -> str | None:
-    """Resolve the final value for category filter from possible inputs."""
+    """Resolve a user input or reference for category filter."""
     query = str(category_query or "").strip()
     if not query:
         return None
@@ -353,19 +354,19 @@ def split_report_period_and_category_arg(value: str | None, mode: str) -> tuple[
 
 
 def is_truthy_sheet_value(value) -> bool:
-    """Check a boolean condition for is truthy sheet value."""
+    """Check whether a condition is true for truthy sheet value."""
     raw = str(value or "").strip().lower()
     return raw in {"true", "yes", "y", "1", "settled", "lunas", "void", "voided"}
 
 
 def is_voided_debt_record(debt: dict) -> bool:
-    """Check a boolean condition for is voided debt record."""
+    """Check whether a condition is true for voided debt record."""
     description = str((debt or {}).get("description", "") or "")
     return "[VOID" in description.upper()
 
 
 def parse_transaction_debt_ids_from_record(txn: dict) -> list[str]:
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for transaction debt ids from record."""
     raw = str((txn or {}).get("hutang_id", "") or "").strip()
     if not raw:
         return []
@@ -406,7 +407,7 @@ def build_debt_lookup(active_only: bool = True) -> dict:
 
 
 def get_linked_debts_for_transaction(txn: dict, lookup: dict) -> list[dict]:
-    """Retrieve data needed for linked debts for transaction."""
+    """Get data needed for linked debts for transaction."""
     by_id = (lookup or {}).get("by_id", {}) or {}
     by_source_txn = (lookup or {}).get("by_source_txn", {}) or {}
 
@@ -505,7 +506,7 @@ def enrich_transactions_with_debt_info(transactions: list[dict]) -> list[dict]:
 
 
 def calculate_net_expense_after_receivable(transactions: list[dict]) -> float:
-    """Calculate derived values for calculate net expense after receivable."""
+    """Calculate derived values for net expense after receivable."""
     total = 0.0
     for txn in transactions or []:
         txn_type = str((txn or {}).get("type", "") or "").strip().lower()
@@ -518,7 +519,7 @@ def calculate_net_expense_after_receivable(transactions: list[dict]) -> float:
 
 
 def calculate_net_expense_by_category(transactions: list[dict]) -> dict:
-    """Calculate derived values for calculate net expense by category."""
+    """Calculate derived values for net expense by category."""
     result = {}
     for txn in transactions or []:
         txn_type = str((txn or {}).get("type", "") or "").strip().lower()
@@ -600,7 +601,7 @@ def build_category_comparison(current: dict, previous: dict, previous_available:
     return result
 
 def parse_report_date_arg(value: str | None = None) -> str:
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for report date arg."""
     today = datetime.now().date()
 
     if not value:
@@ -641,7 +642,7 @@ def parse_report_date_arg(value: str | None = None) -> str:
 
 
 def parse_report_month_arg(value: str | None = None) -> tuple[int, int]:
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for report month arg."""
     today = datetime.now().date()
 
     if not value:
@@ -688,7 +689,7 @@ def parse_report_month_arg(value: str | None = None) -> tuple[int, int]:
 
 
 def get_week_range(reference_date: str | None = None) -> tuple[str, str]:
-    """Retrieve data needed for week range."""
+    """Get data needed for week range."""
     base_date = datetime.strptime(parse_report_date_arg(reference_date), "%Y-%m-%d").date()
     monday = base_date - timedelta(days=base_date.weekday())
     sunday = monday + timedelta(days=6)
@@ -696,7 +697,7 @@ def get_week_range(reference_date: str | None = None) -> tuple[str, str]:
 
 
 def get_month_range(year: int | None = None, month: int | None = None) -> tuple[str, str]:
-    """Retrieve data needed for month range."""
+    """Get data needed for month range."""
     now = datetime.now()
     year = int(year or now.year)
     month = int(month or now.month)
@@ -751,7 +752,7 @@ def filter_transactions(
 
 
 def summarize(transactions: list[dict], account: str | None = None) -> dict:
-    """Build a concise summary for the finance service layer."""
+    """Helper for summarize in the finance service layer."""
     account_key = normalize_account_key(account) if account else None
     total_income = 0.0
     total_expense = 0.0
@@ -805,7 +806,7 @@ def summarize(transactions: list[dict], account: str | None = None) -> dict:
 # ── Report functions ──────────────────────────────────────────────────────────
 
 def get_daily_report(date_str: str | None = None, category: str | None = None, account: str | None = None) -> dict:
-    """Retrieve data needed for daily report."""
+    """Get data needed for daily report."""
     date_str = parse_report_date_arg(date_str)
     current_date = datetime.strptime(date_str, "%Y-%m-%d").date()
     previous_date = current_date - timedelta(days=1)
@@ -849,7 +850,7 @@ def get_daily_report(date_str: str | None = None, category: str | None = None, a
 
 
 def get_weekly_report(reference_date: str | None = None, category: str | None = None, account: str | None = None) -> dict:
-    """Retrieve data needed for weekly report."""
+    """Get data needed for weekly report."""
     date_from, date_to = get_week_range(reference_date)
     current_start = datetime.strptime(date_from, "%Y-%m-%d").date()
     previous_start = current_start - timedelta(days=7)
@@ -897,7 +898,7 @@ def get_weekly_report(reference_date: str | None = None, category: str | None = 
 
 
 def get_monthly_report(year: int | None = None, month: int | None = None, category: str | None = None, account: str | None = None) -> dict:
-    """Retrieve data needed for monthly report."""
+    """Get data needed for monthly report."""
     date_from, date_to = get_month_range(year, month)
     month_label = date_from[:7]
     current_start = datetime.strptime(date_from, "%Y-%m-%d")
@@ -949,7 +950,7 @@ def get_monthly_report(year: int | None = None, month: int | None = None, catego
 
 
 def get_account_balance(account_name: str) -> float | None:
-    """Retrieve data needed for account balance."""
+    """Get data needed for account balance."""
     account_key = normalize_account_key(account_name)
     if not account_key:
         return None
@@ -965,7 +966,7 @@ def get_account_balance(account_name: str) -> float | None:
 
 
 def get_account_monthly_report(account: str, month_arg: str | None = None) -> dict:
-    """Retrieve data needed for account monthly report."""
+    """Get data needed for account monthly report."""
     year, month_num = parse_report_month_arg(month_arg)
     report = get_monthly_report(year, month_num, account=account)
     account_filter = report.get("account_filter") or account
@@ -976,7 +977,7 @@ def get_account_monthly_report(account: str, month_arg: str | None = None) -> di
 
 
 def get_account_all_report(account: str) -> dict:
-    """Retrieve data needed for account all report."""
+    """Get data needed for account all report."""
     records = get_transaction_records_for_report()
     account_filter = resolve_account_filter(account, records)
     transactions = filter_transactions(records, account=account_filter)
@@ -995,7 +996,7 @@ def get_account_all_report(account: str) -> dict:
 
 
 def get_account_report(account: str, period_arg: str | None = "month") -> dict:
-    """Retrieve data needed for account report."""
+    """Get data needed for account report."""
     normalized_period = str(period_arg or "month").strip().lower()
     if normalized_period in {"all", "semua", "histori", "history"}:
         return get_account_all_report(account)
@@ -1029,7 +1030,7 @@ def search_transactions(keyword: str, limit: int = 10) -> list[dict]:
 
 
 def get_top_expenses(month: str | None = None, top_n: int = 5) -> list[dict]:
-    """Retrieve data needed for top expenses."""
+    """Get data needed for top expenses."""
     if not month:
         month = datetime.now().strftime("%Y-%m")
 

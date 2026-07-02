@@ -1,12 +1,11 @@
 # Personal Finance Bot
 
-Personal Finance Bot is a Telegram-based personal finance assistant built to make daily financial tracking easier and more natural.
+Personal Finance Bot is a Telegram-based personal finance assistant built to make daily financial tracking easier, faster, and more natural.
 
-The project solves a practical problem: many people want to track their spending, debt, budget, and assets, but manual spreadsheet input often feels too slow and inconsistent. With this bot, users can send everyday transaction messages such as `beli kopi 25k`, `topup gopay 100k dari bsi`, or `ditalangin Budi bayar makan 100k`. The backend parses the input, validates the transaction logic, shows a preview, and saves structured records to Google Sheets only after user confirmation.
+The core idea is simple: users can write everyday finance inputs such as `beli kopi 25k`, `topup gopay 100k dari bsi`, or `Beli mie goreng 40k dibagi 2 sama Budi via DANA`. The backend parses the input, checks the risk level, shows a preview, lets the user edit or cancel, and only writes structured data to Google Sheets after confirmation.
 
-This project is useful for two types of users: people who want a lightweight personal finance assistant through chat, and developers who want to learn how Telegram Bot, Google Sheets, rule-based parsing, automation, and LLM-based assistance can work together in a real productivity use case.
-
-> **Current language support:** the documentation is written in English for an international audience, but the bot features and natural-language transaction inputs are currently optimized for Indonesian. Examples such as `beli kopi 25k`, `utang`, `piutang`, `talangin`, and `ditalangin` are intentionally kept in Indonesian because they reflect the current product behavior.
+> **Current language support**  
+> The code documentation is written in English for an international audience. However, the current bot features, natural-language parser, examples, and user-facing messages are still optimized for Indonesian finance input. This is intentional for now because the product is built around Indonesian daily usage patterns.
 
 ## Outline
 
@@ -23,87 +22,75 @@ This project is useful for two types of users: people who want a lightweight per
 
 ## Features
 
-| Group | Feature | Description |
+| Area | Feature | What it does |
 |---|---|---|
-| Input | Single Input | Records one transaction from a natural-language message. |
-| Input | Multiple Input | Records several transactions from one message. |
-| Input | Date, Amount, Account, and Category Parser | Reads relative dates, human amounts such as `25k` or `1.5 juta`, accounts, and categories. |
-| Input | Utang, Piutang, Talangin, and Ditalangin | Supports personal payable/receivable tracking, including fronting money for others or being covered by someone else. |
-| Input | Split Bill | Splits one transaction across several people and creates the related debt records. |
-| Input | Pending Expense | Stores planned or incomplete expenses without immediately changing the account balance. |
-| Input | Image Input | Reads receipts or transaction images using Gemini Vision. |
-| Management | Debt Void, Debt Edit, Debt Settle | Manages debt status, cancellation, edits, and settlement. |
-| Management | Delete Txn and Edit Txn | Edits or deletes existing transactions with controlled confirmation flow. |
-| Summary | Balance | Shows the current balance across all accounts. |
-| Summary | Account Report | Shows transactions and balance for a specific account. |
-| Summary | Daily, Weekly, Monthly Report | Shows transaction summaries by period. |
-| Summary | Search | Searches transactions by keyword. |
-| Summary | Last and Transactions | Shows the latest transactions or a full transaction list. |
-| Summary | Debt Summary | Shows active payable and receivable totals. |
-| Budgeting | Add Budget | Adds monthly budget by category. |
-| Budgeting | Budget History | Shows budget history and actual spending. |
-| Recurring Transaction | Recurring Transaction | Handles recurring items such as Wi-Fi, token, subscriptions, or monthly fees. |
-| Export Data | Export Data | Exports transaction data for backup or further analysis. |
-| Net Worth and Assets | Net Worth and Assets | Tracks active assets and calculates net worth from account balance and assets. |
-| Gemini RAG Finance Insight | Coach | Gives personal finance suggestions based on transaction data. |
-| Gemini RAG Finance Insight | Audit | Checks data quality, anomalies, and possible input mistakes. |
-| Gemini RAG Finance Insight | Ask | Answers natural questions such as “bulan ini boros di mana?”. |
-| Gemini RAG Finance Insight | Insight | Explains spending patterns and improvement priorities. |
-| Supporting | Typo Handling | Helps resolve typos in commands or transaction inputs. |
-| Supporting | Scheduler | Runs scheduled jobs such as recurring transactions and exports. |
+| Transaction input | Single input | Records one expense, income, or transfer from a natural chat message. |
+| Transaction input | Multi input | Accepts multiple transactions in one message and previews them before saving. |
+| Transaction input | Image input | Reads receipt or transaction images using Gemini Vision, then sends the result to preview. |
+| Transaction input | Date and account parsing | Reads dates, amounts, accounts, categories, and descriptions from Indonesian-style input. |
+| Debt | Payable and receivable | Tracks personal debt and receivables, including payment and settlement flows. |
+| Debt | Talangin / ditalangin | Handles cases where the user pays for someone else or someone else pays first for the user. |
+| Split bill | Paid or unpaid split | Supports split bill flows where friends have already paid or still owe the user. |
+| Planning | Pending expense | Stores future or planned expenses without immediately changing account balances. |
+| Automation | Recurring rules | Creates recurring transaction rules and logs scheduled runs. |
+| Control | Preview before write | Uses preview, edit, save, cancel, warning preview, and clarification before writing data. |
+| Account | Set balance | Lets users set an account balance through `/set_saldo` with confirmation preview. |
+| Reporting | Daily, weekly, monthly reports | Summarizes transactions by period, category, account, and spending type. |
+| Net worth | Assets and snapshots | Tracks assets and creates net worth snapshots over time. |
+| AI insight | Ask, audit, coach, insight | Uses Gemini to explain finance data based on structured context from Google Sheets. |
+| Deployment | Polling-first setup | Runs locally with `python main.py` or 24/7 on Wispbyte without requiring webhook setup. |
 
 ## Tech Stack
 
-| Layer | Tools | Role in Project |
+| Layer | Tools | Role |
 |---|---|---|
-| Chat Interface | Telegram Bot API, python-telegram-bot | Receives messages, commands, images, and callback buttons from users. |
-| Core Backend | Python | Runs parser logic, business rules, parse safety routing, preview flow, debt flow, split bill, pending expense, and transaction validation. |
-| AI Layer | Gemini API, LangChain | Supports image parsing, finance insight, audit, coach, and data-based Q&A. The current LLM provider support is Gemini only. |
-| Data Layer | Google Sheets API, gspread, Google Service Account | Stores transactions, accounts, budgets, debt, assets, pending expenses, recurring logs, and supporting data. |
-| Automation | APScheduler | Runs recurring reminders, recurring transactions, exports, and scheduled jobs. |
-| Deployment & Versioning | Wispbyte, FastAPI, Git, GitHub | Git and GitHub are used for version control. Wispbyte can run polling mode 24/7. FastAPI is available as an advanced webhook deployment option. |
+| Bot interface | Telegram Bot API, python-telegram-bot | Receives messages, commands, images, and button callbacks. |
+| Runtime | Python | Runs parser logic, business rules, handlers, and services. |
+| Optional API | FastAPI | Optional webhook runtime for advanced deployment. Polling is the default mode. |
+| Data store | Google Sheets API, gspread | Stores transactions, accounts, debts, budgets, recurring rules, assets, and snapshots. |
+| AI layer | Gemini API, LangChain | Helps with image parsing, finance insight, audit, coach, and Q&A. |
+| Scheduler | APScheduler, JobQueue | Runs recurring jobs, exports, reminders, and automated summaries. |
+| Deployment | Wispbyte, GitHub | Runs the bot 24/7 and manages project versioning. |
 
-<p align="center">
-  <img src="assets/tech-stack-workflow-personal-finance-assistant.png" alt="Tech Stack Workflow of Personal Finance Assistant" width="1000">
-</p>
-
-The image summarizes how the tools work together. In the default setup, the main path is Telegram Bot API → python-telegram-bot → Python business logic → Google Sheets. FastAPI is optional and mainly exists for advanced webhook deployment.
+![Tech Stack Workflow](assets/tech-stack-workflow-personal-finance-assistant.png)
 
 ## System Architecture
 
-<p align="center">
-  <img src="assets/workflow-ai-finance-assistant.png" alt="Workflow AI Finance Assistant" width="900">
-</p>
+![AI Finance Assistant Workflow](assets/workflow-ai-finance-assistant.png)
 
 The system has two main flows.
 
-The first flow is **transaction recording**. Input from Telegram is processed by the parser, checked through parse safety routing, validated through preview, and saved to Google Sheets after user confirmation.
+First, the transaction flow: Telegram input is parsed by local rules or Gemini fallback, checked by parse safety, shown as a preview, and saved to Google Sheets only after user confirmation.
 
-The second flow is **AI finance insight**. Users can ask through `/ask`, `/audit`, `/coach`, or `/insight`. The backend retrieves relevant financial context first, then Gemini helps explain the result based on that data.
+Second, the AI insight flow: commands such as `/ask`, `/audit`, `/coach`, and `/insight` build a structured finance context from Google Sheets before Gemini generates the response.
 
-The default runtime is **polling**. This means the Python process fetches updates from Telegram Bot API while the application is running. This approach is easier for local setup and can still run 24/7 on Wispbyte or another hosting provider as long as `python main.py` stays alive.
-
-AI does not make final financial decisions by itself. The backend keeps control over business logic, while Gemini helps understand input, read images, and explain insights from available data.
+The LLM is not the final decision maker. Business logic stays in Python, while AI helps interpret input, read images, and explain data.
 
 ## Installation
 
 ### 1. Clone and install dependencies
 
 ```bash
-git clone https://github.com/username/denan-finance-bot.git
-cd denan-finance-bot
+git clone <your-repository-url>
+cd <your-project-folder>
 python -m venv .venv
 ```
 
 Activate the virtual environment.
 
-Windows:
+Windows PowerShell:
 
-```bash
-.venv\Scripts\activate
+```powershell
+.\.venv\Scripts\Activate.ps1
 ```
 
-Mac/Linux:
+Windows Command Prompt:
+
+```cmd
+.venv\Scripts\activate.bat
+```
+
+macOS/Linux:
 
 ```bash
 source .venv/bin/activate
@@ -117,19 +104,13 @@ pip install -r requirements.txt
 
 ### 2. Create `.env`
 
-Copy `.env.example` to `.env`.
+Copy the example file:
 
 ```bash
 cp .env.example .env
 ```
 
-Windows Command Prompt:
-
-```cmd
-copy .env.example .env
-```
-
-Minimum configuration:
+Minimum local setup:
 
 ```env
 BOT_MODE=polling
@@ -140,134 +121,332 @@ GOOGLE_SERVICE_ACCOUNT_JSON=service_account.json
 GEMINI_API_KEY=your_gemini_api_key
 ```
 
-### 3. Set up Telegram
+### 3. Setup Telegram
 
-1. Open BotFather on Telegram.
-2. Create a bot.
-3. Copy the bot token.
-4. Put it in `TELEGRAM_BOT_TOKEN`.
-5. Put your Telegram user ID in `ALLOWED_USER_ID`.
+#### 3.1 Create a bot token with BotFather
 
-`ALLOWED_USER_ID` is used so the bot only responds to the intended user.
+1. Open Telegram.
+2. Search for `@BotFather`.
+3. Send `/start`.
+4. Send `/newbot`.
+5. Choose a bot display name, for example `Denan Finance Bot`.
+6. Choose a unique username ending with `bot`, for example `denan_finance_bot`.
+7. BotFather will return a token.
+8. Copy the token into `.env`:
 
-### 4. Set up Google Sheets
-
-1. Create a Google Sheets file.
-2. Copy the spreadsheet ID from the URL.
-3. Put it in `GOOGLE_SHEET_ID`.
-4. Create a Google Service Account.
-5. Download the service account JSON file.
-6. Save it as `service_account.json` in the project root.
-7. Share the Google Sheets file with the service account `client_email` as Editor.
-
-Required tabs are prepared automatically:
-
-```text
-transactions
-accounts
-budgets
-debts
-debt_payments
-categories
-monthly_summary
-recurring_rules
-recurring_logs
-assets
-pending_expenses
-net_worth_snapshots
+```env
+TELEGRAM_BOT_TOKEN=123456789:AAExampleTokenHere
 ```
 
-The `accounts` sheet is seeded with default accounts when empty:
+Keep this token private. Anyone with this token can control your bot.
 
-```text
-Cash, BRI, BSI, BCA, DANA, GoPay, Seabank
+#### 3.2 Get your Telegram user ID with RawDataBot
+
+The bot uses `ALLOWED_USER_ID` so only your Telegram account can access your finance data.
+
+1. Search for `@RawDataBot` on Telegram.
+2. Send `/start`.
+3. RawDataBot will return a JSON-like response.
+4. Take the `id` inside the `from` object.
+
+Masked example:
+
+```json
+{
+  "update_id": "***masked***",
+  "message": {
+    "message_id": "***masked***",
+    "from": {
+      "id": "1234567890",
+      "is_bot": false,
+      "first_name": "Your First Name",
+      "last_name": "Your Last Name",
+      "username": "your_username",
+      "language_code": "en"
+    },
+    "chat": {
+      "id": "1234567890",
+      "type": "private"
+    },
+    "text": "/start"
+  }
+}
 ```
 
-The starting balances can be edited directly in Google Sheets.
+Use that value in `.env`:
 
-### 5. Set up Gemini
+```env
+ALLOWED_USER_ID=1234567890
+```
 
-`GEMINI_API_KEY` is used for AI parser, image parser, audit, coach, and finance insight features.
+### 4. Setup Google Sheets
+
+#### 4.1 Create the spreadsheet
+
+1. Open Google Sheets.
+2. Create a blank spreadsheet.
+3. Rename it, for example `Finance Bot Database`.
+4. Copy the spreadsheet ID from the URL.
+
+Example URL:
+
+```text
+https://docs.google.com/spreadsheets/d/SPREADSHEET_ID_HERE/edit#gid=0
+```
+
+Add it to `.env`:
+
+```env
+GOOGLE_SHEET_ID=SPREADSHEET_ID_HERE
+```
+
+#### 4.2 Create a Google Cloud project
+
+1. Open Google Cloud Console.
+2. Create a new project, for example `finance-bot-project`.
+3. Open **APIs & Services**.
+4. Enable these APIs:
+   - Google Sheets API
+   - Google Drive API
+
+#### 4.3 Create a service account
+
+1. Open **IAM & Admin → Service Accounts**.
+2. Click **Create Service Account**.
+3. Set a name, for example `finance-bot-service-account`.
+4. Finish the setup.
+5. Open the service account.
+6. Go to **Keys**.
+7. Click **Add key → Create new key**.
+8. Choose JSON.
+9. Download the JSON file.
+10. Rename it to:
+
+```text
+service_account.json
+```
+
+Put it in the project root, then set:
+
+```env
+GOOGLE_SERVICE_ACCOUNT_JSON=service_account.json
+```
+
+#### 4.4 Share the spreadsheet to the service account
+
+Open `service_account.json` and find:
+
+```json
+"client_email": "finance-bot-service-account@your-project.iam.gserviceaccount.com"
+```
+
+Then:
+
+1. Open your Google Sheet.
+2. Click **Share**.
+3. Paste the `client_email`.
+4. Give **Editor** access.
+5. Click **Send**.
+
+This step is required. Without it, the bot can authenticate but cannot access your spreadsheet.
+
+#### 4.5 Required sheet headers
+
+The bot can create missing tabs and headers automatically when the spreadsheet is empty. If a sheet already has data, the bot will not reorder columns automatically to avoid damaging existing records.
+
+Required tabs and headers:
+
+```text
+transactions:
+id, date, type, amount, category, account, to_account, subject, description, catatan, tipe_pengeluaran, raw_input, parsed_by, hutang_id, tipe_hutang
+
+accounts:
+account_name, type, balance, currency, last_updated
+
+budgets:
+id, month, category, budget_amount, created_at, updated_at
+
+debts:
+id, type, person_name, original_amount, remaining_amount, description, due_date, is_settled, created_at, settled_at, source_transaction_id, cashflow_mode, fronting_mode
+
+debt_payments:
+id, debt_id, amount, date, note
+
+categories:
+category_name, type, emoji, aliases
+
+monthly_summary:
+month, total_income, total_expense, net, created_at, updated_at
+
+recurring_rules:
+id, name, type, amount, category, account, to_account, subject, description, catatan, tipe_pengeluaran, frequency, day_of_month, next_run_date, is_active, created_at, updated_at
+
+recurring_logs:
+id, rule_id, transaction_id, run_date, status, message, created_at
+
+assets:
+id, name, category, current_value, description, is_active, created_at, updated_at, asset_type, quantity, unit, price_source, price_per_unit, last_price_update, purchase_price_per_unit, purchase_date
+
+pending_expenses:
+id, due_date, month, due_precision, amount, category, account, subject, description, status, created_at, updated_at, paid_transaction_id, raw_input
+
+net_worth_snapshots:
+id, snapshot_date, total_accounts, total_assets, total_liabilities, net_worth, created_at
+```
+
+### 5. Setup Gemini
+
+Gemini is used for image parsing, AI finance insight, audit, coach, and Q&A.
 
 1. Open Google AI Studio.
-2. Create a Gemini API key.
-3. Copy the key.
-4. Put it in `.env`.
+2. Create an API key.
+3. Copy the API key.
+4. Add it to `.env`:
 
-Notes:
+```env
+GEMINI_API_KEY=your_gemini_api_key
+```
 
-- The project currently supports Gemini as the LLM provider.
-- Gemini model names can be changed through `.env`.
-- Other providers such as Llama, OpenAI, Groq, Ollama, or OpenRouter are not supported out of the box and require a new adapter/client.
+Optional model configuration:
+
+```env
+GEMINI_MODEL=gemini-3.1-flash-lite
+GEMINI_TEXT_MODEL=gemini-3.1-flash-lite
+GEMINI_INTENT_MODEL=gemini-3.1-flash-lite
+GEMINI_IMAGE_MODEL=gemini-3.1-flash-lite
+GEMINI_INSIGHT_MODEL=gemini-3.1-flash-lite
+```
+
+At the moment, Gemini is the only LLM provider supported out of the box. Other providers need a new adapter or client implementation.
 
 ### 6. Check setup and run the bot
 
-Run the setup check:
+Run the setup checker:
 
 ```bash
 python scripts/setup_check.py
 ```
 
-Run the bot:
+Then run the bot:
 
 ```bash
 python main.py
 ```
 
-In polling mode, the bot runs as long as the Python process is alive.
-
-### 7. Deploy 24/7 with Wispbyte (optional)
-
-Wispbyte can run this bot using polling mode, so webhook setup is not required for the default deployment path.
-
-Use:
-
-```bash
-pip install -r requirements.txt
-python main.py
-```
-
-Important notes:
-
-- Keep `BOT_MODE=polling`.
-- Do not run the same bot token locally and on Wispbyte at the same time.
-- Keep `service_account.json` private.
-- If Wispbyte supports file secrets, store the service account JSON there instead of committing it to GitHub.
-
-## Usage
-
-### Example Inputs
-
-| Input | Expected Meaning |
-|---|---|
-| `beli kopi 20k dari Cash` | Expense from Cash |
-| `gaji masuk 8jt ke BCA` | Income to BCA |
-| `BCA ke DANA 200k` | Transfer from BCA to DANA |
-| `Budi minjem 50k` | Receivable from Budi |
-| `ditalangin Budi bayar makan 100k` | Payable because Budi covered the user first |
-| `makan 80k bagi dua sama Budi` | Split bill |
-| `wifi bulan depan 285k` | Pending expense |
-
-### Main Commands
+Open your bot on Telegram and send:
 
 ```text
 /start
-/help
-/examples
-/saldo
-/transaksi
-/last
-/cari
-/budget
-/hutang
-/pending
-/assets
-/networth
-/ask
+/quickstart
+```
+
+### 7. Deploy 24/7 with Wispbyte
+
+For a simple 24/7 deployment, keep using polling mode.
+
+Install command:
+
+```bash
+pip install -r requirements.txt
+```
+
+Start command:
+
+```bash
+python main.py
+```
+
+Recommended flow:
+
+```text
+Push project to GitHub
+→ Connect the repository to Wispbyte
+→ Add environment variables
+→ Upload or configure service_account.json securely
+→ Use python main.py as the start command
+```
+
+Do not run the same bot token on your laptop and Wispbyte at the same time.
+
+## Usage
+
+### First-time flow
+
+Start with:
+
+```text
+/quickstart
+```
+
+Then check available accounts:
+
+```text
+/set_saldo
+```
+
+Set an initial balance:
+
+```text
+/set_saldo DANA 500k
+/set_saldo BRI 2500000
+```
+
+`/set_saldo` does not create a transaction row. It only updates the selected account balance after confirmation.
+
+### Transaction examples
+
+```text
+beli kopi 20k
+beli kopi 20k dari DANA
+gaji masuk 8jt ke BRI
+BCA ke DANA 200k
+```
+
+### Multi input
+
+```text
+beli kopi 20k dari Cash, beli bensin 50k dari BRI, gaji masuk 8jt ke BCA
+```
+
+### Debt and receivable
+
+```text
+Budi minjem 50k dari DANA
+saya pinjam 100k ke Budi
+Budi bayar 25k ke DANA
+saya bayar hutang Budi 50k dari BRI
+```
+
+### Talangin and ditalangin
+
+```text
+saya talangin Budi beli nasi 20k dari DANA
+saya ditalangin Bagas beli nasi 15k
+```
+
+### Split bill
+
+```text
+Beli mie goreng 40k dibagi 2 sama Budi via DANA
+makan 120k patungan bertiga sama Budi dan Rina dari BCA
+```
+
+If friends already paid, the saved expense should use only the user's net share. If they have not paid, the bot records the gross paid amount and creates receivable records.
+
+### Pending expense
+
+```text
+nanti bayar wifi 285k bulan depan
+/pending_add bayar wisuda 750k tgl 30
+```
+
+### AI insight
+
+```text
+/ask bulan ini boros di mana?
 /audit
 /coach
 /insight
-/export
 ```
 
 ## Project Structure
@@ -275,59 +454,69 @@ Important notes:
 ```text
 app/
 ├── api/                 # Optional FastAPI webhook endpoint
-├── bot/                 # Telegram application and handler flow
-├── nlp/                 # Parser, normalizer, Gemini parser, and parse safety
-├── scheduler/           # Scheduled jobs
+├── bot/                 # Telegram Application and handler modules
+├── nlp/                 # Parser, normalizer, parse safety, and Gemini helpers
+├── scheduler/           # APScheduler and JobQueue jobs
 ├── services/            # Finance business logic
-├── sheets/              # Google Sheets client and schema bootstrap
-└── config.py            # Environment-based configuration
+└── sheets/              # Google Sheets client and schema handling
 
-scripts/
-├── setup_check.py       # Lightweight setup checker
-├── debug_check.py       # Developer diagnostic script
-└── ai_command_tester.py # Local parser/command tester
-
-docs/                    # Code and architecture documentation
-assets/                  # README images and diagrams
-main.py                  # Runtime entry point
+docs/                    # Technical documentation
+scripts/                 # Setup, debug, and regression scripts
+assets/                  # README diagrams
+main.py                  # Application entry point
 ```
 
 ## Code Documentation
 
-Internal documentation is available in [`docs/`](docs/README.md).
+Folder-level and technical documentation are available in `docs/` and each major subfolder README.
 
-Start from:
+Start here:
 
-- [`docs/01-project-map.md`](docs/01-project-map.md) to understand the folder structure and layer responsibilities.
-- [`docs/02-runtime-entrypoint.md`](docs/02-runtime-entrypoint.md) to understand polling mode, webhook mode, scheduler, and startup.
-- [`docs/03-telegram-bot-flow.md`](docs/03-telegram-bot-flow.md) to understand Telegram handlers, commands, messages, and callbacks.
-- [`docs/04-parser-nlp-parse-safety.md`](docs/04-parser-nlp-parse-safety.md) to understand regex parser, Gemini parser, and parse safety routing.
-- [`docs/05-transaction-preview-flow.md`](docs/05-transaction-preview-flow.md) to understand preview, edit, confirmation, debt, split bill, pending expense, and asset flow.
-- [`docs/06-data-layer-services.md`](docs/06-data-layer-services.md) to understand service layer, Google Sheets, schema bootstrap, and atomic write.
-- [`docs/09-function-reference.md`](docs/09-function-reference.md) for a function and class index.
+- `docs/01-project-map.md`
+- `docs/02-runtime-entrypoint.md`
+- `docs/03-telegram-bot-flow.md`
+- `docs/04-parser-nlp-parse-safety.md`
+- `docs/05-transaction-preview-flow.md`
+- `docs/06-data-layer-services.md`
+- `docs/07-ai-insight-layer.md`
+- `docs/08-setup-debug-deployment.md`
+- `docs/09-function-reference.md`
+- `docs/10-glossary.md`
 
 ## Limitations and Troubleshooting
 
-### Current limitations
+### Limitations
 
-- Natural-language features are currently optimized for Indonesian.
-- The active LLM provider is Gemini.
-- Google Sheets is used as the operational data store, so it is practical and transparent but not a full transactional database.
-- Webhook deployment is optional and more advanced than polling mode.
+1. The current natural-language parser is optimized for Indonesian input.
+2. Google Sheets is practical and transparent, but it is not a full transactional database.
+3. This project is designed for personal use, not as a full SaaS multi-user product.
+4. AI features depend on Gemini API availability and model quality.
+5. Ambiguous inputs still need user confirmation, edit, or clarification.
 
-### Common issues
+### Troubleshooting
 
-| Issue | What to Check |
-|---|---|
-| Bot does not respond | Check `TELEGRAM_BOT_TOKEN`, `ALLOWED_USER_ID`, and whether `python main.py` is still running. |
-| Google Sheets access error | Check `GOOGLE_SHEET_ID`, service account file, and whether the sheet is shared with `client_email`. |
-| Schema mismatch | Check whether the sheet tabs and headers match the required schema. |
-| Gemini error | Check `GEMINI_API_KEY` and selected Gemini model names. |
-| Duplicate runtime | Do not run the same bot token locally and on hosting at the same time. |
+If the bot does not respond:
+
+- Check whether `python main.py` is still running.
+- Check `TELEGRAM_BOT_TOKEN`.
+- Check `ALLOWED_USER_ID`.
+- Make sure the same bot token is not running in two places.
+
+If Google Sheets fails:
+
+- Make sure the spreadsheet is shared to the service account `client_email`.
+- Make sure Google Sheets API and Google Drive API are enabled.
+- Run `python scripts/setup_check.py`.
+
+If a slash command becomes a transaction preview:
+
+- Apply the latest routing patch.
+- Slash commands should never be parsed as expenses.
+- Test `/set_saldo BRI 2500000` and `/set_sald BRI 2500000` as regression checks.
 
 ## Advanced Deployment
 
-Webhook mode is available for users who want to deploy with FastAPI.
+Webhook mode is optional. Use it only if your hosting environment supports a public HTTPS endpoint.
 
 ```env
 BOT_MODE=webhook
@@ -342,14 +531,8 @@ Run:
 BOT_MODE=webhook python main.py
 ```
 
-or:
-
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-For most users, polling mode is simpler and recommended as the default path.
+Polling mode is still the recommended default for local use and simple 24/7 deployment.
 
 ## Author
 
-Built as a personal productivity and AI finance assistant project. The project focuses on a practical workflow: natural chat input, backend validation, structured data storage, and AI-assisted financial explanation.
+Built as a personal finance automation and AI assistant project. The project connects backend logic, Google Sheets data management, Telegram UX, and AI-assisted explanation into one practical daily-use workflow.

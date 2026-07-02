@@ -1,4 +1,5 @@
-"""Core handler utilities for user authorization, safe replies, and basic message normalization."""
+"""Core Telegram helpers for authorization, safe replies, message splitting, and error handling."""
+
 
 # Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
@@ -64,7 +65,7 @@ def split_long_message(text: str, max_len: int = TELEGRAM_SAFE_MESSAGE_LIMIT) ->
 
 
 async def reply_long_markdown(update: Update, text: str):
-    """Send a Telegram response for reply long markdown."""
+    """Send a Telegram reply for long markdown."""
     for part in split_long_message(text):
         try:
             await update.message.reply_text(part, parse_mode="Markdown")
@@ -73,7 +74,7 @@ async def reply_long_markdown(update: Update, text: str):
 
 
 async def reply_message_safely(message, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
-    """Send a Telegram response for reply message safely."""
+    """Send a Telegram reply for message safely."""
     text = str(text or "").strip() or " "
     chunks = split_long_message(text)
     for idx, chunk in enumerate(chunks):
@@ -85,7 +86,7 @@ async def reply_message_safely(message, text: str, parse_mode: str | None = None
 
 
 async def reply_update_safely(update: Update, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
-    """Send a Telegram response for reply update safely."""
+    """Send a Telegram reply for update safely."""
     if update.message:
         await reply_message_safely(update.message, text, parse_mode=parse_mode, reply_markup=reply_markup, **kwargs)
 
@@ -139,7 +140,7 @@ async def safe_edit_message(query, text: str, parse_mode: str | None = None, rep
 
 
 async def show_callback_loading(query, text: str = "⏳ *Memproses pilihan...*"):
-    """Handle Telegram inline-button callbacks for the Telegram bot flow."""
+    """Handle callback-related behavior in the Telegram bot flow."""
     try:
         await safe_edit_message(query, text, parse_mode="Markdown")
     except Exception:

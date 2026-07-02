@@ -1,6 +1,7 @@
 """FastAPI webhook endpoint for receiving Telegram updates when webhook mode is enabled."""
 
 
+
 from fastapi import APIRouter, Request, HTTPException, Header
 from telegram import Update
 from telegram.ext import Application
@@ -11,7 +12,7 @@ _app: Application = None
 
 
 def set_telegram_app(app: Application):
-    """Helper for set telegram app in the API and webhook layer."""
+    """Set a value for telegram app."""
     global _app
     _app = app
 
@@ -22,7 +23,7 @@ async def webhook(
     x_telegram_bot_api_secret_token: str = Header(None)
 ):
     # Validasi secret token
-    """Helper for webhook in the API and webhook layer."""
+    """Helper for webhook in the webhook API layer."""
     if x_telegram_bot_api_secret_token != TELEGRAM_WEBHOOK_SECRET:
         raise HTTPException(status_code=403, detail="Unauthorized")
 

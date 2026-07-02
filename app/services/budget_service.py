@@ -1,4 +1,5 @@
-"""Budget service for monthly budget setup, actual spending, remaining budget, and budget history."""
+"""Budget service for monthly budget setup, actual spending calculation, remaining budget, and budget history."""
+
 
 from datetime import datetime, date, timedelta
 import re
@@ -24,12 +25,12 @@ DEBT_CASHFLOW_CATEGORIES = {
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def get_current_month() -> str:
-    """Retrieve data needed for current month."""
+    """Get data needed for current month."""
     return datetime.now().strftime("%Y-%m")
 
 
 def normalize_month(month: str | None = None) -> str:
-    """Clean and standardize normalize month."""
+    """Normalize and clean input for month."""
     if not month:
         return get_current_month()
 
@@ -53,7 +54,7 @@ def normalize_month(month: str | None = None) -> str:
 
 
 def normalize_sheet_month_value(value) -> str:
-    """Clean and standardize normalize sheet month value."""
+    """Normalize and clean input for sheet month value."""
     if value is None:
         return ""
 
@@ -100,19 +101,19 @@ def normalize_sheet_month_value(value) -> str:
     return raw
 
 def format_month_label(month: str) -> str:
-    """Format month label into readable text."""
+    """Format data into a readable display for month label."""
     month = normalize_month(month)
     dt = datetime.strptime(month, "%Y-%m")
     return dt.strftime("%B %Y")
 
 
 def format_rupiah(amount: float) -> str:
-    """Format rupiah into readable text."""
+    """Format data into a readable display for rupiah."""
     return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
 
 
 def get_budget_status_emoji(pct_used: float) -> str:
-    """Retrieve data needed for budget status emoji."""
+    """Get data needed for budget status emoji."""
     if pct_used >= 100:
         return "🔴"
     elif pct_used >= 80:
@@ -141,7 +142,7 @@ def safe_float(value, default: float = 0.0) -> float:
 # ── Budget CRUD ───────────────────────────────────────────────────────────────
 
 def set_budget(category: str, amount: float, month: str = None) -> dict:
-    """Helper for set budget in the finance service layer."""
+    """Set a value for budget."""
     month = normalize_month(month)
     amount = float(amount or 0)
 
@@ -200,7 +201,7 @@ def set_budget(category: str, amount: float, month: str = None) -> dict:
 
 
 def get_budget(category: str, month: str = None) -> float | None:
-    """Retrieve data needed for budget."""
+    """Get data needed for budget."""
     month = normalize_month(month)
 
     records = get_all_records(SHEET_BUDGETS)
@@ -216,7 +217,7 @@ def get_budget(category: str, month: str = None) -> float | None:
 
 
 def get_all_budgets(month: str = None) -> list[dict]:
-    """Retrieve data needed for all budgets."""
+    """Get data needed for all budgets."""
     month = normalize_month(month)
 
     records = get_all_records(SHEET_BUDGETS)
@@ -227,7 +228,7 @@ def get_all_budgets(month: str = None) -> list[dict]:
 
 
 def get_budget_months() -> list[str]:
-    """Retrieve data needed for budget months."""
+    """Get data needed for budget months."""
     records = get_all_records(SHEET_BUDGETS)
     months = sorted({
         normalize_sheet_month_value(r.get("month", ""))
@@ -256,7 +257,7 @@ def budget_transaction_matches_category(record: dict, category: str) -> bool:
 
 
 def calculate_budget_actual_from_transactions(transactions: list[dict]) -> dict:
-    """Calculate derived values for calculate budget actual from transactions."""
+    """Calculate derived values for budget actual from transactions."""
     gross_total = 0.0
     net_total = 0.0
 
@@ -273,7 +274,7 @@ def calculate_budget_actual_from_transactions(transactions: list[dict]) -> dict:
 
 
 def get_actual_expense_breakdown(category: str, month: str = None) -> dict:
-    """Retrieve data needed for actual expense breakdown."""
+    """Get data needed for actual expense breakdown."""
     month = normalize_month(month)
 
     records = get_all_records(SHEET_TRANSACTIONS)
@@ -295,7 +296,7 @@ def get_actual_expense_breakdown(category: str, month: str = None) -> dict:
     if not matched:
         return {"net": 0.0, "gross": 0.0}
 
-    # Budget command note: regex handling supports natural phrases such as `budget makan 1jt`.
+    # Natural input section
     from app.services.report_service import enrich_transactions_with_debt_info
 
     enriched = enrich_transactions_with_debt_info(matched)
@@ -303,12 +304,12 @@ def get_actual_expense_breakdown(category: str, month: str = None) -> dict:
 
 
 def get_actual_expense(category: str, month: str = None) -> float:
-    """Retrieve data needed for actual expense."""
+    """Get data needed for actual expense."""
     return get_actual_expense_breakdown(category, month).get("net", 0.0)
 
 
 def get_budget_summary(month: str = None) -> list[dict]:
-    """Retrieve data needed for budget summary."""
+    """Get data needed for budget summary."""
     month = normalize_month(month)
 
     budgets = get_all_budgets(month)
@@ -323,7 +324,7 @@ def get_budget_summary(month: str = None) -> list[dict]:
             monthly_expenses.append(dict(record or {}))
 
     if monthly_expenses:
-        # Budget command note: regex handling supports natural phrases such as `budget makan 1jt`.
+        # Natural input section
         from app.services.report_service import enrich_transactions_with_debt_info
         monthly_expenses = enrich_transactions_with_debt_info(monthly_expenses)
 

@@ -1,4 +1,5 @@
-"""Net worth and asset service for account balances, active assets, snapshots, and net worth history."""
+"""Net worth and asset service for assets, snapshots, active values, and historical net worth calculation."""
+
 
 import re
 import urllib.request
@@ -23,7 +24,7 @@ ASSET_COLUMNS = [
     "is_active",
     "created_at",
     "updated_at",
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Debt flow section
     # Schema compatibility note for Google Sheets headers and rows.
     "asset_type",
     "quantity",
@@ -109,7 +110,7 @@ def safe_float_decimal(value) -> float:
 
 
 def parse_human_money(value) -> float:
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for human money."""
     raw = str(value or "").strip().lower()
     if not raw:
         return 0.0
@@ -135,7 +136,7 @@ def parse_human_money(value) -> float:
 
 
 def normalize_date_value(value) -> str:
-    """Clean and standardize normalize date value."""
+    """Normalize and clean input for date value."""
     raw = str(value or "").strip()
     if not raw:
         return ""
@@ -158,7 +159,7 @@ def normalize_date_value(value) -> str:
 
 
 def calculate_asset_gain(asset: dict) -> dict:
-    """Calculate derived values for calculate asset gain."""
+    """Calculate derived values for asset gain."""
     current_value = safe_float(asset.get("current_value", 0))
     quantity = safe_float_decimal(asset.get("quantity"))
     purchase_price = safe_float(asset.get("purchase_price_per_unit", 0))
@@ -186,7 +187,7 @@ def calculate_asset_gain(asset: dict) -> dict:
 
 
 def parse_price_to_float(value) -> float:
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for price to float."""
     try:
         raw = str(value or "").strip()
         raw = re.sub(r"[^0-9]", "", raw)
@@ -259,7 +260,7 @@ def fetch_antam_buyback_price() -> dict:
 
 
 def is_gold_asset(record: dict) -> bool:
-    """Check a boolean condition for is gold asset."""
+    """Check whether a condition is true for gold asset."""
     asset_type = str(record.get("asset_type", "")).strip().lower()
     category = str(record.get("category", "")).strip().lower()
     unit = str(record.get("unit", "")).strip().lower()
@@ -272,7 +273,7 @@ def is_gold_asset(record: dict) -> bool:
 
 
 def is_active_record(record: dict) -> bool:
-    """Check a boolean condition for is active record."""
+    """Check whether a condition is true for active record."""
     return str(record.get("is_active", "")).strip().upper() == "TRUE"
 
 
@@ -315,8 +316,8 @@ def add_asset(
     purchase_unit_price = safe_float(purchase_price_per_unit) if purchase_price_per_unit not in [None, ""] else ""
     purchase_date_value = normalize_date_value(purchase_date)
 
-    # Unit-based assets: gold 41 grams, laptop 1 unit, and similar cases.
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Asset flow section
+    # Debt flow section
     if quantity_value > 0 or unit or unit_price > 0:
         if quantity_value <= 0:
             raise ValueError("Quantity aset harus lebih dari 0. Contoh: `41 gram` atau `1 buah`.")
@@ -389,7 +390,7 @@ def refresh_gold_assets(records: list[dict]) -> list[dict]:
 
 
 def get_assets(active_only: bool = True, refresh_gold: bool = True) -> list[dict]:
-    """Retrieve data needed for assets."""
+    """Get data needed for assets."""
     records = get_all_records(SHEET_ASSETS)
 
     if refresh_gold:
@@ -402,11 +403,11 @@ def get_assets(active_only: bool = True, refresh_gold: bool = True) -> list[dict
 
 
 def get_liabilities(active_only: bool = True) -> list[dict]:
-    """Retrieve data needed for liabilities."""
+    """Get data needed for liabilities."""
     return []
 
 def get_record_by_id(sheet_name: str, record_id: str) -> dict | None:
-    """Retrieve data needed for record by id."""
+    """Get data needed for record by id."""
     records = get_all_records(sheet_name)
 
     for record in records:
@@ -417,7 +418,7 @@ def get_record_by_id(sheet_name: str, record_id: str) -> dict | None:
 
 
 def find_record_row_index(sheet_name: str, record_id: str) -> int | None:
-    """Helper for find record row index in the finance service layer."""
+    """Find a record for record row index."""
     records = get_all_records(sheet_name)
 
     for idx, record in enumerate(records, start=2):
@@ -433,7 +434,7 @@ def update_record_cells(
     record_id: str,
     updates: dict,
 ) -> bool:
-    """Update record cells while keeping related data consistent."""
+    """Update existing data for record cells."""
     row_index = find_record_row_index(sheet_name, record_id)
 
     if not row_index:
@@ -450,7 +451,7 @@ def update_record_cells(
 
 
 def normalize_asset_update_field(field: str) -> str | None:
-    """Clean and standardize normalize asset update field."""
+    """Normalize and clean input for asset update field."""
     key = str(field or "").strip().lower()
 
     aliases = {
@@ -506,7 +507,7 @@ def normalize_asset_update_field(field: str) -> str | None:
 
 
 def normalize_liability_update_field(field: str) -> str | None:
-    """Clean and standardize normalize liability update field."""
+    """Normalize and clean input for liability update field."""
     key = str(field or "").strip().lower()
 
     aliases = {
@@ -536,7 +537,7 @@ def normalize_liability_update_field(field: str) -> str | None:
 
 
 def normalize_common_update_value(field: str, value):
-    """Clean and standardize normalize common update value."""
+    """Normalize and clean input for common update value."""
     raw = str(value or "").strip()
 
     if field in ["current_value", "current_balance", "price_per_unit", "purchase_price_per_unit"]:
@@ -573,7 +574,7 @@ def normalize_common_update_value(field: str, value):
 
 
 def update_asset(asset_id: str, updates: dict) -> dict:
-    """Update asset while keeping related data consistent."""
+    """Update existing data for asset."""
     asset = get_record_by_id(SHEET_ASSETS, asset_id)
 
     if not asset:
@@ -640,7 +641,7 @@ def update_asset(asset_id: str, updates: dict) -> dict:
 
 
 def update_liability(liability_id: str, updates: dict) -> dict:
-    """Update liability while keeping related data consistent."""
+    """Update existing data for liability."""
     return {
         "success": False,
         "before": {},
@@ -667,7 +668,7 @@ def deactivate_liability(liability_id: str) -> bool:
     return False
 
 def calculate_net_worth() -> dict:
-    """Calculate derived values for calculate net worth."""
+    """Calculate derived values for net worth."""
     accounts = get_all_accounts()
     assets = get_assets(active_only=True)
 
@@ -681,8 +682,8 @@ def calculate_net_worth() -> dict:
         for asset in assets
     )
 
-    # Implementation note for this project-specific finance flow.
-    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Implementation section
+    # Debt flow section
     total_liabilities = 0.0
     net_worth = total_accounts + total_assets
 
@@ -697,7 +698,7 @@ def calculate_net_worth() -> dict:
     }
 
 def create_net_worth_snapshot() -> dict:
-    """Create a new record or object for net worth snapshot."""
+    """Create a new data object for net worth snapshot."""
     summary = calculate_net_worth()
 
     snapshot = {
@@ -716,7 +717,7 @@ def create_net_worth_snapshot() -> dict:
 
 
 def get_net_worth_snapshots(limit: int = 12) -> list[dict]:
-    """Retrieve data needed for net worth snapshots."""
+    """Get data needed for net worth snapshots."""
     records = get_all_records(SHEET_NET_WORTH_SNAPSHOTS)
     records = list(reversed(records))
 

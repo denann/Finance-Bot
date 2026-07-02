@@ -1,114 +1,42 @@
 # 08. Setup, Debugging, and Deployment
 
-This file explains the operational scripts and deployment path.
+Use these scripts before manual Telegram testing.
 
 ## Setup check
-
-Run:
 
 ```bash
 python scripts/setup_check.py
 ```
 
-This script is built for new users. It checks whether the basic environment is ready before running the bot.
-
-It validates:
-
-- `.env` file,
-- required environment variables,
-- `ALLOWED_USER_ID`,
-- service account JSON file,
-- required Python packages,
-- Google Sheets connection,
-- Google Sheets schema.
+Checks environment variables, service account file, imports, Google Sheets access, and schema readiness.
 
 ## Debug check
-
-Run:
 
 ```bash
 python scripts/debug_check.py
 ```
 
-This is deeper than setup check. It is useful for development and troubleshooting.
+Runs deeper checks for developers.
 
-It checks:
+## Dummy Google Sheet debugging
 
-- configuration,
-- module imports,
-- Google Sheets access,
-- NLP parser,
-- transaction service,
-- report service,
-- budget service,
-- debt service,
-- recurring service,
-- net worth service,
-- bot handlers,
-- scheduler.
-
-## Local run
-
-Default runtime:
+To debug safely, create a dummy spreadsheet, share it with the same service account, and change only this value:
 
 ```env
-BOT_MODE=polling
+GOOGLE_SHEET_ID=dummy_spreadsheet_id
 ```
 
-Run:
+You do not need a new Google Sheets API project if the same service account is still valid.
 
-```bash
-python main.py
+## Regression checks
+
+Use inputs such as:
+
+```text
+/set_saldo BRI 2500000
+/set_sald BRI 2500000
+beli kopi 20k
+Beli mie goreng 40k dibagi 2 sama Budi via DANA
 ```
 
-The bot is active while the Python process is alive.
-
-## Wispbyte polling deployment
-
-For simple 24/7 deployment, keep polling mode.
-
-Install command:
-
-```bash
-pip install -r requirements.txt
-```
-
-Start command:
-
-```bash
-python main.py
-```
-
-Important notes:
-
-- Keep `BOT_MODE=polling`.
-- Do not run the same bot token on your laptop and Wispbyte at the same time.
-- Keep credentials private.
-- Share the Google Sheets file with the service account email.
-
-## Webhook deployment
-
-Webhook mode is optional and more advanced.
-
-```env
-BOT_MODE=webhook
-WEBHOOK_URL=https://your-domain.com
-TELEGRAM_WEBHOOK_SECRET=your_secret
-APP_PORT=8000
-```
-
-Run:
-
-```bash
-BOT_MODE=webhook python main.py
-```
-
-## Troubleshooting
-
-| Problem | What to Check |
-|---|---|
-| Bot does not respond | Token, allowed user ID, running process, duplicate deployment |
-| Google Sheets error | Sheet ID, service account file, sheet sharing access |
-| Schema mismatch | Tab name and header order |
-| Gemini error | API key and model name |
-| Callback issue | `callback_handler.py` and user state in `context.user_data` |
+Slash commands must not become expense previews.

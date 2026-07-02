@@ -1,4 +1,5 @@
-"""Gemini-based intent router for natural read-only commands and AI insight requests."""
+"""Gemini-based intent router for natural finance questions and read-only command fallback."""
+
 
 
 import json
@@ -67,7 +68,7 @@ INTENT_KEYWORDS = [
 
 
 def should_try_gemini_intent_router(text: str) -> bool:
-    """Check a boolean condition for should try gemini intent router."""
+    """Decide whether the flow should try gemini intent router."""
     clean = str(text or "").strip().lower()
 
     if not clean:
@@ -85,7 +86,7 @@ def should_try_gemini_intent_router(text: str) -> bool:
 
 
 def extract_json_object(text: str) -> dict:
-    """Extract the important part of the input for json object."""
+    """Extract the required part of input for json object."""
     if not text:
         return {}
 
@@ -110,7 +111,7 @@ def extract_json_object(text: str) -> dict:
 
 
 def normalize_router_result(data: dict) -> dict:
-    """Clean and standardize normalize router result."""
+    """Normalize and clean input for router result."""
     intent = str(data.get("intent", "unknown") or "unknown").strip().lower()
     confidence = data.get("confidence", 0)
     args = data.get("args", {}) or {}
@@ -137,7 +138,7 @@ def normalize_router_result(data: dict) -> dict:
 
 
 def route_intent_with_gemini(user_text: str) -> dict:
-    """Helper for route intent with gemini in the parser and NLP layer."""
+    """Helper for route intent with gemini in the NLP and parser layer."""
     prompt = f"""
 Anda adalah intent router untuk personal finance Telegram bot.
 

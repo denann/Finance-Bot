@@ -1,3 +1,4 @@
-"""Main application package for the Personal Finance Bot."""
+"""Main application package for the personal finance bot."""
+
 
 

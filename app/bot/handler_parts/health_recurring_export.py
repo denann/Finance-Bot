@@ -1,4 +1,5 @@
-"""Handlers for health checks, recurring transactions, and scheduled export workflows."""
+"""Handlers for health checks, recurring transaction actions, and data export workflows."""
+
 
 # Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
@@ -204,7 +205,7 @@ async def health_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 def parse_recurring_add_args(args: list[str]) -> dict:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for recurring add args."""
     raw = " ".join(args).strip()
 
     if not raw:
@@ -251,7 +252,7 @@ def parse_recurring_add_args(args: list[str]) -> dict:
     }
 
 def parse_recurring_edit_args(args: list[str]) -> tuple[str, dict]:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for recurring edit args."""
     raw = " ".join(args).strip()
 
     if not raw:

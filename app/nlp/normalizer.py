@@ -1,10 +1,11 @@
-"""Text normalizer for user input, amounts, accounts, typo patterns, and split bill phrases."""
+"""Text normalizer for amounts, account names, split bill phrases, and Indonesian finance input patterns."""
+
 
 import re
 
 
 def normalize_amount(text: str) -> int | None:
-    """Clean and standardize normalize amount."""
+    """Normalize and clean input for amount."""
     if not text:
         return None
 
@@ -29,12 +30,12 @@ def normalize_amount(text: str) -> int | None:
 
 
 def normalize_text(text: str) -> str:
-    """Clean and standardize normalize text."""
+    """Normalize and clean input for text."""
     return text.lower().strip()
 
 
 def parse_amount_value(number_str: str, unit: str = "") -> int | None:
-    """Parse input into structured data for the parser and NLP layer."""
+    """Parse input into structured data for amount value."""
     raw = str(number_str or "").strip().lower().replace(",", ".")
     unit = str(unit or "").strip().lower()
 
@@ -65,7 +66,7 @@ def parse_amount_value(number_str: str, unit: str = "") -> int | None:
 
 
 def extract_amount_from_text(text: str) -> int | None:
-    """Extract the important part of the input for amount from text."""
+    """Extract the required part of input for amount from text."""
     text = text.lower().strip()
 
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
@@ -123,10 +124,10 @@ def apply_split_operation(text: str, base_amount: int) -> int:
     text_lower = text.lower()
 
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
-    # Contoh:
+    # Implementation note for this project-specific finance flow.
     # - "Tissue 10k bagi 4 sama fajar bagas raka"
     # - "Nasi kuning 22k dibagi 2 sama raka"
-    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Debt flow section
     split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
 

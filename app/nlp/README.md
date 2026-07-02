@@ -1,20 +1,15 @@
 # app/nlp
 
-This folder contains the parser and AI interpretation layer.
+This folder contains the parser and AI language layer.
 
-The practical goal is to turn Indonesian finance input into structured data that the backend can validate and save.
+The goal is to convert messy daily finance input into structured data that the backend can validate and preview.
 
-## Files
+## Main files
 
-| File | Purpose |
-|---|---|
-| `normalizer.py` | Cleans input text, amounts, accounts, and split phrases |
-| `regex_parser.py` | Main deterministic parser |
-| `parse_safety.py` | Decides whether parser output is safe or needs clarification |
-| `gemini_parser.py` | Gemini-assisted parser fallback |
-| `gemini_image_parser.py` | Image and receipt parser |
-| `gemini_intent_router.py` | AI-assisted natural command router |
-| `gemini_finance_insight.py` | Prompt and response helpers for insight commands |
-| `gemini_langchain_client.py` | Gemini wrapper through LangChain |
-
-The backend should always validate important actions. AI can help draft or explain, but it should not directly save sensitive financial data.
+- `regex_parser.py`: rule-based parser for common finance inputs.
+- `normalizer.py`: amount, account, and text normalization.
+- `parse_safety.py`: risk routing for warning preview, Gemini draft preview, or clarification.
+- `gemini_parser.py`: Gemini fallback parser.
+- `gemini_image_parser.py`: receipt and image parsing.
+- `gemini_intent_router.py`: AI-assisted intent routing for read-only finance questions.
+- `gemini_finance_insight.py`: prompt builder and generator for insight, audit, coach, and Q&A.

@@ -1,4 +1,5 @@
-"""Rule-based parser for expense, income, transfer, debt, split bill, pending expense, dates, amounts, categories, and accounts."""
+"""Rule-based parser for expenses, income, transfers, debt, split bill, pending expenses, dates, amounts, categories, and accounts."""
+
 
 import re
 from datetime import datetime, timedelta
@@ -50,7 +51,7 @@ ACCOUNT_DISPLAY_NAMES = {
 
 
 def display_account_name(account: str) -> str:
-    """Helper for display account name in the parser and NLP layer."""
+    """Helper for display account name in the NLP and parser layer."""
     return ACCOUNT_DISPLAY_NAMES.get(account, account.upper() if account != "cash" else "Cash")
 
 CATEGORY_KEYWORDS = {
@@ -149,7 +150,7 @@ SPENDING_TYPE_KEYWORDS = {
 }
 
 
-# ── Debt parser ───────────────────────────────────────────────────────────────
+# Debt flow section
 
 DEBT_PAYABLE_KEYWORDS = [
     "hutang ke", "utang ke", "pinjem ke", "pinjam ke",
@@ -172,7 +173,7 @@ DEBT_PAYMENT_KEYWORDS = [
 
 
 def parse_debt_input(text: str) -> dict | None:
-    """Parse input into structured data for the parser and NLP layer."""
+    """Parse input into structured data for debt input."""
     text_lower = normalize_text(text)
 
     amount = extract_amount_from_text(text_lower)
@@ -180,7 +181,7 @@ def parse_debt_input(text: str) -> dict | None:
         return None
 
     def extract_person_after(text_value: str, keyword: str) -> str | None:
-        """Extract the important part of the input for person after."""
+        """Extract the required part of input for person after."""
         if keyword not in text_value:
             return None
 
@@ -208,7 +209,7 @@ def parse_debt_input(text: str) -> dict | None:
         return " ".join(words).title() if words else None
 
     def extract_person_before(text_value: str, keyword: str) -> str | None:
-        """Extract the important part of the input for person before."""
+        """Extract the required part of input for person before."""
         if keyword not in text_value:
             return None
 
@@ -220,12 +221,12 @@ def parse_debt_input(text: str) -> dict | None:
         return " ".join(name_words).title() if name_words else None
 
     def clean_fronting_description(person: str, mode: str) -> str:
-        """Clean and standardize clean fronting description."""
+        """Clean input values for fronting description."""
         desc = extract_description(text, amount) or ""
         desc_lower = desc.lower()
         person_pattern = re.escape(str(person or "").lower())
 
-        # Hapus pembuka seperti "saya nitip raka beli ..." so that deskripsi
+        # Implementation note for this project-specific finance flow.
         # Legacy compatibility note for older records or older in-memory state.
         desc_lower = re.sub(r"^\s*(?:saya|aku|gw|gue)\s+", "", desc_lower)
         if mode == "ditalangin":
@@ -250,13 +251,13 @@ def parse_debt_input(text: str) -> dict | None:
             return desc_lower.title()
         return desc or "Talangan"
 
-    # ── Debt offset rule without account cashflow ─────────────────────────────
-    # Debt command note: keep payable and receivable actions explicit and auditable.
-    # Contoh:
-    # - potong piutang Dimas 20k create badminton
-    # Debt command note: keep payable and receivable actions explicit and auditable.
-    # Debt command note: keep payable and receivable actions explicit and auditable.
-    # Account balance note: avoid partial balance updates when validation fails.
+    # Debt flow section
+    # Debt flow section
+    # Implementation note for this project-specific finance flow.
+    # Debt flow section
+    # Debt flow section
+    # Debt flow section
+    # Account flow section
     offset_self_context = False
     offset_match = re.search(
         r"\b(?:potong|kurangi|kompensasi|offset|netting)\s+"
@@ -281,10 +282,10 @@ def parse_debt_input(text: str) -> dict | None:
         person = re.sub(r"\s+", " ", offset_match.group("person")).strip().title()
         target_word = str(offset_match.group("target") or "piutang").strip().lower()
         # Parser rule note for an Indonesian finance input edge case.
-        # Debt command note: keep payable and receivable actions explicit and auditable.
-        # Debt command note: keep payable and receivable actions explicit and auditable.
-        # Debt command note: keep payable and receivable actions explicit and auditable.
-        # Debt command note: keep payable and receivable actions explicit and auditable.
+        # Debt flow section
+        # Debt flow section
+        # Debt flow section
+        # Debt flow section
         if target_word == "piutang":
             target_debt_type = "receivable"
         elif offset_self_context:
@@ -312,7 +313,7 @@ def parse_debt_input(text: str) -> dict | None:
     # ── Covered-by-someone rule ────────────────────────────────────────────────
     # Parser rule note for an Indonesian finance input edge case.
     # Split bill parsing note: separate the paid transaction from each person share.
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Debt flow section
     ditalangin_person_first_match = re.search(
         r"\b(?:saya|aku|gw|gue)?\s*"
         r"(?:nitip|ditalangin|ditalangi|dibayarin|duluin)\s+"
@@ -379,7 +380,7 @@ def parse_debt_input(text: str) -> dict | None:
 
     # ── Fronting-money rule without immediate cashflow ────────────────────────
     # Parser rule note for an Indonesian finance input edge case.
-    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Debt flow section
     ditalangin_match = re.search(
         r"\b(?:saya|aku|gw|gue)?\s*(?:nitip|ditalangin|ditalangi|dibayarin|duluin)\s+"
         r"(?:sama|ke)?\s*(?:si\s+)?([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)"
@@ -402,9 +403,9 @@ def parse_debt_input(text: str) -> dict | None:
                 "fronting_mode": "ditalangin",
             }
 
-    # ── Implementation section ────────────────────────────────────────────────
-    # Debt command note: keep payable and receivable actions explicit and auditable.
-    # Account balance note: avoid partial balance updates when validation fails.
+    # Implementation section
+    # Debt flow section
+    # Account flow section
     talangin_match = re.search(
         r"\b(?:saya|aku|gw|gue)?\s*(?:ngetalangin|nalangin|talangin|talangi)\s+"
         r"(?:si\s+)?([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)"
@@ -427,7 +428,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "fronting_mode": "talangin",
             }
 
-    # ── Implementation section ────────────────────────────────────────────────
+    # Implementation section
     person_paid_for_me_match = re.search(
         r"^\s*([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)\s+"
         r"(?:ngetalangin|nalangin|talangin|talangi|beliin|belikan|bayarin|membayari)\s+"
@@ -450,8 +451,8 @@ def parse_debt_input(text: str) -> dict | None:
                 "fronting_mode": "ditalangin",
             }
 
-    # ── Debt and receivable flow ───────────────────────────────────────────────
-    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Debt flow section
+    # Debt flow section
     receivable_to_me_match = re.search(
         r"^\s*([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)\s+(?:hutang|utang)\s+ke\s+(?:saya|aku|gw|gue)\b",
         text_lower,
@@ -469,8 +470,8 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # ── Debt and receivable flow ───────────────────────────────────────────────
-    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Debt flow section
+    # Debt flow section
     explicit_piutang_match = re.search(
         r"\bpiutang\s+(?:ke|sama|dari)?\s*"
         r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr))",
@@ -489,8 +490,8 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # ── Debt and receivable flow ───────────────────────────────────────────────
-    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Debt flow section
+    # Debt flow section
     self_payable_match = re.search(
         r"\b(?:saya|aku|gue|gw|gua)\s+berh?utang\s+(?:ke|sama)\s+"
         r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr|$))",
@@ -509,7 +510,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # ── Debt and receivable flow ───────────────────────────────────────────────
+    # Debt flow section
     other_receivable_match = re.search(
         r"\b([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)\s+berh?utang\s+"
         r"(?:ke|sama)\s+(?:saya|aku|gue|gw|gua)\b",
@@ -528,8 +529,8 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # ── Short form "Dimas berutang 31100" => receivable ──────────────────────
-    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Debt flow section
+    # Debt flow section
     short_other_receivable_match = re.search(
         r"\b(?!saya\b|aku\b|gue\b|gw\b|gua\b)"
         r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)\s+berh?utang\b"
@@ -550,11 +551,11 @@ def parse_debt_input(text: str) -> dict | None:
             }
 
     # Parser rule note for an Indonesian finance input edge case.
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Debt flow section
     # Split bill parsing note: separate the paid transaction from each person share.
-    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Debt flow section
 
-    # ── Implementation section ────────────────────────────────────────────────
+    # Implementation section
     # Parser rule note for an Indonesian finance input edge case.
     # Example cleanup: remove the person prefix so the description stays focused on the expense item.
     # Parser rule note for an Indonesian finance input edge case.
@@ -582,7 +583,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "target_debt_type": "receivable",
             }
 
-    # ── Payment self: "saya bayar hutang Raka 10k" ─────────────────────────
+    # Debt flow section
     self_pays_match = re.search(
         r"^\s*(?:saya|aku|gw|gue|gua)\s+"
         r"(?:bayar|byr|melunasi|lunasin|lunasi|nyicil|cicil)\s+"
@@ -605,7 +606,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "target_debt_type": "payable",
             }
 
-    # ── Payment explicit: "bayar hutang Budi 300k" ───────────────────────────
+    # Debt flow section
     for kw in DEBT_PAYMENT_KEYWORDS:
         if kw in text_lower:
             person = extract_person_after(text_lower, kw)
@@ -622,9 +623,9 @@ def parse_debt_input(text: str) -> dict | None:
                 "target_debt_type": "auto",
             }
 
-    # ── Payable natural: "minjem uang Maya 220k" ───────────────────────────
+    # Natural input section
     # Parser rule note for an Indonesian finance input edge case.
-    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Debt flow section
     # Parser rule note for an Indonesian finance input edge case.
     natural_borrow_match = re.search(
         r"\b(?:minjem|pinjem|pinjam)\b\s+(?:uang|duit|dana)?\s*(?:ke|sama|dari)?\s*([a-zA-Z][a-zA-Z\s]{0,40}?)(?=\s*\d|\s*(?:rp|idr))",
@@ -645,9 +646,9 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # ── Debt and receivable flow ───────────────────────────────────────────────
+    # Debt flow section
     for kw in DEBT_PAYABLE_KEYWORDS:
-        # Debt command note: keep payable and receivable actions explicit and auditable.
+        # Debt flow section
         kw_pattern = rf"(?<![a-zA-ZÀ-ÿ]){re.escape(kw)}(?![a-zA-ZÀ-ÿ])"
         if re.search(kw_pattern, text_lower, flags=re.IGNORECASE):
             person = extract_person_after(text_lower, kw)
@@ -660,7 +661,7 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
-    # ── Debt and receivable flow ───────────────────────────────────────────────
+    # Debt flow section
     for kw in DEBT_RECEIVABLE_KEYWORDS:
         if kw in text_lower:
             person = extract_person_before(text_lower, kw)
@@ -683,14 +684,14 @@ def parse_debt_input(text: str) -> dict | None:
 # ── Helper functions ──────────────────────────────────────────────────────────
 
 def detect_type(text: str) -> str | None:
-    """Helper for detect type in the parser and NLP layer."""
+    """Helper for detect type in the NLP and parser layer."""
     text_lower = normalize_text(text)
     account_pattern = r"cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank"
 
-    # Account balance note: avoid partial balance updates when validation fails.
+    # Account flow section
     # Parser rule note for an Indonesian finance input edge case.
-    # Debt payment note: settlement and void actions must stay explicit for auditability.
-    # Account balance note: avoid partial balance updates when validation fails.
+    # Debt flow section
+    # Account flow section
     incoming_from_person_match = re.search(
         r"^\s*(?:transaksi|transfer(?:an)?|tf|trf|kiriman|uang)\s+(?:masuk\s+)?dari\s+"
         r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr|ke\s+|via\s+|pakai\s+|pake\s+))",
@@ -703,7 +704,7 @@ def detect_type(text: str) -> str | None:
         if source and first_token not in ACCOUNT_NAMES:
             return "income"
 
-    # Account balance note: avoid partial balance updates when validation fails.
+    # Account flow section
     # Parser rule note for an Indonesian finance input edge case.
     if re.search(rf"\b({account_pattern})\s+ke\s+({account_pattern})\b", text_lower, flags=re.IGNORECASE):
         return "transfer"
@@ -714,7 +715,7 @@ def detect_type(text: str) -> str | None:
         return "transfer"
 
     # Keyword transfer eksplisit selain topup/isi.
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Debt flow section
     explicit_transfer_keywords = [
         "transfer", "pindah", "move", "tarik tunai", "tarik",
         "setor tunai", "setor ke",
@@ -723,8 +724,8 @@ def detect_type(text: str) -> str | None:
         if re.search(rf"\b({account_pattern})\b", text_lower, flags=re.IGNORECASE):
             return "transfer"
 
-    # Account balance note: avoid partial balance updates when validation fails.
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Account flow section
+    # Debt flow section
     topup_to_account = re.search(
         rf"\b(?:top\s*up|topup|isi|ngisi)\s+({account_pattern})\b",
         text_lower,
@@ -739,8 +740,8 @@ def detect_type(text: str) -> str | None:
         return "transfer"
 
     # Parser rule note for an Indonesian finance input edge case.
-    # Single-input debt flow needs the same enrichment used by mixed input parsing.
-    # Single-input debt flow needs the same enrichment used by mixed input parsing.
+    # Debt flow section
+    # Debt flow section
     if re.search(r"\buang\b.*\b(dari|masuk)\b", text_lower):
         return "income"
 
@@ -755,7 +756,7 @@ def detect_type(text: str) -> str | None:
     return None
 
 def detect_category(text: str, transaction_type: str) -> str:
-    """Helper for detect category in the parser and NLP layer."""
+    """Helper for detect category in the NLP and parser layer."""
     text_lower = normalize_text(text)
 
     for category, keywords in CATEGORY_KEYWORDS.items():
@@ -770,7 +771,7 @@ def detect_category(text: str, transaction_type: str) -> str:
 
 
 def detect_account(text: str) -> str | None:
-    """Helper for detect account in the parser and NLP layer."""
+    """Helper for detect account in the NLP and parser layer."""
     text_lower = normalize_text(text)
 
     for acc in ACCOUNT_NAMES:
@@ -781,13 +782,13 @@ def detect_account(text: str) -> str | None:
 
 
 def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
-    """Helper for detect transfer accounts in the parser and NLP layer."""
+    """Helper for detect transfer accounts in the NLP and parser layer."""
     text_lower = normalize_text(text)
 
     account_pattern = r"cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank"
 
     def normalize_account_name(raw: str | None) -> str | None:
-        """Clean and standardize normalize account name."""
+        """Normalize and clean input for account name."""
         if not raw:
             return None
         clean = re.sub(r"\s+", " ", str(raw).strip().lower())
@@ -796,7 +797,7 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
         return display_account_name(clean)
 
     def iter_accounts() -> list[tuple[int, str]]:
-        """Helper for iter accounts in the parser and NLP layer."""
+        """Helper for iter accounts in the NLP and parser layer."""
         matches = []
         for match in re.finditer(rf"\b({account_pattern})\b", text_lower, flags=re.IGNORECASE):
             display = normalize_account_name(match.group(1))
@@ -805,14 +806,14 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
         return matches
 
     def first_account_after(pattern: str) -> str | None:
-        """Helper for first account after in the parser and NLP layer."""
+        """Helper for first account after in the NLP and parser layer."""
         match = re.search(pattern, text_lower, flags=re.IGNORECASE)
         if not match:
             return None
         return normalize_account_name(match.group(1))
 
     def first_other_account(excluded: set[str]) -> str | None:
-        """Helper for first other account in the parser and NLP layer."""
+        """Helper for first other account in the NLP and parser layer."""
         for _, account in found:
             if account not in excluded:
                 return account
@@ -830,7 +831,7 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
     if source_account and target_account and source_account != target_account:
         return source_account, target_account
 
-    # Account balance note: avoid partial balance updates when validation fails.
+    # Account flow section
     topup_target = first_account_after(rf"\b(?:top\s*up|topup|isi|ngisi)\s+({account_pattern})\b")
     if topup_target:
         if source_account and source_account != topup_target:
@@ -843,8 +844,8 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
 
         return None, topup_target
 
-    # If only source/target is explicit and another account appears, use the other account.
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Account flow section
+    # Debt flow section
     if source_account:
         other_account = first_other_account({source_account})
         return source_account, other_account
@@ -863,7 +864,7 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
     return None, None
 
 def parse_explicit_date(date_text: str) -> str | None:
-    """Parse input into structured data for the parser and NLP layer."""
+    """Parse input into structured data for explicit date."""
     text = str(date_text or "").strip()
 
     # YYYY-MM-DD atau YYYY/MM/DD
@@ -894,7 +895,7 @@ def parse_explicit_date(date_text: str) -> str | None:
 
 
 def parse_day_only_date(day_text: str) -> str | None:
-    """Parse input into structured data for the parser and NLP layer."""
+    """Parse input into structured data for day only date."""
     clean = str(day_text or "").strip()
 
     if not re.fullmatch(r"0?[1-9]|[12]\d|3[01]", clean):
@@ -910,7 +911,7 @@ def parse_day_only_date(day_text: str) -> str | None:
 
 
 def strip_date_phrases(text: str) -> str:
-    """Helper for strip date phrases in the parser and NLP layer."""
+    """Helper for strip date phrases in the NLP and parser layer."""
     clean = str(text or "")
 
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
@@ -947,7 +948,7 @@ def strip_date_phrases(text: str) -> str:
         flags=re.IGNORECASE,
     )
 
-    # Hapus relative date phrases sederhana.
+    # Implementation note for this project-specific finance flow.
     clean = re.sub(r"\bhari\s+ini\b", " ", clean, flags=re.IGNORECASE)
     clean = re.sub(r"\bkemarin\b", " ", clean, flags=re.IGNORECASE)
     clean = re.sub(r"\bminggu\s+lalu\b", " ", clean, flags=re.IGNORECASE)
@@ -955,7 +956,7 @@ def strip_date_phrases(text: str) -> str:
     clean = re.sub(r"\bsehari\s+(?:yang\s+)?lalu\b", " ", clean, flags=re.IGNORECASE)
     clean = re.sub(r"\bsebulan\s+(?:yang\s+)?lalu\b", " ", clean, flags=re.IGNORECASE)
 
-    # Hapus:
+    # Implementation note for this project-specific finance flow.
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
@@ -1010,7 +1011,7 @@ NUMBER_WORDS_ID = {
 
 
 def parse_relative_number(value: str) -> int | None:
-    """Parse input into structured data for the parser and NLP layer."""
+    """Parse input into structured data for relative number."""
     clean = str(value or "").strip().lower()
 
     if clean.isdigit():
@@ -1019,7 +1020,7 @@ def parse_relative_number(value: str) -> int | None:
     return NUMBER_WORDS_ID.get(clean)
 
 def detect_relative_date(text: str) -> str | None:
-    """Helper for detect relative date in the parser and NLP layer."""
+    """Helper for detect relative date in the NLP and parser layer."""
     clean = str(text or "").strip().lower()
     today = datetime.now().date()
 
@@ -1085,7 +1086,7 @@ def detect_relative_date(text: str) -> str | None:
     return None
 
 def detect_date(text: str) -> str:
-    """Helper for detect date in the parser and NLP layer."""
+    """Helper for detect date in the NLP and parser layer."""
     clean = str(text or "").strip().lower()
     today = datetime.now().date()
 
@@ -1142,7 +1143,7 @@ def detect_date(text: str) -> str:
     return today.strftime("%Y-%m-%d")
 
 def extract_description(text: str, amount=None) -> str:
-    """Extract the important part of the input for description."""
+    """Extract the required part of input for description."""
     clean = str(text or "").strip()
 
     # Command routing note: exact commands and aliases are checked before similarity-based typo handling.
@@ -1197,7 +1198,7 @@ def extract_description(text: str, amount=None) -> str:
         clean = re.sub(r"\b(?:jadi|orang)\b", " ", clean, flags=re.IGNORECASE)
 
     # 4. Remove common transaction verbs from the beginning.
-    # Account balance note: avoid partial balance updates when validation fails.
+    # Account flow section
     # Parser rule note for an Indonesian finance input edge case.
     account_pattern = r"(?:cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank)"
     person_transfer = re.match(rf"^\s*transfer\s+ke\s+(?!{account_pattern}\b)", clean, flags=re.IGNORECASE)
@@ -1214,7 +1215,7 @@ def extract_description(text: str, amount=None) -> str:
         flags=re.IGNORECASE,
     )
 
-    # 5. Hapus info account sederhana.
+    # Account flow section
     clean = re.sub(
         r"\b(dari|ke|pakai|pake|via)\s+(cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank)\b",
         " ",
@@ -1235,7 +1236,7 @@ def extract_description(text: str, amount=None) -> str:
     return clean.title()
 
 def detect_subject(text: str, transaction_type: str, category: str, description: str) -> str:
-    """Helper for detect subject in the parser and NLP layer."""
+    """Helper for detect subject in the NLP and parser layer."""
     text_lower = normalize_text(text)
 
     known_subjects = {
@@ -1275,12 +1276,12 @@ def detect_subject(text: str, transaction_type: str, category: str, description:
 
 
 def extract_note(text: str) -> str:
-    """Extract the important part of the input for note."""
+    """Extract the required part of input for note."""
     text_lower = normalize_text(text)
 
     note = ""
 
-    # Prioritas eksplisit: catatan/note/keterangan
+    # Explicit priority: catatan/note/keterangan fields
     explicit_pattern = r"(?:catatan|note|notes|keterangan)\s*[:\-]?\s*(.+)$"
     explicit_match = re.search(explicit_pattern, text_lower)
 
@@ -1325,7 +1326,7 @@ def extract_note(text: str) -> str:
 
 
 def detect_spending_type(text: str, category: str, transaction_type: str) -> str:
-    """Helper for detect spending type in the parser and NLP layer."""
+    """Helper for detect spending type in the NLP and parser layer."""
     if transaction_type != "expense":
         return ""
 
@@ -1351,7 +1352,7 @@ def detect_spending_type(text: str, category: str, transaction_type: str) -> str
 # ── Main parser function ──────────────────────────────────────────────────────
 
 def parse_with_regex(text: str) -> dict | None:
-    """Parse a natural finance input with local deterministic rules before using AI fallback."""
+    """Parse input into structured data for with regex."""
     text_without_date = strip_date_phrases(text)
     amount = extract_amount_from_text(text_without_date)
     if not amount:

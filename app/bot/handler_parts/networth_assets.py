@@ -1,4 +1,5 @@
-"""Handlers for assets and net worth, including asset creation, value updates, deactivation, snapshots, and history."""
+"""Handlers for assets and net worth features, including asset creation, updates, deactivation, snapshots, and history."""
+
 
 # Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
@@ -6,7 +7,7 @@
 from app.bot.handler_parts.common_imports import *
 
 def parse_asset_quantity_input(value: str) -> dict | None:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for asset quantity input."""
     raw = str(value or "").strip().lower()
     raw = raw.replace("@", " @ ")
     raw = re.sub(r"\s+", " ", raw).strip()
@@ -42,7 +43,7 @@ def parse_asset_quantity_input(value: str) -> dict | None:
 
 
 def _parse_human_amount_atom(value: str | None) -> float:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for human amount atom."""
     raw = str(value or "").strip().lower()
     if not raw:
         return 0.0
@@ -55,7 +56,7 @@ def _parse_human_amount_atom(value: str | None) -> float:
 
     raw = re.sub(r"(jt|juta|rb|ribu|k)\b", "", raw).strip()
 
-    # Implementation note for this project-specific finance flow.
+    # Implementation section
     if multiplier != 1:
         raw = raw.replace(",", ".")
         raw = re.sub(r"[^0-9.]", "", raw)
@@ -64,7 +65,7 @@ def _parse_human_amount_atom(value: str | None) -> float:
             raw = first + "." + "".join(rest)
         return float(raw or 0) * multiplier
 
-    # Implementation note for this project-specific finance flow.
+    # Implementation section
     raw = re.sub(r"[^0-9]", "", raw)
     return float(raw or 0)
 
@@ -102,7 +103,7 @@ def _safe_eval_amount_expression(expr: str) -> float:
 
 
 def parse_human_amount(value: str | None) -> float:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for human amount."""
     raw = str(value or "").strip().lower()
     if not raw:
         return 0.0
@@ -136,7 +137,7 @@ def parse_human_amount(value: str | None) -> float:
 
 
 def parse_asset_extra_fields(extra_parts: list[str]) -> dict:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for asset extra fields."""
     result = {
         "purchase_price_per_unit": None,
         "purchase_date": "",
@@ -177,7 +178,7 @@ def parse_asset_extra_fields(extra_parts: list[str]) -> dict:
 
 
 def format_asset_gain_lines(asset: dict, indent: str = "   ") -> list[str]:
-    """Format asset gain lines into readable text."""
+    """Format data into a readable display for asset gain lines."""
     gain = calculate_asset_gain(asset)
     if not gain.get("has_purchase_info"):
         return []
@@ -231,7 +232,7 @@ def build_asset_unit_price_prompt(data: dict) -> str:
     )
 
 def parse_pipe_add_args(args: list[str], item_type: str) -> dict:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for pipe add args."""
     raw = " ".join(args).strip()
 
     if not raw:
@@ -299,7 +300,7 @@ def parse_pipe_add_args(args: list[str], item_type: str) -> dict:
 
 
 def parse_natural_asset_add(text: str) -> dict | None:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for natural asset add."""
     raw = str(text or "").strip()
     match = re.fullmatch(
         r"(?:add|tambah)(?:\s+aset)?\s+(.+?)\s+(\d+(?:[.,]\d+)?)\s*(g|gr|gram|grams|buah|unit|pcs|pc|lembar|kg|kilogram)",
@@ -340,7 +341,7 @@ def parse_natural_asset_add(text: str) -> dict | None:
     }
 
 def parse_pipe_update_args(args: list[str], command_name: str) -> tuple[str, dict]:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for pipe update args."""
     raw = " ".join(args).strip()
 
     if not raw:
@@ -667,7 +668,7 @@ def build_asset_added_text(asset: dict) -> str:
 
 
 def asset_edit_or_continue_keyboard() -> InlineKeyboardMarkup:
-    """Build the save/edit/cancel keyboard for asset preview."""
+    """Helper for asset edit or continue keyboard in the Telegram bot flow."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ Simpan", callback_data="confirm:asset"),

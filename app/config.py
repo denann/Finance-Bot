@@ -1,13 +1,14 @@
 """Application configuration loaded from environment variables and .env files."""
 
 
+
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
 def _parse_int_env(name: str, default: int | None = None) -> int | None:
-    """Read an environment variable and convert it to integer with a safe fallback."""
+    """Parse input into structured data for int env."""
     raw = os.getenv(name)
     if raw is None or str(raw).strip() == "":
         return default
@@ -31,14 +32,14 @@ ALLOWED_USER_ID = _parse_int_env("ALLOWED_USER_ID", 0)
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "service_account.json")
 
-# AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+# Debt flow section
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # App
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip().rstrip("/")
 APP_PORT = _parse_int_env("APP_PORT", 8000) or 8000
 
-# Sheet tab names — satu tempat, gampang diubah
+# Sheet tab names — centralized here so they are easy to change
 SHEET_TRANSACTIONS = "transactions"
 SHEET_ACCOUNTS = "accounts"
 SHEET_BUDGETS = "budgets"

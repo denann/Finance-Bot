@@ -1,4 +1,5 @@
-"""Lightweight setup checker for new users before running the bot."""
+"""Beginner-friendly setup checker for validating environment variables, service account files, package imports, and Google Sheets schema."""
+
 
 from __future__ import annotations
 
@@ -23,34 +24,34 @@ RESULTS: list[tuple[str, str, str]] = []
 
 
 def _add(status: str, title: str, detail: str = ""):
-    """Helper for add in the utility script."""
+    """Helper for add in the developer utility script."""
     RESULTS.append((status, title, detail))
     icon = {"ok": "✅", "warn": "🟡", "fail": "❌", "skip": "⚪"}.get(status, "•")
     print(f"{icon} {title}" + (f" — {detail}" if detail else ""))
 
 
 def ok(title: str, detail: str = ""):
-    """Helper for ok in the utility script."""
+    """Helper for ok in the developer utility script."""
     _add("ok", title, detail)
 
 
 def warn(title: str, detail: str = ""):
-    """Helper for warn in the utility script."""
+    """Helper for warn in the developer utility script."""
     _add("warn", title, detail)
 
 
 def fail(title: str, detail: str = ""):
-    """Helper for fail in the utility script."""
+    """Helper for fail in the developer utility script."""
     _add("fail", title, detail)
 
 
 def skip(title: str, detail: str = ""):
-    """Helper for skip in the utility script."""
+    """Helper for skip in the developer utility script."""
     _add("skip", title, detail)
 
 
 def mask(value: str) -> str:
-    """Helper for mask in the utility script."""
+    """Helper for mask in the developer utility script."""
     value = str(value or "")
     if len(value) <= 10:
         return "***" if value else ""
@@ -58,12 +59,12 @@ def mask(value: str) -> str:
 
 
 def env(name: str, default: str = "") -> str:
-    """Helper for env in the utility script."""
+    """Helper for env in the developer utility script."""
     return str(os.getenv(name, default) or "").strip()
 
 
 def check_env_file():
-    """Helper for check env file in the utility script."""
+    """Helper for check env file in the developer utility script."""
     env_path = PROJECT_ROOT / ".env"
     if env_path.exists():
         ok(".env ditemukan", str(env_path.relative_to(PROJECT_ROOT)))
@@ -72,7 +73,7 @@ def check_env_file():
 
 
 def check_runtime_env() -> str:
-    """Helper for check runtime env in the utility script."""
+    """Helper for check runtime env in the developer utility script."""
     mode = env("BOT_MODE", "polling").lower()
     if mode not in {"polling", "webhook"}:
         fail("BOT_MODE tidak valid", "gunakan polling atau webhook")
@@ -118,7 +119,7 @@ def check_runtime_env() -> str:
 
 
 def check_service_account_file():
-    """Helper for check service account file in the utility script."""
+    """Helper for check service account file in the developer utility script."""
     raw_path = env("GOOGLE_SERVICE_ACCOUNT_JSON", "service_account.json")
     path = Path(raw_path)
     if not path.is_absolute():
@@ -148,7 +149,7 @@ def check_service_account_file():
 
 
 def check_imports():
-    """Helper for check imports in the utility script."""
+    """Helper for check imports in the developer utility script."""
     packages = [
         ("telegram", "python-telegram-bot"),
         ("gspread", "gspread"),
@@ -167,7 +168,7 @@ def check_imports():
 
 
 def check_google_sheets_schema(can_try: bool):
-    """Helper for check google sheets schema in the utility script."""
+    """Helper for check google sheets schema in the developer utility script."""
     needed = ["GOOGLE_SHEET_ID", "GOOGLE_SERVICE_ACCOUNT_JSON"]
     if not can_try or any(not env(name) for name in needed):
         skip("Google Sheets schema check", "lengkapi GOOGLE_SHEET_ID dan service account dulu")
@@ -190,7 +191,7 @@ def check_google_sheets_schema(can_try: bool):
 
 
 def print_summary():
-    """Helper for print summary in the utility script."""
+    """Helper for print summary in the developer utility script."""
     total = len(RESULTS)
     failed = sum(1 for status, _, _ in RESULTS if status == "fail")
     warned = sum(1 for status, _, _ in RESULTS if status == "warn")
@@ -207,7 +208,7 @@ def print_summary():
 
 
 def main() -> int:
-    """Helper for main in the utility script."""
+    """Helper for main in the developer utility script."""
     print("FINANCE BOT SETUP CHECK")
     print(f"Project root: {PROJECT_ROOT}\n")
 

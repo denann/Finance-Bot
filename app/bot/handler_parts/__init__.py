@@ -1,3 +1,4 @@
-"""Smaller Telegram handler modules grouped by responsibility."""
+"""Split handler package used to keep the Telegram bot logic modular."""
+
 
 

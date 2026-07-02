@@ -1,5 +1,4 @@
-"""Central callback handler for inline buttons such as preview, edit, save, cancel, debt, split bill, recurring, and asset flows."""
-
+"""Module for the application."""
 
 # Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
@@ -20,28 +19,18 @@ from app.bot.handler_parts.transaction_flow import (
     build_debt_confirm_preview,
     build_debt_account_prompt,
     build_debt_initial_preview,
-    build_mixed_account_prompt,
     build_mixed_edit_choose_prompt,
     build_mixed_preview,
     build_mixed_short_summary,
     build_mixed_split_bill_queue_prompt,
     build_preview,
     build_preview_edit_help,
-    build_preview_edit_keyboard,
-    build_preview_field_help,
-    build_single_account_prompt,
     build_single_short_summary,
     build_split_bill_prompt_from_parsed,
     create_split_bill_debt,
     debt_uses_cashflow,
     edit_or_continue_keyboard,
-    preview_action_keyboard,
-    preview_action_question,
-    single_ready_to_save,
-    mixed_ready_to_save,
-    debt_ready_to_save,
     format_split_debt_result_lines,
-    mixed_needs_account,
     mixed_split_bill_keyboard,
     mixed_split_bill_needs_decision,
     needs_account,
@@ -56,30 +45,12 @@ from app.nlp.normalizer import normalize_text
 
 
 def is_skip_account_choice(account: str) -> bool:
-    """Check whether an account callback means `Sudah berlalu`.
-
-    Args:
-        account: Account value from callback data.
-
-    Returns:
-        True when the callback asks the bot not to update any account balance.
-    """
+    """Check whether a condition is true for skip account choice."""
     return str(account or "").strip() == SKIP_ACCOUNT_CALLBACK_VALUE
 
 
 def mark_transaction_as_historical(parsed: dict) -> dict:
-    """Mark a transaction as historical without balance mutation.
-
-    Args:
-        parsed: Pending transaction payload.
-
-    Returns:
-        The same transaction payload with historical flags and account label.
-
-    Notes:
-        This mutates the provided dict because the pending transaction is stored
-        in `context.user_data`.
-    """
+    """Mark a record as transaction as historical."""
     parsed["skip_account"] = True
     parsed["account"] = SKIP_ACCOUNT_NAME
     parsed["catatan"] = (str(parsed.get("catatan") or "").strip() + " | sudah berlalu/tanpa update saldo").strip(" |")
@@ -87,17 +58,7 @@ def mark_transaction_as_historical(parsed: dict) -> dict:
 
 
 def mark_debt_as_historical(debt_parsed: dict) -> dict:
-    """Mark a debt flow as debt-only without rekening cashflow.
-
-    Args:
-        debt_parsed: Pending debt payload.
-
-    Returns:
-        The same debt payload with debt-only mode and historical account label.
-
-    Notes:
-        This mutates the provided dict so later callbacks keep the same state.
-    """
+    """Mark a record as debt as historical."""
     debt_parsed["cashflow_mode"] = "debt_only"
     debt_parsed["fronting_mode"] = debt_parsed.get("fronting_mode") or "sudah_berlalu"
     debt_parsed["account"] = SKIP_ACCOUNT_NAME
@@ -106,7 +67,7 @@ def mark_debt_as_historical(debt_parsed: dict) -> dict:
 
 
 def _split_debt_id_text(value) -> list[str]:
-    """Helper for split debt id text in the Telegram bot flow."""
+    """Helper for split debt id text in the application."""
     if not value:
         return []
     if isinstance(value, (list, tuple, set)):
@@ -124,7 +85,7 @@ def _split_debt_id_text(value) -> list[str]:
 
 
 def _merge_debt_ids(*values) -> str:
-    """Helper for merge debt ids in the Telegram bot flow."""
+    """Helper for merge debt ids in the application."""
     merged = []
     seen = set()
     for value in values:
@@ -188,7 +149,7 @@ def create_fronted_split_receivable_debts(debt_parsed: dict) -> dict:
 
 
 def attach_fronted_split_debt_relations(debt_parsed: dict, debt_result: dict, split_result: dict) -> dict:
-    """Helper for attach fronted split debt relations in the Telegram bot flow."""
+    """Helper for attach fronted split debt relations in the application."""
     primary_id = debt_result.get("debt_id") if debt_result else ""
     receivable_ids = [x.get("debt_id") for x in (split_result or {}).get("created", []) if x.get("debt_id")]
     debt_parsed["hutang_id"] = _merge_debt_ids(debt_parsed.get("hutang_id"), primary_id, receivable_ids)
@@ -221,7 +182,7 @@ def append_fronted_split_result_lines(lines: list[str], split_result: dict, *, i
 
 
 def build_edit_txn_preview_text_for_callback(preview: dict, split_parsed: dict | None = None) -> str:
-    """Handle callback-related behavior in the Telegram bot flow."""
+    """Handle callback-related behavior in the application."""
     old_txn = preview.get("old_txn", {}) or {}
     new_txn = preview.get("new_txn", {}) or {}
     updates = preview.get("updates", {}) or {}
@@ -278,7 +239,7 @@ def parse_debt_ids_from_txn_record_for_edit(txn: dict) -> list[str]:
 
 
 def overpayment_decision_keyboard() -> InlineKeyboardMarkup:
-    """Helper for overpayment decision keyboard in the Telegram bot flow."""
+    """Helper for overpayment decision keyboard in the application."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Anggap lunas / bonus", callback_data="debt_overpay:bonus")],
         [InlineKeyboardButton("🔴 Catat sebagai hutang saya", callback_data="debt_overpay:opposite_debt")],
@@ -346,12 +307,12 @@ def resolve_payment_target_type(parsed: dict, debts: list[dict]) -> tuple[str | 
 
 
 def clear_parse_clarification_state(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Helper for clear parse clarification state in the Telegram bot flow."""
+    """Helper for clear parse clarification state in the application."""
     context.user_data.pop("pending_parse_clarification", None)
 
 
 def infer_clarified_payment_target_type(raw: str) -> str:
-    """Helper for infer clarified payment target type in the Telegram bot flow."""
+    """Helper for infer clarified payment target type in the application."""
     clean = normalize_text(raw)
     if re.search(r"^\s*(?:saya|aku|gw|gue|gua)\s+(?:bayar|byr)\b", clean):
         return "payable"
@@ -385,8 +346,8 @@ def build_clarified_debt_payment(raw: str, parsed: dict | None = None) -> dict |
 def build_expense_candidate_raw(raw: str) -> str:
     """Build the data structure or message text for expense candidate raw."""
     clean = str(raw or "").strip()
-    # Example cleanup: remove the person prefix so the description stays focused on the expense item.
-    # Example cleanup: remove the person prefix so the description stays focused on the expense item.
+    # Implementation note for this project-specific finance flow.
+    # Prevent the subject from leaking into "Budi Bayar Makan" when the user chooses a normal expense.
     clean = re.sub(
         r"^\s*(?!saya\b|aku\b|gw\b|gue\b|gua\b)([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,30}?)\s+(?:bayar|byr)\s+",
         "bayar ",
@@ -467,21 +428,11 @@ def build_clarified_fronting(raw: str, parsed: dict | None = None) -> dict | Non
     }
 
 
-# Implementation section
-# callback_data routes the user back to the correct flow without saving before confirmation.
+# Implementation note for this project-specific finance flow.
+# Implementation note for this project-specific finance flow.
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Route Telegram inline button callbacks to the right pending flow.
-
-    Args:
-        update: Telegram update that contains the callback query.
-        context: Telegram context used to read and update pending flow state.
-
-    Notes:
-        Callback data is the routing contract for this bot. The handler may
-        update `context.user_data`, edit Telegram messages, save confirmed data,
-        or cancel pending sessions depending on the callback prefix.
-    """
+    """Handle inline button callbacks for save, edit, cancel, account choice, split bill, debt, and asset flows."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -538,21 +489,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_mixed", None)
             clear_parse_clarification_state(context)
 
-            intent = debt_parsed.get("intent")
-            if debt_uses_cashflow(debt_parsed) and intent != "offset_debt" and not debt_parsed.get("account"):
-                await safe_edit_message(
-                    query,
-                    build_debt_account_prompt(debt_parsed),
-                    parse_mode="Markdown",
-                    reply_markup=account_keyboard("debt_acc"),
-                )
-                return
-
             await safe_edit_message(
                 query,
-                f"{build_debt_initial_preview(debt_parsed)}\n\n{preview_action_question(True)}",
+                f"{build_debt_initial_preview(debt_parsed)}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
                 parse_mode="Markdown",
-                reply_markup=preview_action_keyboard("debt", True),
+                reply_markup=edit_or_continue_keyboard("debt"),
             )
             return
 
@@ -574,21 +515,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_mixed", None)
             clear_parse_clarification_state(context)
 
-            intent = debt_parsed.get("intent")
-            if debt_uses_cashflow(debt_parsed) and intent != "offset_debt" and not debt_parsed.get("account"):
-                await safe_edit_message(
-                    query,
-                    build_debt_account_prompt(debt_parsed),
-                    parse_mode="Markdown",
-                    reply_markup=account_keyboard("debt_acc"),
-                )
-                return
-
             await safe_edit_message(
                 query,
-                f"{build_debt_initial_preview(debt_parsed)}\n\n{preview_action_question(True)}",
+                f"{build_debt_initial_preview(debt_parsed)}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
                 parse_mode="Markdown",
-                reply_markup=preview_action_keyboard("debt", True),
+                reply_markup=edit_or_continue_keyboard("debt"),
             )
             return
 
@@ -620,20 +551,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-            if needs_account(clarified):
-                await safe_edit_message(
-                    query,
-                    build_single_account_prompt(clarified),
-                    parse_mode="Markdown",
-                    reply_markup=account_keyboard("acc"),
-                )
-                return
-
             await safe_edit_message(
                 query,
-                f"{build_preview(clarified)}\n\n{preview_action_question(True)}",
+                f"{build_preview(clarified)}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
                 parse_mode="Markdown",
-                reply_markup=preview_action_keyboard("single", True),
+                reply_markup=edit_or_continue_keyboard("single"),
             )
             return
 
@@ -671,18 +593,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await proceed_after_preview_edit(query, context, scope)
             return
 
-        if action == "field":
-            field = parts[3] if len(parts) > 3 else ""
-            if not context.user_data.get("pending_preview_edit"):
-                context.user_data["pending_preview_edit"] = {"scope": scope, "step": "edit_item"}
-            await safe_edit_message(
-                query,
-                build_preview_field_help(scope, field),
-                parse_mode="Markdown",
-                reply_markup=build_preview_edit_keyboard(scope),
-            )
-            return
-
         if action == "edit":
             if scope == "mixed":
                 mixed_items = context.user_data.get("pending_mixed")
@@ -705,7 +615,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     query,
                     build_preview_edit_help("debt"),
                     parse_mode="Markdown",
-                    reply_markup=build_preview_edit_keyboard("debt"),
                 )
                 return
 
@@ -718,7 +627,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     query,
                     build_preview_edit_help("pending_expense"),
                     parse_mode="Markdown",
-                    reply_markup=build_preview_edit_keyboard("pending_expense"),
                 )
                 return
 
@@ -731,7 +639,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     query,
                     build_preview_edit_help("asset"),
                     parse_mode="Markdown",
-                    reply_markup=build_preview_edit_keyboard("asset"),
                 )
                 return
 
@@ -742,7 +649,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit_message(query, 
                 build_preview_edit_help("single"),
                 parse_mode="Markdown",
-                reply_markup=build_preview_edit_keyboard("single"),
             )
             return
 
@@ -978,7 +884,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 and parse_sheet_number(d.get("remaining_amount", 0)) > 0
                 for d in debts
             )
-            # Keep target empty when direction is ambiguous or multiple active debts exist.
+            # Pembayaran selalu dialokasikan global per orang sesuai arah input.
+            # Debt flow section
+            # konsisten sebagai ledger per orang.
             debt_parsed["target_debt_id"] = ""
             debt_parsed["debt_type_for_payment"] = debt_type_for_payment
             debt_parsed["target_debt_type"] = debt_type_for_payment
@@ -1015,9 +923,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         await safe_edit_message(query, 
-            f"{preview}\n\n{preview_action_question(True)}",
+            preview,
             parse_mode="Markdown",
-            reply_markup=preview_action_keyboard("debt", True),
+            reply_markup=confirm_keyboard("debt"),
         )
         return
 
@@ -1141,9 +1049,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 short_summary += f"\n• ...dan {len(failed_items) - 5} item lain."
 
         await safe_edit_message(query, 
-            f"✅ Pilihan rekening: *{md_safe(account_label)}*.\n\n{short_summary}\n\n{preview_action_question(True)}",
+            f"✅ Pilihan rekening: *{md_safe(account_label)}*.\n\n{short_summary}\n\nSimpan semua item ini?",
             parse_mode="Markdown",
-            reply_markup=preview_action_keyboard("mixed", True),
+            reply_markup=confirm_keyboard("mixed"),
         )
         return
     
@@ -1179,9 +1087,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         await safe_edit_message(query, 
-            f"{preview}\n\n{preview_action_question(True)}",
+            f"{preview}\n\nSimpan semua transaksi ini?",
             parse_mode="Markdown",
-            reply_markup=preview_action_keyboard("batch", True),
+            reply_markup=confirm_keyboard("batch"),
         )
         return
 
@@ -1210,11 +1118,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         short_summary = build_single_short_summary(parsed)
-        preview = build_preview(parsed)
+
         await safe_edit_message(query, 
-            f"✅ Pilihan rekening: *{md_safe(account_label)}*.\n\n{preview}\n\n{preview_action_question(True)}",
+            f"✅ Pilihan rekening: *{md_safe(account_label)}*.\n\n{short_summary}\n\nSimpan transaksi ini?",
             parse_mode="Markdown",
-            reply_markup=preview_action_keyboard("single", True),
+            reply_markup=confirm_keyboard("pending"),
         )
         return
 
@@ -1233,7 +1141,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await safe_edit_message(query, "❌ Sesi split bill expired. Coba input ulang.")
                 return
 
-            # Guard against stale split callbacks so an old button cannot overwrite the final preview.
+            # Implementation note for this project-specific finance flow.
+            # Callback mixed sekarang membawa index item aktif. Ini mencegah bug
+            # double-click/callback lama: klik lama tidak boleh otomatis
+            # memutuskan split bill berikutnya, dan callback duplikat tidak boleh
+            # Message handling section
             expected_index = None
             if len(parts) > 3:
                 try:
@@ -1254,7 +1166,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["pending_mixed"] = mixed_items
 
             if decision_result == "invalid" and not mixed_split_bill_needs_decision(mixed_items):
-                # The split state is already complete, so the stale callback can be ignored safely.
+                # All split bill items are already resolved. This is probably a duplicate callback,
+                # Implementation note for this project-specific finance flow.
+                # so the user can still save the data.
                 pass
             elif decision_result == "invalid":
                 await safe_edit_message(query, 
@@ -1273,30 +1187,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             if context.user_data.get("mixed_review_preview_sent"):
-                if mixed_needs_account(mixed_items):
-                    await safe_edit_message(
-                        query,
-                        f"✅ Split bill sudah diproses.\n\n{build_mixed_account_prompt(mixed_items)}",
-                        parse_mode="Markdown",
-                        reply_markup=account_keyboard("mixed_acc"),
-                    )
-                    return
-
                 short_summary = build_mixed_short_summary(mixed_items)
                 await safe_edit_message(query, 
-                    f"✅ Split bill sudah diproses.\n\n{short_summary}\n\n{preview_action_question(True)}",
+                    f"✅ Split bill sudah diproses.\n\n{short_summary}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
                     parse_mode="Markdown",
-                    reply_markup=preview_action_keyboard("mixed", True),
-                )
-                return
-
-            if mixed_needs_account(mixed_items):
-                context.user_data["mixed_review_preview_sent"] = True
-                await safe_edit_message(
-                    query,
-                    build_mixed_account_prompt(mixed_items),
-                    parse_mode="Markdown",
-                    reply_markup=account_keyboard("mixed_acc"),
+                    reply_markup=edit_or_continue_keyboard("mixed"),
                 )
                 return
 
@@ -1304,9 +1199,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["mixed_review_preview_sent"] = True
 
             await safe_edit_message(query, 
-                f"{preview}\n\n{preview_action_question(True)}",
+                f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
                 parse_mode="Markdown",
-                reply_markup=preview_action_keyboard("mixed", True),
+                reply_markup=edit_or_continue_keyboard("mixed"),
             )
             return
 
@@ -1352,26 +1247,62 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if parsed.get("split_bill"):
             apply_split_bill_decision_to_parsed(parsed, status)
         context.user_data["pending_parsed"] = parsed
-        if needs_account(parsed):
-            await safe_edit_message(
-                query,
-                build_single_account_prompt(parsed),
-                parse_mode="Markdown",
-                reply_markup=account_keyboard("acc"),
-            )
-            return
-
         preview = build_preview(parsed)
 
         await safe_edit_message(query, 
-            f"{preview}\n\n{preview_action_question(True)}",
+            f"{preview}\n\nMau edit dulu atau lanjut ke rekening/simpan?",
             parse_mode="Markdown",
-            reply_markup=preview_action_keyboard("single", True),
+            reply_markup=edit_or_continue_keyboard("single"),
         )
         return
 
     if data.startswith("confirm:"):
         confirm_target = data.split(":")[1] if ":" in data else ""
+
+        if confirm_target == "set_balance":
+            pending_balance = context.user_data.get("pending_set_balance") or {}
+
+            if not pending_balance:
+                await safe_edit_message(query, "❌ Sesi set saldo expired. Jalankan `/set_saldo` lagi.", parse_mode="Markdown")
+                return
+
+            account_name = str(pending_balance.get("account_name") or "").strip()
+            new_balance = float(pending_balance.get("new_balance", 0) or 0)
+            old_balance = float(pending_balance.get("current_balance", 0) or 0)
+            delta = new_balance - old_balance
+            sign = "+" if delta >= 0 else "-"
+
+            try:
+                success = update_account_balance(account_name, new_balance)
+            except Exception as e:
+                await safe_edit_message(
+                    query,
+                    f"❌ *Gagal set saldo.*\n{md_safe(str(e))}",
+                    parse_mode="Markdown",
+                )
+                return
+
+            if not success:
+                await safe_edit_message(
+                    query,
+                    f"❌ Rekening `{md_code_text(account_name)}` tidak ditemukan di sheet `accounts`.",
+                    parse_mode="Markdown",
+                )
+                context.user_data.pop("pending_set_balance", None)
+                return
+
+            context.user_data.pop("pending_set_balance", None)
+            await safe_edit_message(
+                query,
+                "✅ *Saldo rekening berhasil diupdate!*\n\n"
+                f"🏦 Rekening: *{md_safe(account_name)}*\n"
+                f"💰 Saldo lama: *{format_rupiah(old_balance)}*\n"
+                f"🎯 Saldo baru: *{format_rupiah(new_balance)}*\n"
+                f"🔁 Selisih: *{sign}{format_rupiah(abs(delta))}*\n\n"
+                "Catatan: ini hanya mengubah saldo di sheet `accounts`, tidak membuat row transaksi baru.",
+                parse_mode="Markdown",
+            )
+            return
 
         if confirm_target == "asset":
             pending_asset = context.user_data.get("pending_asset_confirm")
@@ -2827,6 +2758,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_preview_edit", None)
         context.user_data.pop("pending_missing_amount", None)
         context.user_data.pop("pending_parse_clarification", None)
+        context.user_data.pop("pending_set_balance", None)
         context.user_data.pop("mixed_review_preview_sent", None)
 
         await safe_edit_message(query, "❌ Input dibatalkan.")

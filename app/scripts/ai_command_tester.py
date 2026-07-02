@@ -1,4 +1,4 @@
-"""Local command testing script for parser, command routing, and regression checks without running Telegram manually."""
+"""Module for the developer utility script."""
 
 from __future__ import annotations
 

@@ -1,19 +1,18 @@
 # app
 
-This folder contains the main application code.
+This folder contains the main application code for the Telegram-based personal finance bot.
 
-The purpose of this folder is to separate the bot into clear layers: Telegram interface, parser/NLP, business services, scheduler, Google Sheets access, and configuration. This structure makes the project easier to debug because each folder has a specific responsibility.
+The role of this folder is to connect user input, backend logic, Google Sheets, scheduling, and AI assistance into one working system.
 
-## Main parts
+## Main folders
 
-| Folder/File | Purpose |
-|---|---|
-| `api/` | Optional FastAPI webhook endpoint |
-| `bot/` | Telegram bot handlers and UI flow |
-| `nlp/` | Parser, normalizer, Gemini parser, and parse safety |
-| `scheduler/` | Scheduled jobs such as recurring transactions |
-| `services/` | Finance business logic |
-| `sheets/` | Google Sheets access and schema validation |
-| `config.py` | Environment-based configuration |
+- `api/`: optional FastAPI webhook endpoint.
+- `bot/`: Telegram bot application, commands, messages, callbacks, and keyboards.
+- `nlp/`: parser, normalizer, parse safety, and Gemini helpers.
+- `scheduler/`: recurring jobs and automated tasks.
+- `services/`: finance business logic.
+- `sheets/`: Google Sheets access, schema setup, retry, and rollback helpers.
 
-The main idea is simple: handlers receive user actions, services decide the finance logic, and the Sheets layer stores the data.
+## Mental model
+
+Telegram handlers should decide what the user wants. Services should decide what finance operation should happen. The Sheets layer should decide how data is read or written safely.

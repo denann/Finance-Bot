@@ -1,4 +1,5 @@
-"""Gemini prompt and response helpers for finance insight, audit, coaching, and data-based Q&A."""
+"""Gemini-based finance insight generator for ask, audit, coach, and monthly insight modes."""
+
 
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ MODE_LABELS = {
 
 
 def _json_dumps(data: dict) -> str:
-    """Helper for json dumps in the parser and NLP layer."""
+    """Helper for json dumps in the NLP and parser layer."""
     return json.dumps(data, ensure_ascii=False, indent=2, default=str)
 
 
@@ -71,7 +72,7 @@ Konteks JSON:
 
 
 def generate_finance_insight(mode: str, context: dict, question: str = "") -> str:
-    """Helper for generate finance insight in the parser and NLP layer."""
+    """Helper for generate finance insight in the NLP and parser layer."""
     if not GEMINI_API_KEY:
         if mode == "audit":
             return deterministic_audit_text(context)

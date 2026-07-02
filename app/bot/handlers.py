@@ -1,4 +1,5 @@
-"""Compatibility facade that re-exports handlers from handler_parts."""
+"""Handler facade that re-exports smaller handler modules for a stable import path."""
+
 
 from app.bot.handler_parts.core import *
 from app.bot.handler_parts.networth_assets import *

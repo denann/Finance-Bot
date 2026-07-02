@@ -1,4 +1,5 @@
-"""Parse safety layer that decides whether a parsed result is safe, needs warning, needs Gemini draft, or needs user clarification."""
+"""Parse safety module that decides whether a parsed input can be previewed, needs warning, needs Gemini draft, or needs clarification."""
+
 
 
 from __future__ import annotations
@@ -78,27 +79,27 @@ PAST_OR_ACTUAL_KEYWORDS = {
 
 
 def _has_amount(clean: str) -> bool:
-    """Check a boolean condition for has amount."""
+    """Check whether data has amount."""
     return bool(extract_amount_from_text(clean))
 
 
 def _has_debt_keyword(clean: str) -> bool:
-    """Check a boolean condition for has debt keyword."""
+    """Check whether data has debt keyword."""
     return any(keyword in clean for keyword in DEBT_KEYWORDS)
 
 
 def _has_account(clean: str) -> bool:
-    """Check a boolean condition for has account."""
+    """Check whether data has account."""
     return bool(re.search(rf"\b({ACCOUNT_PATTERN})\b", clean, flags=re.IGNORECASE))
 
 
 def _first_token(value: str) -> str:
-    """Helper for first token in the parser and NLP layer."""
+    """Helper for first token in the NLP and parser layer."""
     return str(value or "").strip().split()[0].lower() if str(value or "").strip() else ""
 
 
 def _looks_like_person(value: str) -> bool:
-    """Helper for looks like person in the parser and NLP layer."""
+    """Helper for looks like person in the NLP and parser layer."""
     clean = re.sub(r"[^a-zA-ZÀ-ÿ\s]", " ", str(value or "").lower())
     clean = re.sub(r"\s+", " ", clean).strip()
     if not clean:
@@ -112,19 +113,19 @@ def _looks_like_person(value: str) -> bool:
 
 
 def _append_unique(items: list[str], value: str) -> None:
-    """Append data or text to unique."""
+    """Append data to unique."""
     if value and value not in items:
         items.append(value)
 
 
 def _add_reason(reasons: list[str], reason: str) -> None:
-    """Helper for add reason in the parser and NLP layer."""
+    """Helper for add reason in the NLP and parser layer."""
     if reason and reason not in reasons:
         reasons.append(reason)
 
 
 def extract_person_candidate(text: str) -> str:
-    """Extract the important part of the input for person candidate."""
+    """Extract the required part of input for person candidate."""
     clean = normalize_text(text)
 
     patterns = [
@@ -147,7 +148,7 @@ def extract_person_candidate(text: str) -> str:
 
 
 def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str]]:
-    """Helper for detect pre parse clarification flags in the parser and NLP layer."""
+    """Helper for detect pre parse clarification flags in the NLP and parser layer."""
     clean = normalize_text(text)
     flags: list[str] = []
     reasons: list[str] = []
@@ -155,8 +156,8 @@ def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str
     if not clean or not _has_amount(clean):
         return flags, reasons
 
-    # Debt command note: keep payable and receivable actions explicit and auditable.
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Debt flow section
+    # Debt flow section
     if not _has_debt_keyword(clean):
         person_pays = re.search(
             r"^\s*(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)\s+(?:bayar|byr)\b(?=.*(?:\d|rp|idr))",
@@ -214,7 +215,7 @@ def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str
             "Frasa pinjam uang dari saya sengaja diklarifikasi agar tidak salah arah hutang/piutang.",
         )
 
-    # Account balance note: avoid partial balance updates when validation fails.
+    # Account flow section
     if re.search(rf"\bsaldo\s+({ACCOUNT_PATTERN})\b", clean, flags=re.IGNORECASE) and re.search(r"\b(?:minus|-)?\s*(?:\d|rp|idr)", clean):
         _append_unique(flags, "balance_or_set_balance_intent")
         _add_reason(
@@ -222,7 +223,7 @@ def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str
             "Input terlihat seperti ingin set/cek saldo rekening, bukan transaksi expense biasa.",
         )
 
-    # 8) Possible pending expense / billing period.
+    # Pending expense section
     has_future_period = any(keyword in clean for keyword in FUTURE_OR_BILLING_PERIOD_KEYWORDS)
     has_explicit_pending = any(keyword in clean.split()[:3] for keyword in PENDING_EXPLICIT_KEYWORDS)
     has_past_or_actual = any(keyword in clean for keyword in PAST_OR_ACTUAL_KEYWORDS)
@@ -246,7 +247,7 @@ def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str
 
 
 def detect_post_parse_flags(text: str, parsed: dict[str, Any] | None) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Helper for detect post parse flags in the parser and NLP layer."""
+    """Helper for detect post parse flags in the NLP and parser layer."""
     clean = normalize_text(text)
     parsed = parsed or {}
     info_flags: list[str] = []
@@ -258,7 +259,7 @@ def detect_post_parse_flags(text: str, parsed: dict[str, Any] | None) -> tuple[l
     category = str(parsed.get("category") or "").strip()
     parsed_by = str(parsed.get("parsed_by") or "").strip().lower()
 
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Debt flow section
     topup_match = re.search(
         r"\b(?:top\s*up|topup|isi|ngisi)\s+(?P<target>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,25}?)(?=\s*(?:\d|rp|idr|dari|pakai|pake|via|ke|$))",
         clean,
@@ -287,7 +288,7 @@ def detect_post_parse_flags(text: str, parsed: dict[str, Any] | None) -> tuple[l
                     "Isi/top up ke target non-wallet perlu dicek agar tidak salah dianggap transfer.",
                 )
 
-    # Account balance note: avoid partial balance updates when validation fails.
+    # Account flow section
     has_account_to_account_without_keyword = (
         re.search(rf"\b({ACCOUNT_PATTERN})\s+ke\s+({ACCOUNT_PATTERN})\b", clean, flags=re.IGNORECASE)
         and not re.search(r"\b(?:transfer|tf|trf|pindah|move|tarik|setor|top\s*up|topup|isi|ngisi)\b", clean, flags=re.IGNORECASE)
@@ -346,10 +347,10 @@ def detect_post_parse_flags(text: str, parsed: dict[str, Any] | None) -> tuple[l
 
 
 # Fungsi utama parse safety.
-# AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+# Debt flow section
 
 def assess_parse_safety(text: str, parsed: dict | None) -> dict:
-    """Assess parser output and choose the safest next action: preview, warning, Gemini draft, or clarification."""
+    """Helper for assess parse safety in the NLP and parser layer."""
     parsed = parsed or {}
     pre_flags, pre_reasons = detect_pre_parse_clarification_flags(text)
     info_flags, warning_flags, gemini_flags, post_reasons = detect_post_parse_flags(text, parsed)

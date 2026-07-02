@@ -1,4 +1,5 @@
-"""Gemini-assisted transaction parser used when local regex parsing is not confident enough."""
+"""Gemini-assisted transaction parser used as a fallback when local parsing is not confident enough."""
+
 
 
 import json
@@ -110,7 +111,7 @@ Balas HANYA JSON dengan format berikut:
 
 
 def clean_gemini_json(raw_text: str) -> str:
-    """Clean and standardize clean gemini json."""
+    """Clean input values for gemini json."""
     raw_text = raw_text.strip()
 
     if raw_text.startswith("```"):
@@ -123,7 +124,7 @@ def clean_gemini_json(raw_text: str) -> str:
 
 
 def parse_with_gemini(user_input: str) -> dict | None:
-    """Parse input into structured data for the parser and NLP layer."""
+    """Parse input into structured data for with gemini."""
     try:
         prompt = build_prompt(user_input)
         if not GEMINI_API_KEY:
@@ -187,7 +188,7 @@ def parse_with_gemini(user_input: str) -> dict | None:
 
 
 def parse_with_pending_fallback(user_input: str) -> dict:
-    """Parse input into structured data for the parser and NLP layer."""
+    """Parse input into structured data for with pending fallback."""
     result = parse_with_gemini(user_input)
 
     if result is None:

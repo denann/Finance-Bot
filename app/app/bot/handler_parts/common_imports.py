@@ -1,4 +1,4 @@
-"""Shared imports and helper utilities used across Telegram handler modules."""
+"""Module for the application."""
 
 
 import re
@@ -184,7 +184,7 @@ def format_rupiah(amount: float) -> str:
 
 
 def short_debt_id(debt_id: str) -> str:
-    """Helper for short debt id in the Telegram bot flow."""
+    """Helper for short debt id in the application."""
     debt_id = str(debt_id or "")
     if len(debt_id) <= 18:
         return debt_id
@@ -192,17 +192,17 @@ def short_debt_id(debt_id: str) -> str:
 
 
 def md_safe(value) -> str:
-    """Helper for md safe in the Telegram bot flow."""
+    """Helper for md safe in the application."""
     return escape_markdown(str(value or "-"), version=1)
 
 
 def md_code_text(value) -> str:
-    """Helper for md code text in the Telegram bot flow."""
+    """Helper for md code text in the application."""
     return str(value or "-").replace("`", "'")
 
 
 def short_txn_id(txn_id: str) -> str:
-    """Helper for short txn id in the Telegram bot flow."""
+    """Helper for short txn id in the application."""
     txn_id = str(txn_id or "")
     if len(txn_id) <= 18:
         return txn_id
@@ -234,7 +234,7 @@ def format_indonesian_date_group_label(date_value) -> str:
 
 
 def _safe_float_for_display(value, default: float = 0.0) -> float:
-    """Helper for safe float for display in the Telegram bot flow."""
+    """Helper for safe float for display in the application."""
     try:
         if isinstance(value, str):
             raw = value.strip().replace("Rp", "").replace("rp", "").replace(" ", "")
@@ -563,7 +563,7 @@ def is_authorized(update: Update) -> bool:
 
 
 async def reject_unauthorized(update: Update):
-    """Helper for reject unauthorized in the Telegram bot flow."""
+    """Helper for reject unauthorized in the application."""
     user_id = update.effective_user.id if update.effective_user else "unknown"
     message = (
         "⛔ Anda tidak punya akses ke bot ini.\n\n"
@@ -587,7 +587,7 @@ async def reject_unauthorized(update: Update):
 
 
 def split_long_message(text: str, max_len: int = TELEGRAM_SAFE_MESSAGE_LIMIT) -> list[str]:
-    """Helper for split long message in the Telegram bot flow."""
+    """Helper for split long message in the application."""
     text = str(text or "").strip()
     if not text:
         return [""]
@@ -667,7 +667,7 @@ async def reply_update_safely(update: Update, text: str, parse_mode: str | None 
 
 
 async def safe_edit_message(query, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
-    """Helper for safe edit message in the Telegram bot flow."""
+    """Helper for safe edit message in the application."""
     text = str(text or "").strip() or " "
     chunks = split_long_message(text)
     first = chunks[0]
@@ -678,7 +678,7 @@ async def safe_edit_message(query, text: str, parse_mode: str | None = None, rep
         first = first[:max_first_len].rstrip() + suffix
 
     async def _edit(payload: str, mode: str | None, markup):
-        """Helper for edit in the Telegram bot flow."""
+        """Helper for edit in the application."""
         return await query.message.edit_text(
             payload,
             parse_mode=mode,
@@ -712,7 +712,7 @@ async def safe_edit_message(query, text: str, parse_mode: str | None = None, rep
 
 
 async def show_callback_loading(query, text: str = "⏳ *Memproses pilihan...*"):
-    """Handle callback-related behavior in the Telegram bot flow."""
+    """Handle callback-related behavior in the application."""
     try:
         await safe_edit_message(query, text, parse_mode="Markdown")
     except Exception:
@@ -753,7 +753,7 @@ def _parse_human_amount_atom(value: str | None) -> float:
 
 
 def _safe_eval_amount_expression(expr: str) -> float:
-    """Helper for safe eval amount expression in the Telegram bot flow."""
+    """Helper for safe eval amount expression in the application."""
     allowed_ops = {
         ast.Add: operator.add,
         ast.Sub: operator.sub,
@@ -764,7 +764,7 @@ def _safe_eval_amount_expression(expr: str) -> float:
     }
 
     def _eval(node):
-        """Helper for eval in the Telegram bot flow."""
+        """Helper for eval in the application."""
         if isinstance(node, ast.Expression):
             return _eval(node.body)
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
@@ -798,7 +798,7 @@ def parse_human_amount(value: str | None) -> float:
         token_pattern = re.compile(r"\d+(?:[.,]\d+)?\s*(?:jt|juta|rb|ribu|k)?", re.IGNORECASE)
 
         def repl(match: re.Match) -> str:
-            """Helper for repl in the Telegram bot flow."""
+            """Helper for repl in the application."""
             return str(_parse_human_amount_atom(match.group(0)))
 
         expr = token_pattern.sub(repl, raw)

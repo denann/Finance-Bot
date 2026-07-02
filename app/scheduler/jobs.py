@@ -1,4 +1,5 @@
-"""APScheduler job definitions for recurring transactions, reminders, exports, and scheduled summaries."""
+"""APScheduler jobs for recurring transactions, reminders, export, and summaries."""
+
 
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -19,7 +20,7 @@ from app.services.recurring_service import get_due_recurring_rules
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 async def job_recurring_run():
-    """Helper for job recurring run in the scheduled job layer."""
+    """Helper for job recurring run in the scheduler layer."""
     try:
         due_rules = get_due_recurring_rules()
 
@@ -66,7 +67,7 @@ async def job_recurring_run():
     
 
 async def send_message(text: str, parse_mode: str | None = "Markdown", reply_markup=None):
-    """Send a Telegram response for send message."""
+    """Send a Telegram message for message."""
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     await bot.send_message(
         chat_id=ALLOWED_USER_ID,
@@ -79,7 +80,7 @@ async def send_message(text: str, parse_mode: str | None = "Markdown", reply_mar
 # ── Job functions ─────────────────────────────────────────────────────────────
 
 async def job_daily_summary():
-    """Helper for job daily summary in the scheduled job layer."""
+    """Helper for job daily summary in the scheduler layer."""
     try:
         report = get_daily_report()
 
@@ -119,7 +120,7 @@ async def job_daily_summary():
 
 
 async def job_weekly_summary():
-    """Helper for job weekly summary in the scheduled job layer."""
+    """Helper for job weekly summary in the scheduler layer."""
     try:
         report = get_weekly_report()
 
@@ -143,7 +144,7 @@ async def job_weekly_summary():
             for cat, amount in report["by_category"].items():
                 lines.append(f"  • {cat}: {format_rupiah(amount)}")
 
-        # Implementation note for this project-specific finance flow.
+        # Implementation section
         top = sorted(
             [t for t in report["transactions"] if t.get("type") == "expense"],
             key=lambda x: float(x.get("amount", 0)),
@@ -165,7 +166,7 @@ async def job_weekly_summary():
 
 
 async def job_monthly_summary():
-    """Helper for job monthly summary in the scheduled job layer."""
+    """Helper for job monthly summary in the scheduler layer."""
     try:
         # Date parsing note: keep explicit and relative Indonesian date formats predictable.
         now = datetime.now()
@@ -194,7 +195,7 @@ async def job_monthly_summary():
             for cat, amount in report["by_category"].items():
                 lines.append(f"  • {cat}: {format_rupiah(amount)}")
 
-        # Budget command note: regex handling supports natural phrases such as `budget makan 1jt`.
+        # Natural input section
         budget_summary = get_budget_summary(f"{year}-{month:02d}")
         if budget_summary:
             lines.append("\n*Budget vs Realisasi:*")
@@ -213,7 +214,7 @@ async def job_monthly_summary():
 
 
 async def job_debt_reminder():
-    """Helper for job debt reminder in the scheduled job layer."""
+    """Helper for job debt reminder in the scheduler layer."""
     try:
         active_debts = get_active_debts(debt_type="payable")
         today = datetime.now().date()
@@ -239,7 +240,7 @@ async def job_debt_reminder():
                 continue
 
         if not reminders:
-            return  # Tidak ada yang perlu diingatkan
+            return  # Nothing needs to be reminded right now
 
         lines = ["🔔 *Reminder Hutang*\n"]
         for r in reminders:
@@ -266,7 +267,7 @@ async def job_debt_reminder():
 # ── Scheduler setup ───────────────────────────────────────────────────────────
 
 def create_scheduler() -> AsyncIOScheduler:
-    """Create a new record or object for scheduler."""
+    """Create a new data object for scheduler."""
     scheduler = AsyncIOScheduler(timezone="Asia/Jakarta")
 
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.

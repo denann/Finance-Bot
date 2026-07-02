@@ -1,4 +1,4 @@
-"""Telegram Application builder. This module registers commands, message handlers, callbacks, and scheduled jobs in one place."""
+"""Module for the application."""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ def atomic_bot_handler(callback):
 
     @wraps(callback)
     async def wrapped(update, context, *args, **kwargs):
-        """Helper for wrapped in the Telegram bot flow."""
+        """Helper for wrapped in the application."""
         with sheets_transaction(label=getattr(callback, "__name__", "telegram_handler")):
             return await callback(update, context, *args, **kwargs)
 
@@ -93,11 +93,11 @@ def register_handlers(telegram_app: Application) -> Application:
     """Register all Telegram commands, message handlers, callback handlers, and error handlers."""
 
     def add_command(command_name: str, callback):
-        """Helper for add command in the Telegram bot flow."""
+        """Helper for add command in the application."""
         telegram_app.add_handler(CommandHandler(command_name, atomic_bot_handler(callback)))
 
     def add_message(message_filter, callback):
-        """Helper for add message in the Telegram bot flow."""
+        """Helper for add message in the application."""
         telegram_app.add_handler(MessageHandler(message_filter, atomic_bot_handler(callback)))
 
     # Basic commands for onboarding and bot checks.
@@ -186,7 +186,7 @@ def register_handlers(telegram_app: Application) -> Application:
 
 
 async def scheduled_data_export(context):
-    """Helper for scheduled data export in the Telegram bot flow."""
+    """Helper for scheduled data export in the application."""
     try:
         await scheduled_export_transactions(
             bot=context.bot,
@@ -198,7 +198,7 @@ async def scheduled_data_export(context):
 
 
 def register_job_queue_jobs(telegram_app: Application) -> Application:
-    """Helper for register job queue jobs in the Telegram bot flow."""
+    """Helper for register job queue jobs in the application."""
     if telegram_app.job_queue:
         telegram_app.job_queue.run_daily(
             scheduled_data_export,

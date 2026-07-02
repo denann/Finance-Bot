@@ -1,4 +1,4 @@
-"""Command routing and typo suggestion utilities for explicit slash commands and natural read-only requests."""
+"""Module for the application."""
 
 # Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
@@ -44,7 +44,7 @@ def build_gemini_fallback_text() -> str:
 
 
 def router_args_to_last_filter(args: dict) -> tuple[int, str | None, str | None, str]:
-    """Helper for router args to last filter in the Telegram bot flow."""
+    """Helper for router args to last filter in the application."""
     period = args.get("period")
     month = args.get("month")
     limit = args.get("limit")
@@ -95,7 +95,7 @@ def format_rupiah(amount: float) -> str:
     return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
 
 def md_safe(value) -> str:
-    """Helper for md safe in the Telegram bot flow."""
+    """Helper for md safe in the application."""
     return escape_markdown(str(value or "-"), version=1)
 
 KNOWN_COMMANDS = {
@@ -402,7 +402,7 @@ def clean_command_token(command_text: str) -> str:
 
 
 def command_description(command_name: str) -> str:
-    """Helper for command description in the Telegram bot flow."""
+    """Helper for command description in the application."""
     info = KNOWN_COMMANDS.get(command_name, {})
     return info.get("description", "")
 
@@ -414,7 +414,7 @@ def is_destructive_command(command_name: str) -> bool:
 
 
 def similarity_score(a: str, b: str) -> float:
-    """Helper for similarity score in the Telegram bot flow."""
+    """Helper for similarity score in the application."""
     return SequenceMatcher(None, a, b).ratio()
 
 
@@ -657,7 +657,7 @@ async def unknown_command_handler(update: Update, context: ContextTypes.DEFAULT_
     )
 
 def short_txn_id(txn_id: str) -> str:
-    """Helper for short txn id in the Telegram bot flow."""
+    """Helper for short txn id in the application."""
     txn_id = str(txn_id or "")
     if len(txn_id) <= 18:
         return txn_id
@@ -665,7 +665,7 @@ def short_txn_id(txn_id: str) -> str:
 
 
 def expand_txn_refs(refs: list[str]) -> list[str]:
-    """Helper for expand txn refs in the Telegram bot flow."""
+    """Helper for expand txn refs in the application."""
     expanded = []
 
     for ref in refs or []:
@@ -857,7 +857,7 @@ def is_authorized(update: Update) -> bool:
 
 
 async def reject_unauthorized(update: Update):
-    """Helper for reject unauthorized in the Telegram bot flow."""
+    """Helper for reject unauthorized in the application."""
     user_id = update.effective_user.id if update.effective_user else "unknown"
 
     message = (

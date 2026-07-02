@@ -1,4 +1,5 @@
-"""Gemini Vision parser that converts receipt or transaction images into transaction drafts."""
+"""Gemini Vision parser that converts receipt or transaction images into draft transaction items."""
+
 
 import json
 import os
@@ -25,7 +26,7 @@ GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash")
 
 
 def clean_gemini_json(raw_text: str) -> str:
-    """Clean and standardize clean gemini json."""
+    """Clean input values for gemini json."""
     raw_text = str(raw_text or "").strip()
 
     if raw_text.startswith("```"):
@@ -134,7 +135,7 @@ Maka output yang benar adalah:
 """.strip()
 
 def normalize_item(item: dict) -> dict | None:
-    """Clean and standardize normalize item."""
+    """Normalize and clean input for item."""
     if not isinstance(item, dict):
         return None
 
@@ -198,7 +199,7 @@ def normalize_item(item: dict) -> dict | None:
 
 
 def parse_transactions_from_image(image_bytes: bytes, mime_type: str = "image/jpeg", caption: str = "") -> dict:
-    """Parse input into structured data for the parser and NLP layer."""
+    """Parse input into structured data for transactions from image."""
     if not GEMINI_API_KEY:
         return {
             "success": False,

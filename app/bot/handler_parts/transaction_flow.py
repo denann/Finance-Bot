@@ -1,4 +1,5 @@
-"""Preview and state helpers for transactions, edit-before-save, split bill, debt preview, pending expense, and confirmation flows."""
+"""Preview and state helpers for transaction, mixed input, debt, split bill, pending expense, asset, and edit flows."""
+
 
 # Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
@@ -8,7 +9,7 @@ from app.bot.handler_parts.networth_assets import build_asset_confirm_preview
 
 
 def parse_input(text: str) -> dict:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for input."""
     result = parse_with_regex(text)
     if result is not None:
         return result
@@ -30,9 +31,9 @@ def split_user_inputs(text: str) -> list[str]:
 
     raw = text.strip()
 
-    # Transaction flow note for preview, split bill, or debt handling.
-    # Transaction flow note for preview, split bill, or debt handling.
-    # Transaction flow note for preview, split bill, or debt handling.
+    # Debt flow section
+    # Debt flow section
+    # Debt flow section
     raw = re.sub(r"[\n\r;]+", " ||| ", raw)
     raw = re.sub(r"\s*,\s*", " ||| ", raw)
     raw = re.sub(r"[ \t]+", " ", raw)
@@ -42,15 +43,15 @@ def split_user_inputs(text: str) -> list[str]:
         "beli", "bayar", "byr", "jajan", "makan", "minum",
         "transfer", "top up", "topup", "isi", "ngisi",
         "gaji", "dapat", "dapet", "terima",
-        # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
-        # Transaction flow note for preview, split bill, or debt handling.
-        # Transaction flow note for preview, split bill, or debt handling.
-        # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+        # Debt flow section
+        # Debt flow section
+        # Debt flow section
+        # Debt flow section
         "hutang", "utang",
     ]
 
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
-    # Contoh: "beli kopi 10k minjem joko 10k"
+    # Debt flow section
+    # Implementation note for this project-specific finance flow.
     debt_starters = [
         "minjem", "pinjem", "pinjam",
         "hutang ke", "utang ke",
@@ -71,8 +72,8 @@ def split_user_inputs(text: str) -> list[str]:
         flags=re.IGNORECASE,
     )
 
-    # Protect single debt payment:
-    # "bayar hutang Joko 200k"
+    # Debt flow section
+    # Debt flow section
     protected_debt_payment = re.search(
         r"\b(bayar|byr|lunasi|lunas|cicil)\s+(hutang|utang)\b",
         raw,
@@ -94,9 +95,9 @@ def split_user_inputs(text: str) -> list[str]:
     )
 
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
-    # Fronting-money note: distinguish actual account cashflow from payable or receivable records.
-    # Fronting-money note: distinguish actual account cashflow from payable or receivable records.
-    # Transaction flow note for preview, split bill, or debt handling.
+    # Account flow section
+    # Account flow section
+    # Debt flow section
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
 
     parts = []
@@ -123,12 +124,12 @@ def needs_account(parsed: dict) -> bool:
     return False
 
 def is_debt_item(parsed: dict) -> bool:
-    """Check a boolean condition for is debt item."""
+    """Check whether a condition is true for debt item."""
     return parsed.get("kind") == "debt"
 
 
 def is_transaction_item(parsed: dict) -> bool:
-    """Check a boolean condition for is transaction item."""
+    """Check whether a condition is true for transaction item."""
     return parsed.get("kind") == "transaction"
 
 
@@ -227,7 +228,7 @@ def build_mixed_preview(mixed_items: list[dict]) -> str:
     return "\n".join(lines)
 
 def parse_income_missing_amount(line: str) -> dict | None:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for income missing amount."""
     raw = str(line or "").strip()
     if not raw:
         return None
@@ -237,7 +238,7 @@ def parse_income_missing_amount(line: str) -> dict | None:
     if parse_human_amount(without_date) > 0 and re.search(r"\d", without_date):
         return None
 
-    # Account balance note: avoid partial balance updates when validation fails.
+    # Account flow section
     low = raw.lower()
     if re.search(r"\bdari\s+[^\n]+?\s+ke\s+", low):
         return None
@@ -280,7 +281,17 @@ def parse_income_missing_amount(line: str) -> dict | None:
 
 
 def build_missing_amount_prompt(raw: str, parsed: dict, current: int | None = None, total: int | None = None) -> str:
-    """Build the data structure or message text for missing amount prompt."""
+    """Build the prompt used when an income input has no nominal yet.
+
+    Args:
+        raw: Original user input.
+        parsed: Partial parsed transaction.
+        current: Current missing amount index for mixed input, if any.
+        total: Total missing amount items for mixed input, if any.
+
+    Returns:
+        Markdown text asking the user to provide a valid nominal.
+    """
     prefix = ""
     if current is not None and total is not None and total > 1:
         prefix = f"🧩 *Nominal kurang {current}/{total}*\n\n"
@@ -297,7 +308,15 @@ def build_missing_amount_prompt(raw: str, parsed: dict, current: int | None = No
 
 
 def finalize_missing_amount_item(item: dict, amount: float) -> dict:
-    """Helper for finalize missing amount item in the Telegram bot flow."""
+    """Attach a user-provided nominal to a partial transaction item.
+
+    Args:
+        item: Pending item stored from the missing amount flow.
+        amount: Parsed nominal from the user's follow-up message.
+
+    Returns:
+        Normalized transaction item ready to continue through the preview flow.
+    """
     parsed = dict(item.get("parsed") or {})
     parsed["amount"] = amount
     parsed.pop("needs_amount", None)
@@ -310,7 +329,17 @@ def finalize_missing_amount_item(item: dict, amount: float) -> dict:
 
 
 async def continue_after_missing_amount_mixed(update: Update, context: ContextTypes.DEFAULT_TYPE, mixed_items: list[dict]) -> None:
-    """Helper for continue after missing amount mixed in the Telegram bot flow."""
+    """Continue the mixed flow after all missing nominals are filled.
+
+    Args:
+        update: Telegram update used to reply to the user.
+        context: Telegram context where pending mixed state is stored.
+        mixed_items: Mixed items after missing nominal values are completed.
+
+    Notes:
+        This function updates `context.user_data` and sends the next Telegram
+        prompt. It does not save transactions.
+    """
     context.user_data["pending_mixed"] = mixed_items
     context.user_data.pop("pending_parsed", None)
     context.user_data.pop("pending_raw", None)
@@ -328,18 +357,37 @@ async def continue_after_missing_amount_mixed(update: Update, context: ContextTy
             parse_mode="Markdown",
             reply_markup=mixed_split_bill_keyboard(mixed_items),
         )
-    else:
-        ready_to_save = mixed_ready_to_save(mixed_items)
+    elif mixed_needs_account(mixed_items):
         await reply_update_safely(
             update,
-            f"{preview}\n\n{preview_action_question(ready_to_save)}",
+            build_mixed_account_prompt(mixed_items),
             parse_mode="Markdown",
-            reply_markup=preview_action_keyboard("mixed", ready_to_save),
+            reply_markup=account_keyboard("mixed_acc"),
+        )
+    else:
+        await reply_update_safely(
+            update,
+            f"{preview}\n\n{preview_action_question(True)}",
+            parse_mode="Markdown",
+            reply_markup=preview_action_keyboard("mixed", True),
         )
 
 
 async def handle_pending_missing_amount(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
-    """Helper for handle pending missing amount in the Telegram bot flow."""
+    """Handle the user's answer for a pending missing nominal question.
+
+    Args:
+        update: Telegram update that contains the follow-up message.
+        context: Telegram context where `pending_missing_amount` is stored.
+        user_text: User's answer, expected to contain a nominal.
+
+    Returns:
+        True when this function consumes the message, otherwise False.
+
+    Notes:
+        The function may update pending transaction state and send the next
+        prompt. It does not save the transaction.
+    """
     state = context.user_data.get("pending_missing_amount")
     if not state:
         return False
@@ -396,13 +444,21 @@ async def handle_pending_missing_amount(update: Update, context: ContextTypes.DE
         context.user_data.pop("pending_debt_batch", None)
         context.user_data.pop("pending_mixed", None)
 
+        if needs_account(parsed):
+            await reply_update_safely(
+                update,
+                build_single_account_prompt(parsed),
+                parse_mode="Markdown",
+                reply_markup=account_keyboard("acc"),
+            )
+            return True
+
         preview = build_preview(parsed)
-        ready_to_save = single_ready_to_save(parsed)
         await reply_update_safely(
             update,
-            f"{preview}\n\n{preview_action_question(ready_to_save)}",
+            f"{preview}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
-            reply_markup=preview_action_keyboard("single", ready_to_save),
+            reply_markup=preview_action_keyboard("single", True),
         )
         return True
 
@@ -411,7 +467,7 @@ async def handle_pending_missing_amount(update: Update, context: ContextTypes.DE
 
 
 def parse_mixed_item(line: str) -> dict:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for mixed item."""
     debt_parsed = parse_debt_input(line)
     if debt_parsed:
         debt_parsed = enrich_ditalangin_split_bill_if_any(debt_parsed, line)
@@ -445,7 +501,15 @@ def parse_mixed_item(line: str) -> dict:
     }
 
 def mixed_needs_account(mixed_items: list[dict]) -> bool:
-    """Helper for mixed needs account in the Telegram bot flow."""
+    """Check whether a mixed input still needs a rekening selection.
+
+    Args:
+        mixed_items: Parsed mixed items from one user input. Each item may be a
+            normal transaction or a debt-related item.
+
+    Returns:
+        True if at least one cashflow item has no rekening yet, otherwise False.
+    """
     for item in mixed_items:
         parsed = item["parsed"]
 
@@ -459,7 +523,21 @@ def mixed_needs_account(mixed_items: list[dict]) -> bool:
 
 
 def edit_or_continue_keyboard(scope: str) -> InlineKeyboardMarkup:
-    """Build keyboard for previews that still need an extra step before save."""
+    """Build the fallback preview keyboard before the next required decision.
+
+    Args:
+        scope: Flow scope used in the callback route, for example `single`,
+            `mixed`, or `debt`.
+
+    Returns:
+        Inline keyboard that lets the user edit the preview, continue the flow,
+        or cancel the current session.
+
+    Notes:
+        This keyboard is kept as a fallback for flows that still need a manual
+        continue step. Missing rekening flows should route directly to the
+        rekening picker instead of showing this keyboard first.
+    """
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✏️ Edit dulu", callback_data=f"editflow:edit:{scope}"),
@@ -470,12 +548,31 @@ def edit_or_continue_keyboard(scope: str) -> InlineKeyboardMarkup:
 
 
 def _confirm_target_for_edit_scope(scope: str) -> str:
-    """Map edit-preview scope to the confirm callback target."""
+    """Map a preview edit scope to the confirm callback target.
+
+    Args:
+        scope: Current preview scope. The `single` scope is stored as
+            `pending_parsed`, but its save callback still uses `confirm:pending`.
+
+    Returns:
+        Callback target used by the save button.
+    """
     return "pending" if scope == "single" else scope
 
 
 def save_edit_cancel_keyboard(scope: str) -> InlineKeyboardMarkup:
-    """Build keyboard for previews that are already ready to save."""
+    """Build the final action keyboard for data that is ready to save.
+
+    Args:
+        scope: Flow scope used to route save, edit, and cancel callbacks.
+
+    Returns:
+        Inline keyboard with Simpan, Edit dulu, and Batal actions.
+
+    Notes:
+        This function only builds callback buttons. It does not save data or
+        change balances by itself.
+    """
     confirm_target = _confirm_target_for_edit_scope(scope)
     return InlineKeyboardMarkup([
         [
@@ -487,29 +584,73 @@ def save_edit_cancel_keyboard(scope: str) -> InlineKeyboardMarkup:
 
 
 def preview_action_keyboard(scope: str, ready_to_save: bool) -> InlineKeyboardMarkup:
-    """Choose the right preview keyboard based on whether the item can be saved now."""
+    """Choose the right preview action keyboard for the current validation state.
+
+    Args:
+        scope: Flow scope used in callback data.
+        ready_to_save: Whether the current preview already has all required
+            decisions, such as split bill status and rekening.
+
+    Returns:
+        Final save/edit/cancel keyboard when ready, otherwise the fallback
+        edit/continue/cancel keyboard.
+    """
     return save_edit_cancel_keyboard(scope) if ready_to_save else edit_or_continue_keyboard(scope)
 
 
 def preview_action_question(ready_to_save: bool) -> str:
-    """Return the short question shown below a preview."""
+    """Return the short question shown below a preview.
+
+    Args:
+        ready_to_save: Whether the preview can be saved immediately.
+
+    Returns:
+        User-facing question for the current preview state.
+    """
     if ready_to_save:
         return "Mau simpan, edit dulu, atau batal?"
     return "Mau edit dulu atau lanjut ke rekening/simpan?"
 
 
 def single_ready_to_save(parsed: dict) -> bool:
-    """Check whether a single transaction can be saved from the preview screen."""
+    """Check whether a single transaction preview can be saved.
+
+    Args:
+        parsed: Parsed transaction candidate.
+
+    Returns:
+        True when the transaction no longer needs split bill or rekening
+        decisions.
+    """
     return not split_bill_needs_decision(parsed) and not needs_account(parsed)
 
 
 def mixed_ready_to_save(mixed_items: list[dict]) -> bool:
-    """Check whether mixed input can be saved from the preview screen."""
+    """Check whether a mixed input preview can be saved.
+
+    Args:
+        mixed_items: Parsed items from a multi-line or mixed natural input.
+
+    Returns:
+        True when every item has completed the required split bill and rekening
+        decisions.
+    """
     return not mixed_split_bill_needs_decision(mixed_items) and not mixed_needs_account(mixed_items)
 
 
 def debt_ready_to_save(debt_parsed: dict) -> bool:
-    """Check whether a debt preview can be saved without asking another question."""
+    """Check whether a debt preview can be saved without another decision.
+
+    Args:
+        debt_parsed: Parsed debt candidate.
+
+    Returns:
+        True when the debt flow does not need a rekening selection before save.
+
+    Notes:
+        Debt offset does not use a rekening, while debt cashflow items still
+        need one unless they are marked as historical.
+    """
     intent = (debt_parsed or {}).get("intent")
     return not (debt_uses_cashflow(debt_parsed or {}) and intent != "offset_debt" and not (debt_parsed or {}).get("account"))
 
@@ -573,7 +714,7 @@ def build_pending_expense_confirm_preview(item: dict, include_question: bool = T
 
 
 def parse_clarification_keyboard() -> InlineKeyboardMarkup:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for clarification keyboard."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("1️⃣ Debt payment", callback_data="clarify_parse:debt_payment")],
         [InlineKeyboardButton("2️⃣ Expense saya", callback_data="clarify_parse:expense")],
@@ -612,7 +753,7 @@ def build_parse_clarification_prompt(raw: str, assessment: dict | None = None) -
 
 
 def parse_participant_count(value: str) -> int | None:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for participant count."""
     clean = str(value or "").strip().lower()
     mapping = {
         "dua": 2, "2": 2, "berdua": 2,
@@ -726,6 +867,50 @@ def build_single_short_summary(parsed: dict) -> str:
     return "\n".join(lines)
 
 
+def build_single_account_prompt(parsed: dict, preview_text: str | None = None) -> str:
+    """Build the rekening selection prompt for a single transaction.
+
+    Args:
+        parsed: Parsed transaction that still needs an account decision.
+        preview_text: Optional preview text to keep warnings or Gemini draft
+            notices visible before asking for rekening.
+
+    Returns:
+        Markdown text containing the transaction summary and rekening question.
+
+    Notes:
+        This function only formats the prompt. The selected rekening is applied
+        later by the `acc:*` callback route.
+    """
+    summary = preview_text or build_single_short_summary(parsed)
+    return (
+        f"{summary}\n\n"
+        "💳 Dari rekening mana?\n"
+        "Atau pilih *Sudah berlalu* jika transaksi hanya catatan historis dan tidak mau mengubah saldo."
+    )
+
+
+def build_mixed_account_prompt(mixed_items: list[dict]) -> str:
+    """Build the rekening selection prompt for mixed input.
+
+    Args:
+        mixed_items: Parsed mixed items that may contain transactions and debt
+            items.
+
+    Returns:
+        Markdown text with a compact mixed summary and rekening question.
+
+    Notes:
+        The selected rekening is applied only to cashflow items that still have
+        no rekening. Items that already have a rekening are left unchanged.
+    """
+    return (
+        f"{build_mixed_short_summary(mixed_items)}\n\n"
+        "💳 Pilih rekening untuk item yang belum punya rekening, atau pilih "
+        "*Sudah berlalu* jika tidak mau mengubah saldo:"
+    )
+
+
 def build_updated_item_summary(item: dict, index: int | None = None) -> str:
     """Build the data structure or message text for updated item summary."""
     prefix = f"Item {index}" if index else "Item"
@@ -758,50 +943,135 @@ def build_updated_item_summary(item: dict, index: int | None = None) -> str:
     return f"✅ *{prefix} sudah diupdate.*"
 
 
+def _preview_edit_fields_for_scope(scope: str) -> list[tuple[str, str]]:
+    """Helper for preview edit fields for scope in the Telegram bot flow."""
+    if scope == "pending_expense":
+        return [
+            ("💰 Nominal", "amount"),
+            ("📁 Kategori", "category"),
+            ("👤 Subjek", "subject"),
+            ("📝 Deskripsi", "description"),
+            ("🏦 Rekening", "account"),
+            ("📅 Tanggal", "due_date"),
+            ("🗓️ Bulan", "month"),
+        ]
+
+    if scope == "asset":
+        return [
+            ("🏷️ Nama", "name"),
+            ("💰 Nominal", "amount"),
+            ("📁 Kategori", "category"),
+            ("📝 Deskripsi", "description"),
+            ("🔢 Jumlah", "quantity"),
+            ("📏 Unit", "unit"),
+            ("🏷️ Harga/unit", "price_per_unit"),
+            ("📅 Tanggal beli", "purchase_date"),
+        ]
+
+    if scope == "debt":
+        return [
+            ("💰 Nominal", "amount"),
+            ("👤 Orang", "person_name"),
+            ("📝 Deskripsi", "description"),
+            ("🏦 Rekening", "account"),
+            ("📅 Tanggal", "date"),
+        ]
+
+    return [
+        ("💰 Nominal", "amount"),
+        ("📁 Kategori", "category"),
+        ("👤 Subjek", "subject"),
+        ("📝 Deskripsi", "description"),
+        ("🏦 Rekening", "account"),
+        ("🔁 Tipe", "type"),
+        ("📅 Tanggal", "date"),
+        ("🗒️ Catatan", "catatan"),
+    ]
+
+
+def build_preview_edit_keyboard(scope: str = "single") -> InlineKeyboardMarkup:
+    """Build the data structure or message text for preview edit keyboard."""
+    fields = _preview_edit_fields_for_scope(scope)
+    rows = []
+    for i in range(0, len(fields), 2):
+        row = []
+        for label, field in fields[i:i + 2]:
+            row.append(InlineKeyboardButton(label, callback_data=f"editflow:field:{scope}:{field}"))
+        rows.append(row)
+    rows.append([InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{scope}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_preview_field_help(scope: str, field: str) -> str:
+    """Build the data structure or message text for preview field help."""
+    examples = {
+        "amount": ("Nominal", "`nominal: 20000` atau `nominal 20k`"),
+        "category": ("Kategori", "`kategori: Other Expense`"),
+        "description": ("Deskripsi", "`deskripsi: Kopi susu`"),
+        "subject": ("Subjek", "`subjek: Mie Goreng`"),
+        "person_name": ("Orang", "`orang: Budi`"),
+        "type": ("Tipe transaksi", "`tipe: expense`, `tipe: income`, atau `tipe: transfer`"),
+        "date": ("Tanggal", "`tanggal: 2026-07-02`"),
+        "due_date": ("Tanggal jatuh tempo", "`tanggal: 2026-07-30`"),
+        "month": ("Bulan", "`bulan: 2026-07`"),
+        "account": ("Rekening", "`rekening: DANA`"),
+        "to_account": ("Rekening tujuan", "`to_account: BCA`"),
+        "catatan": ("Catatan", "`catatan: sudah dicek manual`"),
+        "name": ("Nama", "`nama: Laptop kerja`"),
+        "quantity": ("Jumlah unit", "`jumlah: 41`"),
+        "unit": ("Satuan", "`unit: gram`"),
+        "price_per_unit": ("Harga per unit", "`harga_satuan: 2594000`"),
+        "purchase_price_per_unit": ("Harga beli per unit", "`harga_beli: 2559000`"),
+        "purchase_date": ("Tanggal beli", "`tanggal_beli: 2026-06-10`"),
+    }
+    title, example = examples.get(field, (field.replace("_", " ").title(), f"`{field}: nilai baru`"))
+    return (
+        f"✏️ *Edit {md_safe(title)}*\n\n"
+        f"Ketik nilai barunya dengan format:\n{example}\n\n"
+        "Kamu juga bisa edit banyak field sekaligus, contoh:\n"
+        "`nominal: 20k, kategori: Other Expense, rekening: DANA`"
+    )
+
+
 def build_preview_edit_help(scope: str = "single") -> str:
     """Build the data structure or message text for preview edit help."""
     if scope == "pending_expense":
-        return (
-            "✏️ *Mau edit pending expense apa?*\n\n"
-            "Ketik salah satu format berikut:\n"
-            "`nominal 285000`\n"
-            "`kategori Bills & Utilities`\n"
-            "`deskripsi Wifi rumah`\n"
-            "`subjek Wifi Juli`\n"
-            "`rekening BRI`\n"
-            "`tanggal 2026-07-30`\n"
-            "`bulan 2026-07`\n\n"
-            "Bisa juga pakai `field=value`, contoh `category=Bills & Utilities`."
+        fields = "nominal, kategori, subjek, deskripsi, rekening, tanggal, bulan"
+        examples = (
+            "`nominal: 285k, kategori: Bills & Utilities, rekening: BRI`\n"
+            "`deskripsi: Wifi rumah, tanggal: 2026-07-30`"
         )
-
-    if scope == "asset":
-        return (
-            "✏️ *Mau edit aset apa?*\n\n"
-            "Ketik salah satu format berikut:\n"
-            "`nama Laptop kerja`\n"
-            "`nominal 8000000`\n"
-            "`kategori Electronics`\n"
-            "`deskripsi Laptop utama`\n"
-            "`jumlah 41`\n"
-            "`unit gram`\n"
-            "`harga_satuan 2594000`\n"
-            "`harga_beli 2559000`\n"
-            "`tanggal_beli 2026-06-10`\n\n"
-            "Bisa juga pakai `field=value`, contoh `price_per_unit=2594000`."
+    elif scope == "asset":
+        fields = "nama, nominal, kategori, deskripsi, jumlah, unit, harga_satuan, harga_beli, tanggal_beli"
+        examples = (
+            "`nama: Laptop kerja, nominal: 8jt, kategori: Electronics`\n"
+            "`jumlah: 41, unit: gram, harga_satuan: 2594000`"
+        )
+    elif scope == "debt":
+        fields = "nominal, orang, deskripsi, rekening, tanggal"
+        examples = (
+            "`nominal: 50k, orang: Budi, rekening: DANA`\n"
+            "`deskripsi: Talang makan, tanggal: 2026-07-02`"
+        )
+    else:
+        fields = "nominal, kategori, deskripsi, subjek, tipe, tanggal, rekening, catatan"
+        examples = (
+            "`nominal: 20k, kategori: Other Expense, rekening: DANA`\n"
+            "`deskripsi: Mie Goreng, tanggal: 2026-07-02`"
         )
 
     item_hint = "" if scope == "single" else "\nKamu sedang mengedit item yang dipilih."
     return (
         "✏️ *Mau edit apa?*" + item_hint + "\n\n"
-        "Ketik salah satu format berikut:\n"
-        "`nominal 25000`\n"
-        "`kategori Food & Beverage`\n"
-        "`deskripsi Kopi susu`\n"
-        "`subjek Maya`\n"
-        "`tipe income` atau `tipe expense`\n"
-        "`tanggal 2026-06-12`\n"
-        "`rekening BCA`\n\n"
-        "Bisa juga pakai `field=value`, contoh `category=Food & Beverage`."
+        "Kamu bisa pilih tombol field di bawah, atau langsung ketik manual.\n\n"
+        f"Field yang umum diedit: {md_safe(fields)}.\n\n"
+        "Format manual bisa satu field:\n"
+        "`nominal 20k`\n"
+        "`kategori Other Expense`\n"
+        "`rekening DANA`\n\n"
+        "Bisa juga multi edit sekaligus pakai koma, titik koma, atau baris baru:\n"
+        f"{examples}\n\n"
+        "Format `field=value` juga tetap bisa, contoh `category=Food & Beverage`."
     )
 
 
@@ -825,51 +1095,95 @@ def build_mixed_edit_choose_prompt(mixed_items: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def parse_preview_edit_updates(text: str) -> dict:
-    """Parse input into structured data for the Telegram bot flow."""
-    raw = str(text or "").strip()
-    updates: dict = {}
+PREVIEW_EDIT_KEY_ALIASES = {
+    "amount": "amount", "nominal": "amount", "jumlah": "amount",
+    "category": "category", "kategori": "category",
+    "description": "description", "desc": "description", "deskripsi": "description",
+    "subject": "subject", "subjek": "subject",
+    "person": "person_name", "person_name": "person_name", "orang": "person_name", "teman": "person_name", "nama_orang": "person_name",
+    "type": "type", "tipe": "type", "jenis": "type",
+    "date": "date", "tanggal": "date", "tgl": "date",
+    "account": "account", "rekening": "account", "akun": "account",
+    "to_account": "to_account", "ke_rekening": "to_account", "rekening_tujuan": "to_account",
+    "catatan": "catatan", "note": "catatan",
+    "tipe_pengeluaran": "tipe_pengeluaran", "pengeluaran": "tipe_pengeluaran",
+    "due_date": "due_date", "tanggal_jatuh_tempo": "due_date", "jatuh_tempo": "due_date", "tenggat": "due_date",
+    "month": "month", "bulan": "month",
+    "name": "name", "nama": "name",
+    "quantity": "quantity", "jumlah_unit": "quantity", "jumlah_aset": "quantity",
+    "unit": "unit", "satuan": "unit",
+    "price_per_unit": "price_per_unit", "harga_satuan": "price_per_unit", "harga_sekarang": "price_per_unit",
+    "purchase_price_per_unit": "purchase_price_per_unit", "harga_beli": "purchase_price_per_unit", "modal": "purchase_price_per_unit",
+    "purchase_date": "purchase_date", "tanggal_beli": "purchase_date",
+    "asset_type": "asset_type", "tipe_aset": "asset_type",
+}
 
-    key_aliases = {
-        "amount": "amount", "nominal": "amount", "jumlah": "amount",
-        "category": "category", "kategori": "category",
-        "description": "description", "desc": "description", "deskripsi": "description",
-        "subject": "subject", "subjek": "subject",
-        "type": "type", "tipe": "type", "jenis": "type",
-        "date": "date", "tanggal": "date", "tgl": "date",
-        "account": "account", "rekening": "account", "akun": "account",
-        "to_account": "to_account", "ke_rekening": "to_account", "rekening_tujuan": "to_account",
-        "catatan": "catatan", "note": "catatan",
-        "tipe_pengeluaran": "tipe_pengeluaran", "pengeluaran": "tipe_pengeluaran",
-        "due_date": "due_date", "tanggal_jatuh_tempo": "due_date", "jatuh_tempo": "due_date", "tenggat": "due_date",
-        "month": "month", "bulan": "month",
-        "name": "name", "nama": "name",
-        "quantity": "quantity", "jumlah_unit": "quantity", "jumlah_aset": "quantity",
-        "unit": "unit", "satuan": "unit",
-        "price_per_unit": "price_per_unit", "harga_satuan": "price_per_unit", "harga_sekarang": "price_per_unit",
-        "purchase_price_per_unit": "purchase_price_per_unit", "harga_beli": "purchase_price_per_unit", "modal": "purchase_price_per_unit",
-        "purchase_date": "purchase_date", "tanggal_beli": "purchase_date",
-        "asset_type": "asset_type", "tipe_aset": "asset_type",
-    }
 
-    eq_match = re.match(r"^([a-zA-Z_]+)\s*=\s*(.+)$", raw)
-    if eq_match:
-        key = key_aliases.get(eq_match.group(1).lower())
-        value = eq_match.group(2).strip()
-    else:
-        natural_match = re.match(
-            r"^(nominal|jumlah|amount|kategori|category|deskripsi|description|desc|subjek|subject|tipe|type|jenis|tanggal|tgl|date|rekening|account|akun|catatan|note|tipe_pengeluaran|pengeluaran|ke_rekening|to_account|rekening_tujuan|due_date|tanggal_jatuh_tempo|jatuh_tempo|tenggat|month|bulan|name|nama|quantity|jumlah_unit|jumlah_aset|unit|satuan|price_per_unit|harga_satuan|harga_sekarang|purchase_price_per_unit|harga_beli|modal|purchase_date|tanggal_beli|asset_type|tipe_aset)\s+(.+)$",
+def _split_preview_edit_segments(raw: str) -> list[str]:
+    """Helper for split preview edit segments in the Telegram bot flow."""
+    segments: list[str] = []
+    buffer: list[str] = []
+    quote_char = ""
+
+    for char in str(raw or ""):
+        if char in {"'", '"'}:
+            if quote_char == char:
+                quote_char = ""
+            elif not quote_char:
+                quote_char = char
+            buffer.append(char)
+            continue
+
+        if char in {",", ";", "\n", "\r"} and not quote_char:
+            part = "".join(buffer).strip()
+            if part:
+                segments.append(part)
+            buffer = []
+            continue
+
+        buffer.append(char)
+
+    last = "".join(buffer).strip()
+    if last:
+        segments.append(last)
+    return segments
+
+
+def _strip_preview_edit_value(value: str) -> str:
+    """Helper for strip preview edit value in the Telegram bot flow."""
+    clean = str(value or "").strip()
+    if len(clean) >= 2 and clean[0] == clean[-1] and clean[0] in {"'", '"'}:
+        return clean[1:-1].strip()
+    return clean
+
+
+def _parse_preview_edit_pair(segment: str) -> dict:
+    """Parse input into structured data for preview edit pair."""
+    raw = str(segment or "").strip()
+    if not raw:
+        return {}
+
+    key_pattern = "|".join(re.escape(k) for k in sorted(PREVIEW_EDIT_KEY_ALIASES, key=len, reverse=True))
+    match = re.match(
+        rf"^({key_pattern})\s*(?:=|:)\s*(.+)$",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        match = re.match(
+            rf"^({key_pattern})\s+(.+)$",
             raw,
             flags=re.IGNORECASE,
         )
-        if not natural_match:
-            return {}
-        key = key_aliases.get(natural_match.group(1).lower())
-        value = natural_match.group(2).strip()
+    if not match:
+        return {}
 
+    key = PREVIEW_EDIT_KEY_ALIASES.get(match.group(1).lower())
+    value = _strip_preview_edit_value(match.group(2))
     if not key or value == "":
         return {}
 
+    updates: dict = {}
     if key in {"amount", "quantity", "price_per_unit", "purchase_price_per_unit"}:
         amount = parse_human_amount(value)
         if amount <= 0:
@@ -900,6 +1214,28 @@ def parse_preview_edit_updates(text: str) -> dict:
     return updates
 
 
+def parse_preview_edit_updates(text: str) -> dict:
+    """Parse input into structured data for preview edit updates."""
+    raw = str(text or "").strip()
+    if not raw:
+        return {}
+
+    segments = _split_preview_edit_segments(raw)
+    if not segments:
+        return {}
+
+    updates: dict = {}
+    for segment in segments:
+        parsed_segment = _parse_preview_edit_pair(segment)
+        if not parsed_segment:
+            if len(segments) == 1:
+                return {}
+            continue
+        updates.update(parsed_segment)
+
+    return updates
+
+
 def apply_preview_edit_updates_to_parsed(parsed: dict, updates: dict) -> dict:
     """Apply changes for preview edit updates to parsed."""
     if not isinstance(parsed, dict):
@@ -922,7 +1258,19 @@ def apply_preview_edit_updates_to_parsed(parsed: dict, updates: dict) -> dict:
 
 
 async def proceed_after_preview_edit(query, context: ContextTypes.DEFAULT_TYPE, scope: str):
-    """Helper for proceed after preview edit in the Telegram bot flow."""
+    """Continue a pending preview after the user taps `Lanjut`.
+
+    Args:
+        query: Telegram callback query from the inline button.
+        context: Telegram context that stores the pending preview state.
+        scope: Current flow scope, such as `single`, `mixed`, `debt`,
+            `pending_expense`, or `asset`.
+
+    Notes:
+        This function decides the next required step. If rekening is still
+        missing, it routes directly to the rekening picker. It does not save
+        data unless a later confirmation callback is triggered.
+    """
     context.user_data.pop("pending_preview_edit", None)
 
     if scope == "mixed":
@@ -939,19 +1287,20 @@ async def proceed_after_preview_edit(query, context: ContextTypes.DEFAULT_TYPE, 
             )
             return
 
-        short_summary = build_mixed_short_summary(mixed_items)
         if mixed_needs_account(mixed_items):
-            await safe_edit_message(query, 
-                f"{short_summary}\n\n💳 Pilih rekening untuk item yang belum punya rekening, atau pilih *Sudah berlalu* jika tidak mau mengubah saldo:",
+            await safe_edit_message(
+                query,
+                build_mixed_account_prompt(mixed_items),
                 parse_mode="Markdown",
                 reply_markup=account_keyboard("mixed_acc"),
             )
             return
 
+        short_summary = build_mixed_short_summary(mixed_items)
         await safe_edit_message(query, 
-            f"{short_summary}\n\nSimpan semua item ini?",
+            f"{short_summary}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
-            reply_markup=confirm_keyboard("mixed"),
+            reply_markup=preview_action_keyboard("mixed", True),
         )
         return
 
@@ -979,9 +1328,9 @@ async def proceed_after_preview_edit(query, context: ContextTypes.DEFAULT_TYPE, 
 
         await safe_edit_message(
             query,
-            preview,
+            f"{preview}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
-            reply_markup=confirm_keyboard("debt"),
+            reply_markup=preview_action_keyboard("debt", True),
         )
         return
 
@@ -1026,24 +1375,40 @@ async def proceed_after_preview_edit(query, context: ContextTypes.DEFAULT_TYPE, 
         )
         return
 
-    short_summary = build_single_short_summary(parsed)
     if needs_account(parsed):
-        await safe_edit_message(query, 
-            f"{short_summary}\n\n💳 Dari rekening mana?\nAtau pilih *Sudah berlalu* jika transaksi hanya catatan historis dan tidak mau mengubah saldo.",
+        await safe_edit_message(
+            query,
+            build_single_account_prompt(parsed),
             parse_mode="Markdown",
             reply_markup=account_keyboard("acc"),
         )
         return
 
+    short_summary = build_single_short_summary(parsed)
+    preview = build_preview(parsed)
     await safe_edit_message(query, 
-        f"{short_summary}\n\nSimpan transaksi ini?",
+        f"{preview}\n\n{preview_action_question(True)}",
         parse_mode="Markdown",
-        reply_markup=confirm_keyboard("pending"),
+        reply_markup=preview_action_keyboard("single", True),
     )
 
 
 async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
-    """Helper for handle pending preview edit in the Telegram bot flow."""
+    """Handle text replies used to edit a pending preview.
+
+    Args:
+        update: Telegram update that contains the edit instruction.
+        context: Telegram context where pending preview state is stored.
+        user_text: Edit instruction, for example `amount=20000` or
+            `account=Cash`.
+
+    Returns:
+        True when the edit session consumes the message, otherwise False.
+
+    Notes:
+        This function only changes pending state and shows the next prompt. It
+        does not save data to the sheet.
+    """
     state = context.user_data.get("pending_preview_edit")
     if not state:
         return False
@@ -1066,7 +1431,11 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
         state["step"] = "edit_item"
         state["index"] = item_index
         context.user_data["pending_preview_edit"] = state
-        await update.message.reply_text(build_preview_edit_help("mixed"), parse_mode="Markdown")
+        await update.message.reply_text(
+            build_preview_edit_help("mixed"),
+            parse_mode="Markdown",
+            reply_markup=build_preview_edit_keyboard("mixed"),
+        )
         return True
 
     updates = parse_preview_edit_updates(user_text)
@@ -1098,13 +1467,21 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
         context.user_data.pop("pending_preview_edit", None)
 
         item_summary = build_updated_item_summary(item, item_index + 1)
+        if mixed_needs_account(mixed_items):
+            await reply_update_safely(
+                update,
+                f"{item_summary}\n\n{build_mixed_account_prompt(mixed_items)}",
+                parse_mode="Markdown",
+                reply_markup=account_keyboard("mixed_acc"),
+            )
+            return True
+
         short_summary = build_mixed_short_summary(mixed_items)
-        ready_to_save = mixed_ready_to_save(mixed_items)
         await reply_update_safely(
             update,
-            f"{item_summary}\n\n{short_summary}\n\n{preview_action_question(ready_to_save)}",
+            f"{item_summary}\n\n{short_summary}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
-            reply_markup=preview_action_keyboard("mixed", ready_to_save),
+            reply_markup=preview_action_keyboard("mixed", True),
         )
         return True
 
@@ -1118,20 +1495,28 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
         debt_updates = dict(updates)
         if "subject" in debt_updates:
             debt_updates["person_name"] = debt_updates.pop("subject")
-        # Transaction flow note for preview, split bill, or debt handling.
-        # Transaction flow note for preview, split bill, or debt handling.
+        # `type` belongs to normal transactions, so ignore it for debt preview edits.
         debt_updates.pop("type", None)
         debt_parsed.update(debt_updates)
         context.user_data["pending_debt"] = debt_parsed
         context.user_data.pop("pending_preview_edit", None)
 
+        intent = debt_parsed.get("intent")
+        if debt_uses_cashflow(debt_parsed) and intent != "offset_debt" and not debt_parsed.get("account"):
+            await reply_update_safely(
+                update,
+                f"✅ Preview debt sudah diupdate.\n\n{build_debt_account_prompt(debt_parsed)}",
+                parse_mode="Markdown",
+                reply_markup=account_keyboard("debt_acc"),
+            )
+            return True
+
         short_summary = build_debt_short_summary(debt_parsed)
-        ready_to_save = debt_ready_to_save(debt_parsed)
         await reply_update_safely(
             update,
-            f"✅ Preview debt sudah diupdate.\n\n{short_summary}\n\n{preview_action_question(ready_to_save)}",
+            f"✅ Preview debt sudah diupdate.\n\n{short_summary}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
-            reply_markup=preview_action_keyboard("debt", ready_to_save),
+            reply_markup=preview_action_keyboard("debt", True),
         )
         return True
 
@@ -1208,19 +1593,28 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
     context.user_data["pending_parsed"] = parsed
     context.user_data.pop("pending_preview_edit", None)
 
+    if needs_account(parsed):
+        await reply_update_safely(
+            update,
+            f"✅ Preview sudah diupdate.\n\n{build_single_account_prompt(parsed)}",
+            parse_mode="Markdown",
+            reply_markup=account_keyboard("acc"),
+        )
+        return True
+
     short_summary = build_single_short_summary(parsed)
-    ready_to_save = single_ready_to_save(parsed)
+    preview = build_preview(parsed)
     await reply_update_safely(
         update,
-        f"✅ Preview sudah diupdate.\n\n{short_summary}\n\n{preview_action_question(ready_to_save)}",
+        f"✅ Preview sudah diupdate.\n\n{preview}\n\n{preview_action_question(True)}",
         parse_mode="Markdown",
-        reply_markup=preview_action_keyboard("single", ready_to_save),
+        reply_markup=preview_action_keyboard("single", True),
     )
     return True
 
 
 def format_split_bill_preview_line(parsed: dict) -> str:
-    """Format split bill preview line into readable text."""
+    """Format data into a readable display for split bill preview line."""
     split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
     if not split_bill:
         return ""
@@ -1365,7 +1759,7 @@ def strip_split_bill_phrase(text: str) -> str:
         clean,
         flags=re.IGNORECASE,
     )
-    # Transaction flow note for preview, split bill, or debt handling.
+    # Debt flow section
     # "Nasi kuning 22k dibagi 2 raka".
     clean = re.sub(
         rf"\b{split_word}\s*(?:jadi\s*)?{participant_token}\s*(?:orang\s+)?{name_chunk}",
@@ -1428,11 +1822,7 @@ SPLIT_BILL_ACCOUNT_TAIL_PATTERN = (
 
 
 def strip_split_bill_account_tail(name_text: str) -> str:
-    """Remove account/payment tail from split bill friend names.
-
-    Example: `Budi via Dana` should be read as friend `Budi`, while
-    `DANA` remains handled by the account parser.
-    """
+    """Helper for strip split bill account tail in the Telegram bot flow."""
     clean = str(name_text or "").strip()
     clean = re.sub(SPLIT_BILL_ACCOUNT_TAIL_PATTERN, "", clean, flags=re.IGNORECASE)
     return re.sub(r"\s+", " ", clean).strip(" ,;&")
@@ -1444,12 +1834,7 @@ def limit_split_bill_friends_to_participants(
     participants: int,
     base_share_amount: float,
 ) -> tuple[list[str], dict]:
-    """Keep friend count consistent with the total participant count.
-
-    In this bot, `dibagi 2` means 2 total participants: user + 1 friend.
-    Extra words after the friend name are usually account/payment tails, so they
-    must not become additional friends.
-    """
+    """Helper for limit split bill friends to participants in the Telegram bot flow."""
     max_friends = max(int(participants or 0) - 1, 0)
     clean_names = [str(name or "").strip().title() for name in person_names or [] if str(name or "").strip()]
 
@@ -1479,7 +1864,7 @@ def split_split_bill_person_names(name_text: str) -> list[str]:
     if not clean:
         return []
 
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Debt flow section
     if re.search(r"[,;&]|\bdan\b|\band\b", clean, flags=re.IGNORECASE):
         raw_parts = re.split(r"\s*(?:,|;|&|\bdan\b|\band\b)\s*", clean, flags=re.IGNORECASE)
     else:
@@ -1506,7 +1891,7 @@ def split_split_bill_person_names(name_text: str) -> list[str]:
 
 
 def strip_split_bill_name_tail(name_text: str) -> str:
-    """Cut non-name tail from a split bill friend segment."""
+    """Helper for strip split bill name tail in the Telegram bot flow."""
     clean = strip_split_bill_account_tail(name_text)
     clean = re.split(
         r"\b(tanggal|tgl|tg|pada|date|kemarin|hari|minggu|bulan|udah|sudah|belum|dibayar|bayar|lunas|ke)\b",
@@ -1517,7 +1902,7 @@ def strip_split_bill_name_tail(name_text: str) -> str:
 
 
 def is_split_bill_allocation_token(value: str) -> bool:
-    """Check a boolean condition for is split bill allocation token."""
+    """Check whether a condition is true for split bill allocation token."""
     raw = str(value or "").strip().lower().rstrip(".,;)")
     if not raw:
         return False
@@ -1525,7 +1910,7 @@ def is_split_bill_allocation_token(value: str) -> bool:
 
 
 def parse_split_bill_share_value(value: str, base_share: float) -> float:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for split bill share value."""
     raw = str(value or "").strip().lower().rstrip(".,;)")
     if not raw:
         return 0.0
@@ -1541,7 +1926,7 @@ def parse_split_bill_share_value(value: str, base_share: float) -> float:
 
 
 def parse_split_bill_people_and_shares(name_text: str, total_amount: float, participants: int) -> dict:
-    """Parse input into structured data for the Telegram bot flow."""
+    """Parse input into structured data for split bill people and shares."""
     base_share = float(total_amount or 0) / int(participants or 1)
     clean = strip_split_bill_name_tail(name_text)
     clean = clean.replace("=", ":")
@@ -1632,7 +2017,7 @@ def parse_split_bill_people_and_shares(name_text: str, total_amount: float, part
 
 
 def format_split_bill_person_shares(split_bill: dict) -> str:
-    """Format split bill person shares into readable text."""
+    """Format data into a readable display for split bill person shares."""
     shares = (split_bill or {}).get("person_shares") or {}
     person_names = (split_bill or {}).get("person_names") or []
     if not shares and person_names:
@@ -1649,7 +2034,7 @@ def format_split_bill_person_shares(split_bill: dict) -> str:
     return ", ".join(parts)
 
 def clean_split_person_name(name: str) -> str:
-    """Clean and standardize clean split person name."""
+    """Clean input values for split person name."""
     names = split_split_bill_person_names(name)
     return " ".join(names).title() if names else ""
 
@@ -1702,7 +2087,7 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     if amount <= 0:
         return None
 
-    # Transaction flow note for preview, split bill, or debt handling.
+    # Debt flow section
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     # Split bill parsing note: separate the paid transaction from each person share.
     text = normalize_slash_split_syntax(str(raw or ""))
@@ -1761,7 +2146,7 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
 
     # Split bill parsing note: separate the paid transaction from each person share.
     # Split bill parsing note: separate the paid transaction from each person share.
-    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Debt flow section
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     parsed["amount"] = amount
 
@@ -1775,12 +2160,12 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
         person_shares = {person: float(value or 0) * scale for person, value in person_shares.items()}
         total_receivable = amount
     user_share_amount = max(amount - total_receivable, 0.0)
-    share_amount = user_share_amount  # backward compatible field: sekarang berarti bagian user
+    share_amount = user_share_amount  # Backward-compatible field: now represents the user share.
 
-    # Transaction flow note for preview, split bill, or debt handling.
+    # Debt flow section
     # Split bill parsing note: separate the paid transaction from each person share.
-    # Transaction flow note for preview, split bill, or debt handling.
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Debt flow section
+    # Debt flow section
     clean_desc = build_split_bill_item_description_from_raw(raw, parsed.get("description") or "")
     clean_desc = strip_trailing_split_person_names(clean_desc, person_names)
     parsed["description"] = clean_desc
@@ -1912,7 +2297,7 @@ def build_mixed_split_bill_prompt(mixed_items: list[dict]) -> str:
 
 
 def get_mixed_split_bill_indexes(mixed_items: list[dict]) -> list[int]:
-    """Retrieve data needed for mixed split bill indexes."""
+    """Get data needed for mixed split bill indexes."""
     indexes = []
     for idx, item in enumerate(mixed_items or []):
         if item.get("kind") != "transaction":
@@ -1924,7 +2309,7 @@ def get_mixed_split_bill_indexes(mixed_items: list[dict]) -> list[int]:
 
 
 def get_next_mixed_split_bill_index(mixed_items: list[dict]) -> int | None:
-    """Retrieve data needed for next mixed split bill index."""
+    """Get data needed for next mixed split bill index."""
     for idx in get_mixed_split_bill_indexes(mixed_items):
         parsed = mixed_items[idx].get("parsed", {})
         if split_bill_needs_decision(parsed):
@@ -2002,7 +2387,7 @@ def apply_split_bill_decision_to_mixed_index(mixed_items: list[dict], item_index
 
 
 # Split bill parsing note: separate the paid transaction from each person share.
-# Debt command note: keep payable and receivable actions explicit and auditable.
+# Debt flow section
 
 def apply_split_bill_decision_to_parsed(parsed: dict, status: str) -> dict:
     """Apply changes for split bill decision to parsed."""
@@ -2042,7 +2427,7 @@ def apply_split_bill_decision_to_mixed(mixed_items: list[dict], status: str) -> 
 
 
 def create_split_bill_debt(parsed: dict, raw: str = "", source_transaction_id: str = "") -> dict | None:
-    """Create a new record or object for split bill debt."""
+    """Create a new data object for split bill debt."""
     split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
     if not split_bill or split_bill.get("status") != "unpaid":
         return None
@@ -2104,7 +2489,7 @@ def create_split_bill_debt(parsed: dict, raw: str = "", source_transaction_id: s
 
 
 def format_split_debt_result_lines(debt_result: dict) -> list[str]:
-    """Format split debt result lines into readable text."""
+    """Format data into a readable display for split debt result lines."""
     lines = []
     for item in (debt_result or {}).get("created", []) or []:
         lines.append(
@@ -2114,7 +2499,7 @@ def format_split_debt_result_lines(debt_result: dict) -> list[str]:
 
 
 def summarize_saved_transaction_items(items: list[dict]) -> dict:
-    """Build a concise summary for the Telegram bot flow."""
+    """Summarize data for saved transaction items."""
     total_expense = 0.0
     total_income = 0.0
     total_transfer = 0.0
@@ -2136,7 +2521,7 @@ def summarize_saved_transaction_items(items: list[dict]) -> dict:
 
 
 def append_saved_summary_lines(lines: list[str], items: list[dict], title: str = "Ringkasan tersimpan"):
-    """Append data or text to saved summary lines."""
+    """Append data to saved summary lines."""
     summary = summarize_saved_transaction_items(items)
     lines.append(f"\n📊 *{title}:*")
     lines.append(f"❌ Pengeluaran: *{format_rupiah(summary['expense'])}*")
@@ -2146,7 +2531,7 @@ def append_saved_summary_lines(lines: list[str], items: list[dict], title: str =
     lines.append(f"📌 Net       : *{format_rupiah(summary['net'])}*")
 
 def _clean_fronting_item_text(text: str, person: str = "") -> str:
-    """Clean and standardize clean fronting item text."""
+    """Clean input values for fronting item text."""
     item = str(text or "").strip()
     if person:
         item = re.sub(rf"\b(?:sama|oleh|ke|dari)?\s*(?:si\s+)?{re.escape(person)}\b", " ", item, flags=re.IGNORECASE)
@@ -2195,7 +2580,7 @@ def _fronting_expense_category(debt_parsed: dict) -> str:
 
 
 def is_ditalangin_expense_without_balance(debt_parsed: dict) -> bool:
-    """Check a boolean condition for is ditalangin expense without balance."""
+    """Check whether a condition is true for ditalangin expense without balance."""
     return (
         str(debt_parsed.get("cashflow_mode") or "").strip() == "debt_only"
         and str(debt_parsed.get("fronting_mode") or "").strip().lower() == "ditalangin"
@@ -2204,7 +2589,7 @@ def is_ditalangin_expense_without_balance(debt_parsed: dict) -> bool:
 
 
 def normalize_slash_split_syntax(raw: str) -> str:
-    """Clean and standardize normalize slash split syntax."""
+    """Normalize and clean input for slash split syntax."""
     text = str(raw or "")
     return re.sub(
         r"(\d+[\d.,]*\s*(?:rb|ribu|k|jt|juta)?)\s*/\s*(\d+)",
@@ -2314,10 +2699,10 @@ def build_debt_cashflow_transaction(
 
 
     if str(debt_parsed.get("cashflow_mode") or "").strip() == "debt_only":
-        # Fronting-money note: distinguish actual account cashflow from payable or receivable records.
-        # Account balance note: avoid partial balance updates when validation fails.
-        # Budget command note: regex handling supports natural phrases such as `budget makan 1jt`.
-        # Account balance note: avoid partial balance updates when validation fails.
+        # Account flow section
+        # Account flow section
+        # Natural input section
+        # Account flow section
         if is_ditalangin_expense_without_balance(debt_parsed):
             item_desc = str(debt_parsed.get("expense_description") or "").strip() or _fronting_expense_description(debt_parsed)
             catatan_parts = [str(raw or "").strip(), "ditalangin/tanpa update saldo rekening"]

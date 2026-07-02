@@ -2,19 +2,15 @@
 
 This folder contains the finance business logic.
 
-Handlers should not directly change spreadsheet rows. They should call services. This keeps the project easier to debug because user interaction, finance logic, and data writing stay separated.
+Handlers should stay focused on Telegram interaction. Services handle the actual finance operations, such as saving transactions, updating balances, managing debts, calculating reports, and preparing AI context.
 
-## Files
+## Main services
 
-| File | Purpose |
-|---|---|
-| `transaction_service.py` | Transactions, account balance, edit, delete, and batch save |
-| `debt_service.py` | Debt creation, payment, settlement, void, and edit |
-| `budget_service.py` | Budget setup, actual spending, and remaining budget |
-| `report_service.py` | Reports, search, account summaries, and category summaries |
-| `pending_expense_service.py` | Planned or incomplete expenses |
-| `recurring_service.py` | Recurring rules and logs |
-| `net_worth_service.py` | Assets, snapshots, and net worth calculation |
-| `finance_insight_service.py` | Context building for AI insight commands |
-
-If a saved value is wrong, this folder is usually the best place to inspect first.
+- `transaction_service.py`: save, edit, delete, batch transactions, and account balance updates.
+- `debt_service.py`: debt, receivable, payment, settlement, void, and edit logic.
+- `budget_service.py`: budget setup and budget realization.
+- `report_service.py`: transaction reports and search.
+- `pending_expense_service.py`: planned expenses and future bills.
+- `recurring_service.py`: recurring rules and logs.
+- `net_worth_service.py`: assets and net worth snapshots.
+- `finance_insight_service.py`: structured context for AI insight.

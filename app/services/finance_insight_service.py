@@ -1,4 +1,5 @@
-"""Context builder service for /ask, /audit, /coach, and /insight before sending data to Gemini."""
+"""Context builder service for AI finance insight, audit, coach, and ask commands."""
+
 
 from __future__ import annotations
 
@@ -117,7 +118,7 @@ def safe_float(value, default: float = 0.0) -> float:
     elif "." in raw:
         parts = raw.split(".")
         # 427.500 atau 1.427.500 = ribuan.
-        # Implementation note for this project-specific finance flow.
+        # Implementation section
         if len(parts) > 1 and all(len(part) == 3 for part in parts[1:]):
             raw = raw.replace(".", "")
 
@@ -130,7 +131,7 @@ def safe_float(value, default: float = 0.0) -> float:
 
 
 def format_rupiah(amount: float) -> str:
-    """Format rupiah into readable text."""
+    """Format data into a readable display for rupiah."""
     return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
 
 
@@ -140,7 +141,7 @@ def current_month() -> str:
 
 
 def normalize_month_arg(value: str | None = None) -> str:
-    """Clean and standardize normalize month arg."""
+    """Normalize and clean input for month arg."""
     today = datetime.now()
     if not value:
         return current_month()
@@ -183,7 +184,7 @@ def month_bounds(month: str) -> tuple[str, str]:
 
 
 def parse_period_from_text(text: str) -> dict:
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for period from text."""
     raw = str(text or "").lower()
     today = datetime.now().date()
 
@@ -229,14 +230,14 @@ def parse_period_from_text(text: str) -> dict:
 
 
 def normalize_text(value: str) -> str:
-    """Clean and standardize normalize text."""
+    """Normalize and clean input for text."""
     value = str(value or "").lower()
     value = re.sub(r"[^a-z0-9\s]", " ", value)
     return re.sub(r"\s+", " ", value).strip()
 
 
 def is_date_between(date_value: str, date_from: str | None, date_to: str | None) -> bool:
-    """Check a boolean condition for is date between."""
+    """Check whether a condition is true for date between."""
     date_value = str(date_value or "").strip()
     if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", date_value):
         return False
@@ -253,7 +254,7 @@ def filter_records_by_period(records: list[dict], date_from: str | None, date_to
 
 
 def get_month_transactions(month: str) -> list[dict]:
-    """Retrieve data needed for month transactions."""
+    """Get data needed for month transactions."""
     date_from, date_to = month_bounds(month)
     records = get_all_records(SHEET_TRANSACTIONS)
     return filter_records_by_period(records, date_from, date_to)
@@ -272,7 +273,7 @@ def enrich_finance_transactions(records: list[dict]) -> list[dict]:
 
 
 def get_effective_expense_amount(record: dict) -> float:
-    """Retrieve data needed for effective expense amount."""
+    """Get data needed for effective expense amount."""
     amount = safe_float((record or {}).get("amount"))
     if str((record or {}).get("type", "")).strip().lower() != "expense":
         return amount
@@ -287,9 +288,9 @@ def get_effective_expense_amount(record: dict) -> float:
 
 
 def summarize_transactions(records: list[dict]) -> dict:
-    """Build a concise summary for the finance service layer."""
+    """Summarize data for transactions."""
     total_income = 0.0
-    total_expense = 0.0  # Net expense setelah piutang split bill.
+    total_expense = 0.0  # Net expense after split bill receivables.
     total_transfer = 0.0
     expense_by_category = defaultdict(float)
     income_by_category = defaultdict(float)
@@ -314,8 +315,8 @@ def summarize_transactions(records: list[dict]) -> dict:
             income_by_account[account] += amount
             cash_in_by_account[account] += amount
         elif txn_type == "expense":
-            # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
-            # Debt command note: keep payable and receivable actions explicit and auditable.
+            # Debt flow section
+            # Debt flow section
             total_expense += effective_amount
             expense_by_category[category] += effective_amount
             expense_by_account[account] += effective_amount
@@ -388,7 +389,7 @@ def compact_transaction(r: dict) -> dict:
 
 
 def get_top_transactions(records: list[dict], txn_type: str | None = "expense", limit: int = 8) -> list[dict]:
-    """Retrieve data needed for top transactions."""
+    """Get data needed for top transactions."""
     records = enrich_finance_transactions(records)
     candidates = []
     for r in records:
@@ -406,7 +407,7 @@ def get_top_transactions(records: list[dict], txn_type: str | None = "expense", 
 
 
 def get_budget_status(month: str, transactions: list[dict]) -> list[dict]:
-    """Retrieve data needed for budget status."""
+    """Get data needed for budget status."""
     budgets = [
         b for b in get_all_records(SHEET_BUDGETS)
         if str(b.get("month", "")).strip() == month
@@ -445,7 +446,7 @@ def get_budget_status(month: str, transactions: list[dict]) -> list[dict]:
 
 
 def get_accounts_summary() -> dict:
-    """Retrieve data needed for accounts summary."""
+    """Get data needed for accounts summary."""
     accounts = []
     total = 0.0
     for acc in get_all_records(SHEET_ACCOUNTS):
@@ -462,7 +463,7 @@ def get_accounts_summary() -> dict:
 
 
 def get_debt_summary_compact() -> dict:
-    """Retrieve data needed for debt summary compact."""
+    """Get data needed for debt summary compact."""
     debts = get_all_records(SHEET_DEBTS)
     active = []
     totals = defaultdict(float)
@@ -497,7 +498,7 @@ def get_debt_summary_compact() -> dict:
 
 
 def get_net_worth_compact() -> dict:
-    """Retrieve data needed for net worth compact."""
+    """Get data needed for net worth compact."""
     assets = get_all_records(SHEET_ASSETS)
     active_assets = []
 
@@ -708,7 +709,7 @@ def build_monthly_finance_context(month: str | None = None) -> dict:
 
 
 def extract_keywords(question: str) -> list[str]:
-    """Extract the important part of the input for keywords."""
+    """Extract the required part of input for keywords."""
     clean = normalize_text(question)
     # Keep meaningful multi-token known phrases.
     keywords = []
@@ -764,7 +765,7 @@ def search_relevant_transactions(question: str, date_from: str | None = None, da
 
 
 def has_explicit_period(question: str) -> bool:
-    """Check a boolean condition for has explicit period."""
+    """Check whether data has explicit period."""
     raw = str(question or "").lower()
     if re.search(r"20\d{2}[-/](0?[1-9]|1[0-2])", raw):
         return True
@@ -779,11 +780,11 @@ def has_explicit_period(question: str) -> bool:
 
 
 def build_ask_finance_context(question: str) -> dict:
-    """Build the most relevant finance context for a natural /ask question."""
+    """Build the data structure or message text for ask finance context."""
     period = parse_period_from_text(question)
     month_context = build_monthly_finance_context(period.get("month"))
 
-    # Implementation note for this project-specific finance flow.
+    # Implementation section
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     explicit_period = has_explicit_period(question)
     relevant = search_relevant_transactions(
@@ -838,13 +839,13 @@ def build_coach_context(month: str | None = None, question: str = "") -> dict:
 
 
 def should_handle_finance_question(text: str) -> bool:
-    """Check a boolean condition for should handle finance question."""
+    """Decide whether the flow should handle finance question."""
     raw = str(text or "").strip().lower()
     if not raw:
         return False
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
-    # Fronting-money note: distinguish actual account cashflow from payable or receivable records.
-    # Implementation note for this project-specific finance flow.
+    # Account flow section
+    # Implementation section
     has_amount = bool(re.search(r"\b\d+(?:[.,]\d+)?\s*(rb|ribu|k|jt|juta)?\b", raw))
     transaction_or_debt_markers = [
         "ditalangin", "ditalangi", "dibayarin", "duluin", "nitip",
@@ -858,10 +859,10 @@ def should_handle_finance_question(text: str) -> bool:
         return False
 
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
-    # hanya if kalimatnya jelas minta saran/target/budget.
+    # Only trigger this when the sentence clearly asks for advice, target, or budget guidance.
     if has_amount and not any(k in raw for k in ["nabung", "tabung", "target", "budget", "saran", "coach", "hemat"]):
         return False
-    # Implementation note for this project-specific finance flow.
+    # Implementation section
     if len(raw.split()) == 1 and raw not in {"insight", "audit", "coach"}:
         return False
     return any(k in raw for k in FINANCE_QUESTION_KEYWORDS)

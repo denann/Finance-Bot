@@ -1,4 +1,5 @@
-"""Google Sheets client with gspread connection, schema bootstrap, atomic write, retry, rollback, and read/write helpers."""
+"""Google Sheets client with worksheet access, schema bootstrap, retry handling, best-effort rollback, and read/write helpers."""
+
 
 import contextvars
 import os
@@ -218,7 +219,7 @@ DEFAULT_CATEGORY_ROWS = [
 
 
 class SheetsAtomicWriteError(RuntimeError):
-    """Raised when a Google Sheets write fails after retry and rollback handling is needed."""
+    """Error raised when a Google Sheets write fails after retries and rollback handling is attempted."""
 
     def __init__(self, original_error, rollback_ok: bool | None = None, rollback_errors: list[str] | None = None):
         """Helper for init in the Google Sheets data layer."""
@@ -247,10 +248,10 @@ class SheetsAtomicWriteError(RuntimeError):
 
 
 # Schema compatibility note for Google Sheets headers and rows.
-# Implementation note for this project-specific finance flow.
+# Implementation section
 
 class SheetsTransaction:
-    """Best-effort transaction wrapper for Google Sheets operations."""
+    """Best-effort transaction wrapper for Google Sheets writes. It records successful writes and tries to roll them back if a later write fails."""
 
     def __init__(self, label: str | None = None):
         """Helper for init in the Google Sheets data layer."""
@@ -285,10 +286,10 @@ class SheetsTransaction:
 
 @contextmanager
 def sheets_transaction(label: str | None = None):
-    """Create a best-effort transaction context for multiple Google Sheets writes."""
+    """Helper for sheets transaction in the Google Sheets data layer."""
     parent = _current_transaction.get()
     if parent is not None:
-        # Implementation note for this project-specific finance flow.
+        # Implementation section
         yield parent
         return
 
@@ -316,12 +317,12 @@ def rollback_current_sheets_transaction() -> bool:
 
 
 def get_current_sheets_transaction() -> SheetsTransaction | None:
-    """Retrieve data needed for current sheets transaction."""
+    """Get data needed for current sheets transaction."""
     return _current_transaction.get()
 
 
 def _is_quota_or_transient_error(exc: Exception) -> bool:
-    """Check a boolean condition for is quota or transient error."""
+    """Check whether a condition is true for quota or transient error."""
     msg = str(exc).lower()
     return any(
         marker in msg
@@ -388,7 +389,7 @@ def _execute_read(fn):
 
 
 def _get_column_letter(col_number: int) -> str:
-    """Retrieve data needed for column letter."""
+    """Get data needed for column letter."""
     result = ""
     number = int(col_number)
     while number:
@@ -398,7 +399,7 @@ def _get_column_letter(col_number: int) -> str:
 
 
 def _extract_updated_row_index(response) -> int | None:
-    """Extract the important part of the input for updated row index."""
+    """Extract the required part of input for updated row index."""
     text = str(response or "")
     match = re.search(r"![A-Z]+(\d+)(?::[A-Z]+(\d+))?", text)
     if match:
@@ -407,7 +408,7 @@ def _extract_updated_row_index(response) -> int | None:
 
 
 def _extract_updated_row_range(response) -> tuple[int, int] | None:
-    """Extract the important part of the input for updated row range."""
+    """Extract the required part of input for updated row range."""
     text = str(response or "")
     match = re.search(r"![A-Z]+(\d+):[A-Z]+(\d+)", text)
     if match:
@@ -428,17 +429,17 @@ def _pad_row(row: list, width: int) -> list:
 
 
 def _clean_header(values: list) -> list[str]:
-    """Clean and standardize clean header."""
+    """Clean input values for header."""
     return [str(value or "").strip() for value in values]
 
 
 def _has_data_rows(values: list[list]) -> bool:
-    """Check a boolean condition for has data rows."""
+    """Check whether data has data rows."""
     return any(any(str(cell or "").strip() for cell in row) for row in values[1:])
 
 
 def _is_blank_header(header: list[str]) -> bool:
-    """Check a boolean condition for is blank header."""
+    """Check whether a condition is true for blank header."""
     return not header or not any(str(cell or "").strip() for cell in header)
 
 
@@ -449,7 +450,7 @@ def _header_has_expected_prefix(header: list[str], expected_header: list[str]) -
 
 def _header_is_safe_prefix(header: list[str], expected_header: list[str]) -> bool:
     # Safe for old headers whose column order is still a prefix of the new schema.
-    # of the new schema. Example: old assets sheets without asset_type columns.
+    # Asset flow section
     """Helper for header is safe prefix in the Google Sheets data layer."""
     if len(header) > len(expected_header):
         return False
@@ -490,7 +491,7 @@ def _seed_default_rows_if_empty(sheet_name: str, sheet, values: list[list]) -> l
 
 
 def _get_or_create_worksheet(spreadsheet, sheet_name: str):
-    """Retrieve data needed for or create worksheet."""
+    """Get data needed for or create worksheet."""
     try:
         return _call_with_retry(lambda: spreadsheet.worksheet(sheet_name))
     except WorksheetNotFound:
@@ -506,7 +507,7 @@ def _get_or_create_worksheet(spreadsheet, sheet_name: str):
 
 
 def ensure_sheet_schema(sheet_name: str, sheet=None) -> dict:
-    """Ensure one worksheet has the expected header without rewriting existing data unsafely."""
+    """Ensure that setup is ready for sheet schema."""
     global _worksheets, _schema_checked_sheets
 
     clean_name = str(sheet_name or "").strip()
@@ -570,7 +571,7 @@ def ensure_sheet_schema(sheet_name: str, sheet=None) -> dict:
 
 
 def ensure_spreadsheet_schema() -> list[dict]:
-    """Ensure all required worksheets exist and have compatible headers."""
+    """Ensure that setup is ready for spreadsheet schema."""
     spreadsheet = get_spreadsheet()
     results = []
 
@@ -583,7 +584,7 @@ def ensure_spreadsheet_schema() -> list[dict]:
 
 
 def get_spreadsheet():
-    """Retrieve data needed for spreadsheet."""
+    """Get data needed for spreadsheet."""
     global _client, _spreadsheet
 
     if _spreadsheet is None:
@@ -598,7 +599,7 @@ def get_spreadsheet():
 
 
 def get_sheet(sheet_name: str):
-    """Retrieve data needed for sheet."""
+    """Get data needed for sheet."""
     global _worksheets
 
     clean_name = str(sheet_name or "").strip()
@@ -616,7 +617,7 @@ def get_sheet(sheet_name: str):
 
 
 def append_row(sheet_name: str, row: list):
-    """Append data or text to row."""
+    """Append data to row."""
     sheet = get_sheet(sheet_name)
     response = _execute_write(lambda: sheet.append_row(row, value_input_option="USER_ENTERED"))
 
@@ -632,7 +633,7 @@ def append_row(sheet_name: str, row: list):
 
 
 def append_row_raw(sheet_name: str, row: list):
-    """Append data or text to row raw."""
+    """Append data to row raw."""
     sheet = get_sheet(sheet_name)
     response = _execute_write(lambda: sheet.append_row(row, value_input_option="RAW"))
 
@@ -648,7 +649,7 @@ def append_row_raw(sheet_name: str, row: list):
 
 
 def append_rows(sheet_name: str, rows: list[list]):
-    """Append data or text to rows."""
+    """Append data to rows."""
     if not rows:
         return None
 
@@ -670,19 +671,19 @@ def append_rows(sheet_name: str, rows: list[list]):
 
 
 def get_all_records(sheet_name: str) -> list[dict]:
-    """Retrieve data needed for all records."""
+    """Get data needed for all records."""
     sheet = get_sheet(sheet_name)
     return _execute_read(lambda: sheet.get_all_records(value_render_option="UNFORMATTED_VALUE"))
 
 
 def get_all_values(sheet_name: str) -> list[list]:
-    """Retrieve data needed for all values."""
+    """Get data needed for all values."""
     sheet = get_sheet(sheet_name)
     return _execute_read(lambda: sheet.get_all_values())
 
 
 def update_cell(sheet_name: str, row: int, col: int, value):
-    """Update cell while keeping related data consistent."""
+    """Update existing data for cell."""
     sheet = get_sheet(sheet_name)
     tx = _current_transaction.get()
 
@@ -704,7 +705,7 @@ def update_cell(sheet_name: str, row: int, col: int, value):
 
 
 def find_row_index(sheet_name: str, search_col: int, search_value: str) -> int | None:
-    """Helper for find row index in the Google Sheets data layer."""
+    """Find a record for row index."""
     sheet = get_sheet(sheet_name)
     col_values = _execute_read(lambda: sheet.col_values(search_col))
 
@@ -716,12 +717,12 @@ def find_row_index(sheet_name: str, search_col: int, search_value: str) -> int |
 
 
 def delete_row(sheet_name: str, row_index: int):
-    """Delete row with validation for related data."""
+    """Delete data safely for row."""
     delete_rows(sheet_name, [row_index])
 
 
 def delete_rows(sheet_name: str, row_indices: list[int]):
-    """Delete rows with validation for related data."""
+    """Delete data safely for rows."""
     if not row_indices:
         return None
 
@@ -749,7 +750,7 @@ def delete_rows(sheet_name: str, row_indices: list[int]):
 
 
 def update_row(sheet_name: str, row_index: int, row_values: list):
-    """Update row while keeping related data consistent."""
+    """Update existing data for row."""
     sheet = get_sheet(sheet_name)
     tx = _current_transaction.get()
     width = len(row_values)
@@ -775,7 +776,7 @@ def update_row(sheet_name: str, row_index: int, row_values: list):
 
 
 def update_range(sheet_name: str, cell_range: str, values: list[list]):
-    """Update range while keeping related data consistent."""
+    """Update existing data for range."""
     sheet = get_sheet(sheet_name)
     tx = _current_transaction.get()
 

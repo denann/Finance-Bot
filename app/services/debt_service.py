@@ -1,4 +1,5 @@
-"""Debt service for receivable/payable records, settlement, void, edit, cashflow relation, and debt summaries."""
+"""Debt service for payables, receivables, payments, settlement, void, edit, and cashflow relation logic."""
+
 
 from datetime import datetime
 import re
@@ -15,7 +16,7 @@ from app.config import SHEET_DEBTS, SHEET_DEBT_PAYMENTS
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def parse_sheet_number(value, default: float = 0.0) -> float:
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for sheet number."""
     if value is None or value == "":
         return default
     if isinstance(value, (int, float)):
@@ -32,7 +33,7 @@ def parse_sheet_number(value, default: float = 0.0) -> float:
         # Format Indonesia: 71.387,5
         raw = raw.replace(".", "").replace(",", ".")
     elif "," in raw:
-        # Debt service note for keeping payable and receivable records auditable.
+        # Debt flow section
         raw = raw.replace(",", ".")
     else:
         # Format ribuan biasa: 71.387
@@ -47,7 +48,7 @@ def parse_sheet_number(value, default: float = 0.0) -> float:
 
 
 def format_rupiah(amount: float) -> str:
-    """Format rupiah into readable text."""
+    """Format data into a readable display for rupiah."""
     value = float(amount or 0)
     if abs(value - round(value)) < 1e-9:
         return f"Rp{int(round(value)):,}".replace(",", ".")
@@ -70,7 +71,7 @@ def generate_payment_id() -> str:
 
 
 def normalize_person_name(name: str) -> str:
-    """Clean and standardize normalize person name."""
+    """Normalize and clean input for person name."""
     if not name:
         return ""
 
@@ -78,7 +79,7 @@ def normalize_person_name(name: str) -> str:
 
 
 def normalize_debt_person_group_name(name: str) -> str:
-    """Clean and standardize normalize debt person group name."""
+    """Normalize and clean input for debt person group name."""
     person = normalize_person_name(name)
     if not person:
         return ""
@@ -99,12 +100,12 @@ def normalize_debt_person_group_name(name: str) -> str:
 
 
 def is_settled_value(value) -> bool:
-    """Check a boolean condition for is settled value."""
+    """Check whether a condition is true for settled value."""
     return str(value).strip().upper() == "TRUE"
 
 
 def get_debt_row_by_id(debt_id: str) -> tuple[int | None, dict | None]:
-    """Retrieve data needed for debt row by id."""
+    """Get data needed for debt row by id."""
     records = get_all_records(SHEET_DEBTS)
 
     for i, record in enumerate(records):
@@ -115,7 +116,7 @@ def get_debt_row_by_id(debt_id: str) -> tuple[int | None, dict | None]:
 
 
 def get_active_debt_exact_person(person_name: str) -> tuple[int | None, dict | None]:
-    """Retrieve data needed for active debt exact person."""
+    """Get data needed for active debt exact person."""
     target = normalize_person_name(person_name)
     records = get_all_records(SHEET_DEBTS)
 
@@ -138,7 +139,7 @@ def append_debt_mutation(
     note: str = "",
     mutation_type: str = "payment",
 ):
-    """Append data or text to debt mutation."""
+    """Append data to debt mutation."""
     payment_row = [
         generate_payment_id(),
         debt_id,
@@ -149,7 +150,7 @@ def append_debt_mutation(
     append_row(SHEET_DEBT_PAYMENTS, payment_row)
 
 
-# ── Debt CRUD / Netting ───────────────────────────────────────────────────────
+# Debt flow section
 
 def add_debt(
     debt_type: str,
@@ -161,7 +162,7 @@ def add_debt(
     cashflow_mode: str = "",
     fronting_mode: str = "",
 ) -> dict:
-    """Create a granular debt record and register its mutation history."""
+    """Helper for add debt in the finance service layer."""
     person_name = normalize_person_name(person_name)
     amount = float(amount or 0)
 
@@ -190,8 +191,8 @@ def add_debt(
         }
 
 
-    # New design: debt is stored per input, not netted per person.
-    # Recommended debts sheet header:
+    # Debt flow section
+    # Debt flow section
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     # is_settled, created_at, settled_at, source_transaction_id, cashflow_mode, fronting_mode
     debt_id = generate_debt_id()
@@ -238,11 +239,11 @@ def add_debt(
         }
 
     # Legacy compatibility note for older records or older in-memory state.
-    # but it is not executed because the current debt design is granular.
+    # Debt flow section
 
     existing_row, existing = get_active_debt_exact_person(person_name)
 
-    # debts sheet columns:
+    # Debt flow section
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     # 6=description, 7=due_date, 8=is_settled, 9=created_at, 10=settled_at
     TYPE_COL = 2
@@ -253,7 +254,7 @@ def add_debt(
     IS_SETTLED_COL = 8
     SETTLED_AT_COL = 10
 
-    # ── Implementation section ────────────────────────────────────────────────
+    # Implementation section
     if not existing:
         debt_id = generate_debt_id()
         row = [
@@ -295,7 +296,7 @@ def add_debt(
                 "action": "error",
             }
 
-    # ── Implementation section ────────────────────────────────────────────────
+    # Implementation section
     debt_id = existing.get("id")
     existing_type = existing.get("type")
     existing_remaining = parse_sheet_number(existing.get("remaining_amount", 0))
@@ -386,7 +387,7 @@ def add_debt(
 
 
 def get_active_debts(debt_type: str = None) -> list[dict]:
-    """Retrieve data needed for active debts."""
+    """Get data needed for active debts."""
     records = get_all_records(SHEET_DEBTS)
     result = []
 
@@ -403,7 +404,7 @@ def get_active_debts(debt_type: str = None) -> list[dict]:
 
 
 def get_debt_by_person(person_name: str) -> list[dict]:
-    """Retrieve data needed for debt by person."""
+    """Get data needed for debt by person."""
     target = normalize_person_name(person_name)
     result = []
 
@@ -587,8 +588,8 @@ def add_payment_by_person(
             "allocations": [],
         }
 
-    # Debt service note for keeping payable and receivable records auditable.
-    # Debt service note for keeping payable and receivable records auditable.
+    # Debt flow section
+    # Debt flow section
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     offset_capacity = min(target_total_before, opposite_total_before)
     net_payment_capacity = max(0.0, target_total_before - offset_capacity)
@@ -670,8 +671,8 @@ def add_payment_by_person(
 
     overpayment_created = None
     if net_overpayment > 0 and overpayment_policy in {"opposite_debt", "debt", "hutang"}:
-        # Debt payment note: settlement and void actions must stay explicit for auditability.
-        # Debt service note for keeping payable and receivable records auditable.
+        # Debt flow section
+        # Debt flow section
         created = add_debt(
             opposite_type,
             person_name,
@@ -786,7 +787,7 @@ def estimate_payment_outcome(person_name: str, amount: float, target_debt_type: 
 
 
 def format_debt_net_position_lines(person_name: str, remaining_payable: float, remaining_receivable: float) -> list[str]:
-    """Format debt net position lines into readable text."""
+    """Format data into a readable display for debt net position lines."""
     net = float(remaining_receivable or 0) - float(remaining_payable or 0)
     lines = [
         f"📊 Sisa piutang: {format_rupiah(remaining_receivable)}",
@@ -1092,15 +1093,15 @@ def settle_opposite_debts_by_person(person_name: str, amount: float | None = Non
 
 
 def is_voided_debt(record: dict) -> bool:
-    """Check a boolean condition for is voided debt."""
+    """Check whether a condition is true for voided debt."""
     description = str(record.get("description", "") or "")
     return "[VOID" in description.upper()
 
 
 def get_debt_person_summary() -> dict:
-    """Retrieve data needed for debt person summary."""
-    # Debt command note: keep payable and receivable actions explicit and auditable.
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    """Get data needed for debt person summary."""
+    # Debt flow section
+    # Debt flow section
     # Schema compatibility note for Google Sheets headers and rows.
     source_rows = [d for d in get_debts_with_row_index(active_only=True) if not is_voided_debt(d)]
 
@@ -1176,7 +1177,7 @@ def get_debt_person_summary() -> dict:
 
 
 def get_debt_person_detail(person_name: str, include_settled: bool = True) -> dict:
-    """Retrieve data needed for debt person detail."""
+    """Get data needed for debt person detail."""
     target = normalize_debt_person_group_name(person_name)
     raw_target = normalize_person_name(person_name)
     rows = get_debts_with_row_index(active_only=not include_settled)
@@ -1221,9 +1222,9 @@ def get_debt_person_detail(person_name: str, include_settled: bool = True) -> di
             "paid_pct": pct,
         }
 
-    # Debt payment note: settlement and void actions must stay explicit for auditability.
-    # Debt service note for keeping payable and receivable records auditable.
-    # Debt service note for keeping payable and receivable records auditable.
+    # Debt flow section
+    # Debt flow section
+    # Debt flow section
     payable_totals = totals_for(details, "payable")
     receivable_totals = totals_for(details, "receivable")
     active_payable = totals_for(active_details, "payable")
@@ -1255,7 +1256,7 @@ def get_debt_person_detail(person_name: str, include_settled: bool = True) -> di
 
 
 def get_debt_summary() -> dict:
-    """Retrieve data needed for debt summary."""
+    """Get data needed for debt summary."""
     all_active = get_debts_with_row_index(active_only=True)
 
     payables = [r for r in all_active if r.get("type") == "payable"]
@@ -1274,10 +1275,10 @@ def get_debt_summary() -> dict:
 
 
 
-# ── Selected Debt Settlement ─────────────────────────────────────────────────
+# Debt flow section
 
 def summarize_debt_rows_for_settlement(debts: list[dict]) -> dict:
-    """Build a concise summary for the finance service layer."""
+    """Summarize data for debt rows for settlement."""
     selected = []
     total_receivable = 0.0
     total_payable = 0.0
@@ -1383,9 +1384,9 @@ def settle_selected_debt_ids(
     overpayment_policy = str(overpayment_policy or "").strip().lower()
     overpayment_created = None
     if overpayment_amount > 0 and overpayment_policy in {"opposite_debt", "debt", "hutang"}:
-        # Debt command note: keep payable and receivable actions explicit and auditable.
-        # Debt service note for keeping payable and receivable records auditable.
-        # Debt command note: keep payable and receivable actions explicit and auditable.
+        # Debt flow section
+        # Debt flow section
+        # Debt flow section
         opposite_type = "payable" if str(net_type or "").strip() == "receivable" else "receivable"
         created = add_debt(
             opposite_type,
@@ -1434,10 +1435,10 @@ def settle_selected_debt_ids(
         "net_remaining": total_receivable - total_payable,
     }
 
-# ── Debt Payment Reversal / Delete Payment Transaction ────────────────────────
+# Debt flow section
 
 def parse_debt_allocation_note(note: str) -> list[dict]:
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for debt allocation note."""
     raw = str(note or "")
     m = re.search(r"debt_allocations=([^|]+)", raw)
     if not m:
@@ -1456,7 +1457,7 @@ def parse_debt_allocation_note(note: str) -> list[dict]:
 
 
 def _set_debt_remaining(row_index: int, new_remaining: float, original_amount: float | None = None):
-    """Helper for set debt remaining in the finance service layer."""
+    """Set a value for debt remaining."""
     original = float(original_amount or 0)
     remaining = max(0.0, float(new_remaining or 0))
     is_settled = remaining <= 0.0001
@@ -1491,9 +1492,9 @@ def reverse_debt_payment_transaction(txn: dict) -> dict:
     failed = []
     today_note = f"Reverse payment karena transaksi {txn.get('id') or '-'} dihapus/diedit"
 
-    # Debt payment note: settlement and void actions must stay explicit for auditability.
-    # Debt payment note: settlement and void actions must stay explicit for auditability.
-    # Debt service note for keeping payable and receivable records auditable.
+    # Debt flow section
+    # Debt flow section
+    # Debt flow section
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     if is_selected_settle or is_net_settle:
         amount_left = sum(parse_sheet_number(a.get("amount")) for a in allocations)
@@ -1524,7 +1525,7 @@ def reverse_debt_payment_transaction(txn: dict) -> dict:
         reversed_items.append({"debt_id": debt_id, "amount": reverse_amount, "remaining_after": new_remaining})
         amount_left -= reverse_amount
 
-    # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+    # Debt flow section
     # ketika transaction settlement/payment di-delete.
     overpay_id_match = re.search(r"overpayment_debt_id=([^|;\s]+)", note_text)
     if overpay_id_match:
@@ -1547,7 +1548,7 @@ def reverse_debt_payment_transaction(txn: dict) -> dict:
         "unreversed_amount": max(0.0, amount_left),
     }
 
-# ── Debt Void ─────────────────────────────────────────────────────────────────
+# Debt flow section
 
 DEBT_ID_COL = 1
 DEBT_TYPE_COL = 2
@@ -1561,7 +1562,7 @@ DEBT_SETTLED_AT_COL = 10
 
 
 def get_debts_with_row_index(active_only: bool = True) -> list[dict]:
-    """Retrieve data needed for debts with row index."""
+    """Get data needed for debts with row index."""
     records = get_all_records(SHEET_DEBTS)
     result = []
 
@@ -1578,7 +1579,7 @@ def get_debts_with_row_index(active_only: bool = True) -> list[dict]:
 
 
 def get_debt_by_id_any_status(debt_id: str) -> tuple[int | None, dict | None]:
-    """Retrieve data needed for debt by id any status."""
+    """Get data needed for debt by id any status."""
     target = str(debt_id or "").strip()
     if not target:
         return None, None
@@ -1607,7 +1608,7 @@ def build_active_debt_display_map() -> dict[str, dict]:
 
 
 def resolve_debt_ref(ref: str, last_debt_map: dict | None = None) -> tuple[int | None, dict | None, str | None]:
-    """Resolve the final value for debt ref from possible inputs."""
+    """Resolve a user input or reference for debt ref."""
     clean = str(ref or "").strip()
     if not clean:
         return None, None, "Masukkan nomor debt atau debt ID."
@@ -1626,10 +1627,10 @@ def resolve_debt_ref(ref: str, last_debt_map: dict | None = None) -> tuple[int |
             return row, debt, None if debt else "Debt tidak ditemukan."
 
     if clean.isdigit():
-        # Debt command note: keep payable and receivable actions explicit and auditable.
-        # Debt command note: keep payable and receivable actions explicit and auditable.
-        # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
-        # Debt command note: keep payable and receivable actions explicit and auditable.
+        # Debt flow section
+        # Debt flow section
+        # Debt flow section
+        # Debt flow section
         return None, None, "Nomor debt tidak valid. Jalankan /hutang Nama dulu, lalu pakai nomor rincian yang muncul."
 
     row, debt = get_debt_by_id_any_status(clean)
@@ -1650,7 +1651,7 @@ def expected_initial_cashflow_category(debt: dict) -> str:
 
 
 def find_debt_initial_cashflow_candidates(debt: dict) -> list[dict]:
-    """Helper for find debt initial cashflow candidates in the finance service layer."""
+    """Find a record for debt initial cashflow candidates."""
     from app.services.transaction_service import (
         get_transactions_with_row_index,
         is_debt_cashflow_transaction,
@@ -1673,7 +1674,7 @@ def find_debt_initial_cashflow_candidates(debt: dict) -> list[dict]:
         txn_notes = str(txn.get("catatan", "") or "")
         txn_raw = str(txn.get("raw_input", "") or "")
 
-        # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
+        # Debt flow section
         if debt_id and (debt_id in txn_notes or debt_id in txn_raw):
             candidates.append(txn)
             continue
@@ -1693,7 +1694,7 @@ def find_debt_initial_cashflow_candidates(debt: dict) -> list[dict]:
 
 
 def is_debt_without_initial_cashflow(debt: dict) -> bool:
-    """Check a boolean condition for is debt without initial cashflow."""
+    """Check whether a condition is true for debt without initial cashflow."""
     debt_type = str(debt.get("type", "")).strip()
     description = str(debt.get("description", "") or "").strip().lower()
 
@@ -1740,7 +1741,7 @@ def build_debts_index(records: list[dict] | None = None, active_only: bool = Fal
 
 
 def get_debts_by_source_transaction_id(transaction_id: str, active_only: bool = True, debt_index: dict | None = None) -> list[dict]:
-    """Retrieve data needed for debts by source transaction id."""
+    """Get data needed for debts by source transaction id."""
     target = str(transaction_id or "").strip()
     if not target:
         return []
@@ -1756,7 +1757,7 @@ def get_debts_by_source_transaction_id(transaction_id: str, active_only: bool = 
 
 
 def parse_debt_ids_from_transaction_record(txn: dict) -> list[str]:
-    """Parse input into structured data for the finance service layer."""
+    """Parse input into structured data for debt ids from transaction record."""
     raw = str((txn or {}).get("hutang_id", "") or "").strip()
     if not raw:
         return []
@@ -1772,7 +1773,7 @@ def parse_debt_ids_from_transaction_record(txn: dict) -> list[str]:
 
 
 def get_debts_linked_to_transaction_record(txn: dict, active_only: bool = False, debt_index: dict | None = None) -> list[dict]:
-    """Retrieve data needed for debts linked to transaction record."""
+    """Get data needed for debts linked to transaction record."""
     txn_id = str((txn or {}).get("id", "") or "").strip()
     if debt_index is None:
         debt_index = build_debts_index(active_only=active_only)
@@ -1803,14 +1804,14 @@ def get_debts_linked_to_transaction_record(txn: dict, active_only: bool = False,
 
 
 def get_debt_paid_amount_from_state(debt: dict) -> float:
-    """Retrieve data needed for debt paid amount from state."""
+    """Get data needed for debt paid amount from state."""
     original = parse_sheet_number((debt or {}).get("original_amount", 0))
     remaining = parse_sheet_number((debt or {}).get("remaining_amount", 0))
     return max(0.0, original - remaining)
 
 
 def find_overpaid_adjustment_for_debt(debt_id: str, debt_index: dict | None = None) -> tuple[int | None, dict | None]:
-    """Helper for find overpaid adjustment for debt in the finance service layer."""
+    """Find a record for overpaid adjustment for debt."""
     marker = f"overpaid:{str(debt_id or '').strip()}"
     if marker == "overpaid:":
         return None, None
@@ -1906,12 +1907,12 @@ def sync_debt_charges_from_transaction_edit(old_txn: dict, new_txn: dict) -> dic
     if not linked_debts:
         return {"success": True, "message": "Tidak ada debt charge terkait.", "updated": [], "overpaid": []}
 
-    # Debt service note for keeping payable and receivable records auditable.
-    # Debt payment note: settlement and void actions must stay explicit for auditability.
+    # Debt flow section
+    # Debt flow section
     old_category = str(old_txn.get("category", "") or "").strip()
     new_category = str(new_txn.get("category", "") or "").strip()
-    # Debt payment note: settlement and void actions must stay explicit for auditability.
-    # Debt command note: keep payable and receivable actions explicit and auditable.
+    # Debt flow section
+    # Debt flow section
     payment_categories = {"Pembayaran Piutang", "Bayar Utang"}
     if old_category in payment_categories or new_category in payment_categories:
         return {
@@ -2130,16 +2131,16 @@ def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
     candidates = find_debt_initial_cashflow_candidates(debt)
 
     if len(candidates) == 0:
-        # Debt command note: keep payable and receivable actions explicit and auditable.
+        # Debt flow section
         # Split bill parsing note: separate the paid transaction from each person share.
-        # Debt command note: keep payable and receivable actions explicit and auditable.
-        # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
-        # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
-        # 
+        # Debt flow section
+        # Debt flow section
+        # Debt flow section
+        #
         # Clean leftover split-bill phrases so subject and description stay readable.
         # Legacy compatibility note for older records or older in-memory state.
-        # AI routing note: keep transaction/debt inputs away from insight routing when they contain amounts.
-        # Debt command note: keep payable and receivable actions explicit and auditable.
+        # Debt flow section
+        # Debt flow section
         if is_debt_without_initial_cashflow(debt):
             return {
                 "success": True,
@@ -2201,7 +2202,7 @@ def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
 
 
 def resolve_person_debt_targets(person_name: str, detail_ref: str | None = None) -> dict:
-    """Resolve the final value for person debt targets from possible inputs."""
+    """Resolve a user input or reference for person debt targets."""
     clean_person = normalize_person_name(person_name)
     clean_ref = str(detail_ref or "").strip()
 
@@ -2422,7 +2423,7 @@ def void_debts_by_person(person_name: str, detail_ref: str | None = None) -> dic
     return result
 
 def update_debt(debt_ref: str, updates: dict, last_debt_map: dict | None = None) -> dict:
-    """Update debt while keeping related data consistent."""
+    """Update existing data for debt."""
     row_index, debt, error = resolve_debt_ref(debt_ref, last_debt_map)
 
     if error:

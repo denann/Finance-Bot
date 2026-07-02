@@ -1,25 +1,33 @@
-"""Inline keyboard helpers for account selection, confirmation, edit, and cancel flows."""
+"""Telegram inline keyboard helpers for account choices, confirmations, and cancellations."""
+
 
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-# Account list
 ACCOUNTS = ["Cash", "BRI", "BSI", "DANA", "GoPay"]
 
-# Implementation note for this project-specific finance flow.
-# Account balance note: avoid partial balance updates when validation fails.
+# Internal callback value for historical transactions that should not mutate saldo.
 SKIP_ACCOUNT_CALLBACK_VALUE = "__skip_account__"
 SKIP_ACCOUNT_NAME = "Sudah Berlalu"
 SKIP_ACCOUNT_LABEL = "🕘 Sudah berlalu / jangan ubah saldo"
 
 
 def account_keyboard(prefix: str = "acc", include_skip: bool = True) -> InlineKeyboardMarkup:
-    """Helper for account keyboard in the Telegram bot flow."""
+    """Build the rekening picker keyboard.
+
+    Args:
+        prefix: Callback prefix used to route the selected account. Examples are
+            `acc`, `mixed_acc`, and `debt_acc`.
+        include_skip: Whether to include the historical transaction option.
+
+    Returns:
+        Inline keyboard containing account choices and, when allowed, the
+        `Sudah berlalu` option.
+    """
     buttons = [
         InlineKeyboardButton(acc, callback_data=f"{prefix}:{acc}")
         for acc in ACCOUNTS
     ]
-    # Susun 3 column
     keyboard = [buttons[i:i+3] for i in range(0, len(buttons), 3)]
 
     if include_skip and prefix != "acc_to":
@@ -34,7 +42,14 @@ def account_keyboard(prefix: str = "acc", include_skip: bool = True) -> InlineKe
 
 
 def confirm_keyboard(txn_id: str) -> InlineKeyboardMarkup:
-    """Helper for confirm keyboard in the Telegram bot flow."""
+    """Build a simple save/cancel confirmation keyboard.
+
+    Args:
+        txn_id: Callback target used after `confirm:` or `cancel:`.
+
+    Returns:
+        Inline keyboard with Simpan and Batal buttons.
+    """
     keyboard = [
         [
             InlineKeyboardButton("✅ Simpan", callback_data=f"confirm:{txn_id}"),
@@ -45,6 +60,10 @@ def confirm_keyboard(txn_id: str) -> InlineKeyboardMarkup:
 
 
 def cancel_keyboard() -> InlineKeyboardMarkup:
-    """Helper for cancel keyboard in the Telegram bot flow."""
+    """Build a one-button cancel keyboard.
+
+    Returns:
+        Inline keyboard that cancels the current pending session.
+    """
     keyboard = [[InlineKeyboardButton("❌ Batal", callback_data="cancel")]]
     return InlineKeyboardMarkup(keyboard)

@@ -1,4 +1,4 @@
-"""Telegram command handlers for onboarding, reports, account balances, budgets, debt, pending expenses, assets, exports, and AI insights."""
+"""Module for the application."""
 
 # Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
@@ -500,7 +500,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def add_session_chat_history(context: ContextTypes.DEFAULT_TYPE, role: str, text: str, limit: int = 10):
-    """Helper for add session chat history in the Telegram bot flow."""
+    """Helper for add session chat history in the application."""
     if context is None:
         return
 
@@ -525,7 +525,7 @@ def get_session_chat_history(context: ContextTypes.DEFAULT_TYPE, limit: int = 8)
 
 
 def attach_session_history(context: ContextTypes.DEFAULT_TYPE, context_data: dict) -> dict:
-    """Helper for attach session history in the Telegram bot flow."""
+    """Helper for attach session history in the application."""
     data = dict(context_data or {})
     history = get_session_chat_history(context)
     if history:
@@ -685,7 +685,7 @@ async def coach_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_natural_finance_question(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
-    """Helper for handle natural finance question in the Telegram bot flow."""
+    """Helper for handle natural finance question in the application."""
     if not should_handle_finance_question(user_text):
         return False
 
@@ -1816,7 +1816,7 @@ async def set_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 def short_debt_id(debt_id: str) -> str:
-    """Helper for short debt id in the Telegram bot flow."""
+    """Helper for short debt id in the application."""
     debt_id = str(debt_id or "")
     if len(debt_id) <= 18:
         return debt_id
@@ -2190,7 +2190,7 @@ def format_debt_created_date_for_display(debt: dict) -> str:
 
 
 def debt_detail_sort_key_for_display(debt: dict) -> tuple[str, str, int]:
-    """Helper for debt detail sort key for display in the Telegram bot flow."""
+    """Helper for debt detail sort key for display in the application."""
     created_date = format_debt_created_date_for_display(debt)
     debt_id = str((debt or {}).get("id", "") or "").strip()
     try:
@@ -2521,7 +2521,7 @@ def build_selected_settle_catatan(payload: dict, result: dict) -> str:
 
 
 def prepare_selected_debt_settle_payload(context: ContextTypes.DEFAULT_TYPE, parsed: dict) -> dict:
-    """Helper for prepare selected debt settle payload in the Telegram bot flow."""
+    """Helper for prepare selected debt settle payload in the application."""
     resolved = resolve_selected_debts_from_last_detail(context, parsed.get("person_name", ""), parsed.get("numbers") or [])
     if not resolved.get("success"):
         return {"success": False, "message": resolved.get("message", "Gagal resolve debt terpilih.")}
@@ -2548,7 +2548,7 @@ def prepare_selected_debt_settle_payload(context: ContextTypes.DEFAULT_TYPE, par
 
 
 def selected_debt_settle_overpay_keyboard() -> InlineKeyboardMarkup:
-    """Helper for selected debt settle overpay keyboard in the Telegram bot flow."""
+    """Helper for selected debt settle overpay keyboard in the application."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Anggap lunas / bonus", callback_data="debt_settle_overpay:bonus")],
         [InlineKeyboardButton("🔴 Catat sebagai hutang lawan arah", callback_data="debt_settle_overpay:opposite_debt")],
@@ -2607,7 +2607,7 @@ async def debt_settle_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def handle_natural_debt_settle(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> bool:
-    """Helper for handle natural debt settle in the Telegram bot flow."""
+    """Helper for handle natural debt settle in the application."""
     parsed = parse_natural_debt_settle_text(text)
     if not parsed:
         return False
@@ -2685,7 +2685,7 @@ def build_selected_debt_settle_transaction(payload: dict, result: dict) -> dict:
 # Debt flow section
 
 def _collect_known_debt_person_names() -> list[str]:
-    """Helper for collect known debt person names in the Telegram bot flow."""
+    """Helper for collect known debt person names in the application."""
     names = []
     try:
         summary = get_debt_person_summary() or {}
@@ -2700,7 +2700,7 @@ def _collect_known_debt_person_names() -> list[str]:
 
 
 def _strip_trailing_known_names_for_summary(text: str, known_names: list[str]) -> str:
-    """Helper for strip trailing known names for summary in the Telegram bot flow."""
+    """Helper for strip trailing known names for summary in the application."""
     clean = str(text or "").strip(" .,-")
     if not clean or not known_names:
         return clean
@@ -2770,7 +2770,7 @@ def _format_shareable_date_heading(date_value) -> str:
 
 
 def _group_debts_for_shareable_summary(debts: list[dict], person: str, known_names: list[str]) -> list[str]:
-    """Helper for group debts for shareable summary in the Telegram bot flow."""
+    """Helper for group debts for shareable summary in the application."""
     if not debts:
         return ["Tidak ada rincian aktif."]
 

@@ -1,4 +1,5 @@
-"""Application entry point. This module selects polling or webhook runtime, initializes the Telegram app, scheduler, and Google Sheets schema."""
+"""Application entry point. This module starts the bot in polling mode or webhook mode and prepares the scheduler and Google Sheets schema."""
+
 
 from __future__ import annotations
 
@@ -24,8 +25,8 @@ from app.scheduler.jobs import create_scheduler
 from app.sheets.client import get_spreadsheet, ensure_spreadsheet_schema
 
 
-# Implementation note for this project-specific finance flow.
-# Implementation note for this project-specific finance flow.
+# Implementation section
+# Implementation section
 app = FastAPI(title="Finance Bot")
 app.include_router(webhook_router)
 
@@ -37,7 +38,7 @@ _webhook_telegram_started = False
 
 
 def validate_runtime_config(mode: str = BOT_MODE):
-    """Validate required environment variables for the selected runtime mode."""
+    """Validate data before it is used by runtime config."""
     missing = []
 
     base_required = {
@@ -68,7 +69,7 @@ def validate_runtime_config(mode: str = BOT_MODE):
 
 
 def ensure_schema_on_startup():
-    """Prepare Google Sheets tabs and headers during application startup."""
+    """Ensure that setup is ready for schema on startup."""
     try:
         schema_results = ensure_spreadsheet_schema()
         changed = [
@@ -88,22 +89,22 @@ def ensure_schema_on_startup():
 
 
 def start_scheduler_once():
-    """Start the scheduler only if it is not already running."""
+    """Helper for start scheduler once in the application."""
     if not scheduler.running:
         scheduler.start()
         print(f"✅ Scheduler started. Jobs: {[job.name for job in scheduler.get_jobs()]}")
 
 
 def shutdown_scheduler_once():
-    """Stop the scheduler safely if it is running."""
+    """Helper for shutdown scheduler once in the application."""
     if scheduler.running:
         scheduler.shutdown()
 
 
-# ── FastAPI startup & shutdown, hanya aktif saat webhook mode dijalankan ──────
+# ── FastAPI startup & shutdown, only active when webhook mode is used ──────
 @app.on_event("startup")
 async def startup():
-    """FastAPI startup hook used when webhook mode is active."""
+    """Helper for startup in the application."""
     global _webhook_telegram_started
 
     if BOT_MODE != "webhook":
@@ -128,7 +129,7 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
-    """FastAPI shutdown hook that stops the Telegram app and scheduler safely."""
+    """Helper for shutdown in the application."""
     global _webhook_telegram_started
 
     shutdown_scheduler_once()
@@ -141,13 +142,13 @@ async def shutdown():
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health_check():
-    """Return a simple runtime health status for deployment checks."""
+    """Helper for health check in the application."""
     return {"status": "ok", "mode": BOT_MODE}
 
 
 @app.get("/test-sheets")
 async def test_sheets():
-    """Run a quick Google Sheets connectivity and schema check."""
+    """Helper for test sheets in the application."""
     try:
         schema_results = ensure_spreadsheet_schema()
         spreadsheet = get_spreadsheet()
@@ -168,11 +169,11 @@ async def test_sheets():
 
 
 # ── Polling mode ──────────────────────────────────────────────────────────────
-# Implementation note for this project-specific finance flow.
+# Implementation section
 # Date parsing note: keep explicit and relative Indonesian date formats predictable.
 
 async def run_polling_mode():
-    """Run the bot using Telegram polling for local usage and simple 24/7 deployment."""
+    """Run the process for polling mode."""
     validate_runtime_config("polling")
     ensure_schema_on_startup()
 
@@ -197,11 +198,11 @@ async def run_polling_mode():
         await telegram_app.shutdown()
 
 
-# Implementation note for this project-specific finance flow.
-# Implementation note for this project-specific finance flow.
+# Implementation section
+# Implementation section
 
 def run_webhook_mode():
-    """Run the FastAPI server for advanced webhook deployment."""
+    """Run the process for webhook mode."""
     validate_runtime_config("webhook")
     uvicorn.run(
         "main:app",

@@ -1,13 +1,13 @@
 # app/sheets
 
-This folder contains the Google Sheets data layer.
+This folder contains the Google Sheets data access layer.
 
-The goal is to keep low-level spreadsheet access in one place. Services should call this layer instead of calling gspread directly.
+The bot uses Google Sheets as a transparent operational data store. This layer handles worksheet access, schema checks, default setup, retry, and best-effort rollback.
 
-## File
+## Main file
 
-| File | Purpose |
-|---|---|
-| `client.py` | Connects to Google Sheets, validates schema, reads/writes data, retries requests, and attempts rollback |
+- `client.py`: Google Sheets client, schema bootstrap, read/write helpers, and atomic write wrapper.
 
-Google Sheets is practical and transparent, but it is not a transactional database. Because of that, this project uses best-effort rollback for multi-step write operations.
+## Important note
+
+Google Sheets is practical for a personal finance bot, but it is not a full transactional database. The rollback logic is best-effort and designed to reduce inconsistent writes.
