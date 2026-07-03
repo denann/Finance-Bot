@@ -26,7 +26,7 @@ The core idea is simple: users can write everyday finance inputs such as `beli k
 |---|---|---|
 | Transaction input | Single input | Records one expense, income, or transfer from a natural chat message. |
 | Transaction input | Multi input | Accepts multiple transactions in one message and previews them before saving. |
-| Transaction input | Image input | Reads receipt or transaction images using Gemini Vision, then sends the result to preview. |
+| Transaction input | Image input | Reads receipt or transaction images using Gemini Vision. Itemized receipts show OCR details first, convert selected rows into a detailed batch preview, ask for the account, then show a compact final summary before saving. |
 | Transaction input | Date and account parsing | Reads dates, amounts, accounts, categories, and descriptions from Indonesian-style input. |
 | Debt | Payable and receivable | Tracks personal debt and receivables, including payment and settlement flows. |
 | Debt | Talangin / ditalangin | Handles cases where the user pays for someone else or someone else pays first for the user. |
@@ -64,7 +64,7 @@ First, the transaction flow: Telegram input is parsed by local rules or Gemini f
 
 Second, the AI insight flow: commands such as `/ask`, `/audit`, `/coach`, and `/insight` build a structured finance context from Google Sheets before Gemini generates the response.
 
-The LLM is not the final decision maker. Business logic stays in Python, while AI helps interpret input, read images, and explain data.
+The LLM is not the final decision maker. Business logic stays in Python, while AI helps interpret input, read images, extract receipt details, and explain data.
 
 ## Installation
 

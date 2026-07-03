@@ -21,7 +21,9 @@ from app.bot.handler_parts.transaction_flow import (
     build_debt_account_prompt,
     build_debt_initial_preview,
     build_mixed_account_prompt,
+    build_mixed_detail_preview,
     build_mixed_edit_choose_prompt,
+    build_mixed_final_summary,
     build_mixed_preview,
     build_mixed_short_summary,
     build_mixed_split_bill_queue_prompt,
@@ -29,7 +31,13 @@ from app.bot.handler_parts.transaction_flow import (
     build_preview_edit_help,
     build_preview_edit_keyboard,
     build_preview_field_help,
+    build_preview_field_value_prompt,
+    build_receipt_account_prompt,
+    build_receipt_all_mixed_items,
+    build_receipt_final_preview,
+    build_receipt_part_selection_prompt,
     build_single_account_prompt,
+    parse_preview_direct_field_update,
     build_single_short_summary,
     build_split_bill_prompt_from_parsed,
     create_split_bill_debt,
@@ -491,6 +499,57 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data or ""
     await show_callback_loading(query)
 
+    if data == "receipt:all":
+        pending_receipt = context.user_data.get("pending_receipt") or {}
+        receipt = pending_receipt.get("receipt") or {}
+        items = pending_receipt.get("items") or []
+
+        if not items:
+            await safe_edit_message(query, "❌ Sesi struk expired. Coba kirim gambar ulang.")
+            return
+
+        mixed_items, receipt_context = build_receipt_all_mixed_items(receipt, items)
+        context.user_data["pending_mixed"] = mixed_items
+        context.user_data["pending_receipt_context"] = receipt_context
+        context.user_data.pop("pending_parsed", None)
+        context.user_data.pop("pending_raw", None)
+        context.user_data.pop("pending_batch", None)
+        context.user_data.pop("pending_debt", None)
+        context.user_data.pop("pending_debt_batch", None)
+        context.user_data.pop("pending_receipt_part_selection", None)
+        context.user_data.pop("pending_receipt_extra_divisor", None)
+        context.user_data.pop("mixed_review_preview_sent", None)
+
+        preview = build_mixed_detail_preview(mixed_items, receipt_context)
+        await safe_edit_message(
+            query,
+            f"{preview}\n\n{preview_action_question(False)}",
+            parse_mode="Markdown",
+            reply_markup=preview_action_keyboard("mixed", False),
+        )
+        return
+
+    if data == "receipt:part":
+        pending_receipt = context.user_data.get("pending_receipt") or {}
+        receipt = pending_receipt.get("receipt") or {}
+        items = pending_receipt.get("items") or []
+
+        if not items:
+            await safe_edit_message(query, "❌ Sesi struk expired. Coba kirim gambar ulang.")
+            return
+
+        context.user_data["pending_receipt_part_selection"] = {
+            "receipt": receipt,
+            "items": items,
+        }
+        context.user_data.pop("pending_receipt_extra_divisor", None)
+        await safe_edit_message(
+            query,
+            build_receipt_part_selection_prompt(receipt, items),
+            parse_mode="Markdown",
+        )
+        return
+
     if data.startswith("clarify_parse:"):
         choice = data.split(":", 1)[1].strip()
         pending = context.user_data.get("pending_parse_clarification") or {}
@@ -673,13 +732,22 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if action == "field":
             field = parts[3] if len(parts) > 3 else ""
-            if not context.user_data.get("pending_preview_edit"):
-                context.user_data["pending_preview_edit"] = {"scope": scope, "step": "edit_item"}
+            state = context.user_data.get("pending_preview_edit") or {"scope": scope, "step": "edit_item"}
+            state["scope"] = scope
+            if scope == "mixed" and "index" not in state:
+                mixed_items = context.user_data.get("pending_mixed") or []
+                context.user_data["pending_preview_edit"] = {"scope": "mixed", "step": "choose_item"}
+                await safe_edit_message(query, build_mixed_edit_choose_prompt(mixed_items), parse_mode="Markdown")
+                return
+
+            state["step"] = "direct_field"
+            state["field"] = field
+            context.user_data["pending_preview_edit"] = state
             await safe_edit_message(
                 query,
-                build_preview_field_help(scope, field),
+                build_preview_field_value_prompt(scope, field),
                 parse_mode="Markdown",
-                reply_markup=build_preview_edit_keyboard(scope),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{scope}")]]),
             )
             return
 
@@ -1131,17 +1199,18 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        short_summary = build_mixed_short_summary(prepared_items)
+        receipt_context = context.user_data.get("pending_receipt_context")
+        final_summary = build_mixed_final_summary(prepared_items, receipt_context, account_label=account_label)
 
         if failed_items:
-            short_summary += "\n\n⚠️ *Catatan item yang tidak masuk:*"
+            final_summary += "\n\n⚠️ *Catatan item yang tidak masuk:*"
             for item in failed_items[:5]:
-                short_summary += f"\n• `{md_safe(item['raw'])}` — {md_safe(item['message'])}"
+                final_summary += f"\n• `{md_safe(item['raw'])}` — {md_safe(item['message'])}"
             if len(failed_items) > 5:
-                short_summary += f"\n• ...dan {len(failed_items) - 5} item lain."
+                final_summary += f"\n• ...dan {len(failed_items) - 5} item lain."
 
         await safe_edit_message(query, 
-            f"✅ Pilihan rekening: *{md_safe(account_label)}*.\n\n{short_summary}\n\n{preview_action_question(True)}",
+            f"✅ Pilihan rekening: *{md_safe(account_label)}*.\n\n{final_summary}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
             reply_markup=preview_action_keyboard("mixed", True),
         )
@@ -1272,41 +1341,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-            if context.user_data.get("mixed_review_preview_sent"):
-                if mixed_needs_account(mixed_items):
-                    await safe_edit_message(
-                        query,
-                        f"✅ Split bill sudah diproses.\n\n{build_mixed_account_prompt(mixed_items)}",
-                        parse_mode="Markdown",
-                        reply_markup=account_keyboard("mixed_acc"),
-                    )
-                    return
-
-                short_summary = build_mixed_short_summary(mixed_items)
-                await safe_edit_message(query, 
-                    f"✅ Split bill sudah diproses.\n\n{short_summary}\n\n{preview_action_question(True)}",
-                    parse_mode="Markdown",
-                    reply_markup=preview_action_keyboard("mixed", True),
-                )
-                return
-
-            if mixed_needs_account(mixed_items):
-                context.user_data["mixed_review_preview_sent"] = True
-                await safe_edit_message(
-                    query,
-                    build_mixed_account_prompt(mixed_items),
-                    parse_mode="Markdown",
-                    reply_markup=account_keyboard("mixed_acc"),
-                )
-                return
-
-            preview = build_mixed_preview(mixed_items)
+            preview = build_mixed_detail_preview(mixed_items)
             context.user_data["mixed_review_preview_sent"] = True
 
             await safe_edit_message(query, 
-                f"{preview}\n\n{preview_action_question(True)}",
+                f"✅ Split bill sudah diproses.\n\n{preview}\n\n{preview_action_question(False)}",
                 parse_mode="Markdown",
-                reply_markup=preview_action_keyboard("mixed", True),
+                reply_markup=preview_action_keyboard("mixed", False),
             )
             return
 
@@ -1352,16 +1393,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if parsed.get("split_bill"):
             apply_split_bill_decision_to_parsed(parsed, status)
         context.user_data["pending_parsed"] = parsed
+        preview = build_preview(parsed)
+
         if needs_account(parsed):
             await safe_edit_message(
                 query,
-                build_single_account_prompt(parsed),
+                f"{preview}\n\n{preview_action_question(False)}",
                 parse_mode="Markdown",
-                reply_markup=account_keyboard("acc"),
+                reply_markup=preview_action_keyboard("single", False),
             )
             return
-
-        preview = build_preview(parsed)
 
         await safe_edit_message(query, 
             f"{preview}\n\n{preview_action_question(True)}",
@@ -1372,7 +1413,56 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("confirm:"):
         confirm_target = data.split(":")[1] if ":" in data else ""
+        if confirm_target == "set_balance":
+            pending_balance = context.user_data.get("pending_set_balance") or {}
 
+            if not pending_balance:
+                await safe_edit_message(
+                    query,
+                    "❌ Sesi set saldo expired. Jalankan `/set_saldo` lagi.",
+                    parse_mode="Markdown",
+                )
+                return
+
+            account_name = str(pending_balance.get("account_name") or "").strip()
+            new_balance = float(pending_balance.get("new_balance", 0) or 0)
+            old_balance = float(pending_balance.get("current_balance", 0) or 0)
+            delta = new_balance - old_balance
+            sign = "+" if delta >= 0 else "-"
+
+            try:
+                success = update_account_balance(account_name, new_balance)
+            except Exception as e:
+                await safe_edit_message(
+                    query,
+                    f"❌ *Gagal set saldo.*\n{md_safe(str(e))}",
+                    parse_mode="Markdown",
+                )
+                return
+
+            if not success:
+                await safe_edit_message(
+                    query,
+                    f"❌ Rekening `{md_code_text(account_name)}` tidak ditemukan di sheet `accounts`.",
+                    parse_mode="Markdown",
+                )
+                context.user_data.pop("pending_set_balance", None)
+                return
+
+            context.user_data.pop("pending_set_balance", None)
+
+            await safe_edit_message(
+                query,
+                "✅ *Saldo rekening berhasil diupdate!*\n\n"
+                f"🏦 Rekening: *{md_safe(account_name)}*\n"
+                f"💰 Saldo lama: *{format_rupiah(old_balance)}*\n"
+                f"🎯 Saldo baru: *{format_rupiah(new_balance)}*\n"
+                f"🔁 Selisih: *{sign}{format_rupiah(abs(delta))}*\n\n"
+                "Catatan: ini hanya mengubah saldo di sheet `accounts`, tidak membuat row transaksi baru.",
+                parse_mode="Markdown",
+            )
+            return
+    
         if confirm_target == "asset":
             pending_asset = context.user_data.get("pending_asset_confirm")
 
@@ -2604,6 +2694,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_debt_batch", None)
             context.user_data.pop("pending_parsed", None)
             context.user_data.pop("pending_raw", None)
+            context.user_data.pop("pending_receipt", None)
+            context.user_data.pop("pending_receipt_context", None)
+            context.user_data.pop("pending_receipt_part_selection", None)
+            context.user_data.pop("pending_receipt_extra_divisor", None)
             return
         
         if confirm_target == "batch":
@@ -2827,6 +2921,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_preview_edit", None)
         context.user_data.pop("pending_missing_amount", None)
         context.user_data.pop("pending_parse_clarification", None)
+        context.user_data.pop("pending_receipt", None)
+        context.user_data.pop("pending_receipt_context", None)
+        context.user_data.pop("pending_receipt_part_selection", None)
+        context.user_data.pop("pending_receipt_extra_divisor", None)
         context.user_data.pop("mixed_review_preview_sent", None)
 
         await safe_edit_message(query, "❌ Input dibatalkan.")

@@ -10,6 +10,6 @@ The goal is to convert messy daily finance input into structured data that the b
 - `normalizer.py`: amount, account, and text normalization.
 - `parse_safety.py`: risk routing for warning preview, Gemini draft preview, or clarification.
 - `gemini_parser.py`: Gemini fallback parser.
-- `gemini_image_parser.py`: receipt and image parsing.
+- `gemini_image_parser.py`: receipt and image parsing, including item quantity, unit price, receipt metadata, and extra charges such as service, PPN, and discount.
 - `gemini_intent_router.py`: AI-assisted intent routing for read-only finance questions.
 - `gemini_finance_insight.py`: prompt builder and generator for insight, audit, coach, and Q&A.

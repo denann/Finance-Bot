@@ -29,6 +29,8 @@ from app.bot.handler_parts.transaction_flow import (
     build_debt_initial_preview,
     build_debt_only_confirm_preview,
     build_mixed_account_prompt,
+    build_mixed_detail_preview,
+    build_mixed_final_summary,
     build_single_account_prompt,
     build_missing_amount_prompt,
     build_mixed_preview,
@@ -37,6 +39,17 @@ from app.bot.handler_parts.transaction_flow import (
     build_pending_expense_confirm_preview,
     build_mixed_split_bill_queue_prompt,
     build_preview,
+    build_receipt_account_prompt,
+    build_receipt_final_preview,
+    build_receipt_partial_mixed_items,
+    build_receipt_part_selection_prompt,
+    build_receipt_review_text,
+    build_receipt_selected_breakdown,
+    parse_preview_direct_field_update,
+    is_receipt_image_result,
+    parse_receipt_divisor,
+    parse_receipt_part_selection,
+    receipt_extra_charge_net_amount,
     build_split_bill_prompt_from_parsed,
     debt_uses_cashflow,
     enrich_ditalangin_split_bill_if_any,
@@ -819,6 +832,90 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
 
 
 
+# ── Receipt Selection Follow-up Handler ───────────────────────────────────────
+
+async def _continue_receipt_batch_after_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, mixed_items: list[dict], receipt_context: dict) -> None:
+    """Continue a receipt-derived batch after item selection is complete."""
+    context.user_data["pending_mixed"] = mixed_items
+    context.user_data["pending_receipt_context"] = receipt_context
+    context.user_data.pop("pending_parsed", None)
+    context.user_data.pop("pending_raw", None)
+    context.user_data.pop("pending_batch", None)
+    context.user_data.pop("pending_debt", None)
+    context.user_data.pop("pending_debt_batch", None)
+    context.user_data.pop("pending_receipt_part_selection", None)
+    context.user_data.pop("pending_receipt_extra_divisor", None)
+    context.user_data.pop("mixed_review_preview_sent", None)
+
+    preview = build_mixed_detail_preview(mixed_items, receipt_context)
+    await reply_update_safely(
+        update,
+        f"{preview}\n\n{preview_action_question(False)}",
+        parse_mode="Markdown",
+        reply_markup=preview_action_keyboard("mixed", False),
+    )
+
+
+async def handle_pending_receipt_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
+    """Handle text replies for the partial receipt flow.
+
+    Args:
+        update: Telegram update that contains the user's selection or divisor.
+        context: Telegram context where pending receipt state is stored.
+        user_text: User reply for selected receipt items or extra-charge divisor.
+
+    Returns:
+        True when this function consumes the message, otherwise False.
+    """
+    divisor_state = context.user_data.get("pending_receipt_extra_divisor")
+    if divisor_state:
+        divisor = parse_receipt_divisor(user_text)
+        if divisor <= 0:
+            await update.message.reply_text(
+                "❌ Jumlah pembaginya belum kebaca. Contoh: `dibagi 5`.",
+                parse_mode="Markdown",
+            )
+            return True
+
+        receipt = divisor_state.get("receipt") or {}
+        selection_result = divisor_state.get("selection_result") or {}
+        mixed_items, receipt_context = build_receipt_partial_mixed_items(receipt, selection_result, divisor)
+        await _continue_receipt_batch_after_selection(update, context, mixed_items, receipt_context)
+        return True
+
+    selection_state = context.user_data.get("pending_receipt_part_selection")
+    if not selection_state:
+        return False
+
+    receipt = selection_state.get("receipt") or {}
+    items = selection_state.get("items") or []
+    selection_result = parse_receipt_part_selection(user_text, items)
+
+    if not selection_result.get("success"):
+        await update.message.reply_text(
+            f"❌ {selection_result.get('message')}\n\n{build_receipt_part_selection_prompt(receipt, items)}",
+            parse_mode="Markdown",
+        )
+        return True
+
+    if receipt_extra_charge_net_amount(receipt) > 0:
+        context.user_data["pending_receipt_extra_divisor"] = {
+            "receipt": receipt,
+            "selection_result": selection_result,
+        }
+        context.user_data.pop("pending_receipt_part_selection", None)
+        await reply_update_safely(
+            update,
+            build_receipt_selected_breakdown(receipt, selection_result),
+            parse_mode="Markdown",
+        )
+        return True
+
+    mixed_items, receipt_context = build_receipt_partial_mixed_items(receipt, selection_result, divisor=1)
+    await _continue_receipt_batch_after_selection(update, context, mixed_items, receipt_context)
+    return True
+
+
 # ── Image / Receipt Handler ──────────────────────────────────────────────────
 
 async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -894,8 +991,34 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     items = result.get("items", []) or []
+    receipt = result.get("receipt") or {}
 
-    # Image parsing note: receipt output still goes through preview before saving.
+    if is_receipt_image_result(result, items):
+        context.user_data["pending_receipt"] = {
+            "receipt": receipt,
+            "items": items,
+            "caption": caption or "[gambar]",
+        }
+        context.user_data.pop("pending_parsed", None)
+        context.user_data.pop("pending_raw", None)
+        context.user_data.pop("pending_batch", None)
+        context.user_data.pop("pending_debt", None)
+        context.user_data.pop("pending_debt_batch", None)
+        context.user_data.pop("pending_mixed", None)
+        context.user_data.pop("pending_receipt_context", None)
+        context.user_data.pop("pending_receipt_part_selection", None)
+        context.user_data.pop("pending_receipt_extra_divisor", None)
+        context.user_data.pop("mixed_review_preview_sent", None)
+
+        await edit_message_safely(
+            status_msg,
+            build_receipt_review_text(receipt, items),
+            parse_mode="Markdown",
+            reply_markup=receipt_ownership_keyboard(),
+        )
+        return
+
+    # Image parsing note: non-itemized images still use the regular single/mixed preview flow.
     if len(items) == 1:
         parsed = items[0]
         attach_split_bill_if_any(parsed, caption or "")
@@ -949,25 +1072,21 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("pending_debt_batch", None)
     context.user_data.pop("mixed_review_preview_sent", None)
 
-    preview = build_mixed_preview(mixed_items)
+    preview = build_mixed_detail_preview(mixed_items)
 
     if mixed_split_bill_needs_decision(mixed_items):
-        await status_msg.edit_text(
+        await edit_message_safely(
+            status_msg,
             build_mixed_split_bill_queue_prompt(mixed_items),
             parse_mode="Markdown",
             reply_markup=mixed_split_bill_keyboard(mixed_items),
         )
-    elif mixed_needs_account(mixed_items):
-        await status_msg.edit_text(
-            build_mixed_account_prompt(mixed_items),
-            parse_mode="Markdown",
-            reply_markup=account_keyboard("mixed_acc"),
-        )
     else:
-        await status_msg.edit_text(
-            f"{preview}\n\n{preview_action_question(True)}",
+        await edit_message_safely(
+            status_msg,
+            f"{preview}\n\n{preview_action_question(False)}",
             parse_mode="Markdown",
-            reply_markup=preview_action_keyboard("mixed", True),
+            reply_markup=preview_action_keyboard("mixed", False),
         )
 
 # Message handling section
@@ -1000,6 +1119,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Cek command dengan `/help`, atau tulis transaksi tanpa awalan `/`." ,
             parse_mode="Markdown",
         )
+        return
+
+    receipt_selection_handled = await handle_pending_receipt_selection(update, context, user_text)
+    if receipt_selection_handled:
         return
 
     missing_amount_handled = await handle_pending_missing_amount(update, context, user_text)
@@ -1205,7 +1328,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_debt_batch", None)
             context.user_data.pop("mixed_review_preview_sent", None)
 
-            preview = build_mixed_preview(mixed_items)
+            preview = build_mixed_detail_preview(mixed_items)
 
             if mixed_split_bill_needs_decision(mixed_items):
                 await update.message.reply_text(
@@ -1213,19 +1336,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown",
                     reply_markup=mixed_split_bill_keyboard(mixed_items),
                 )
-            elif mixed_needs_account(mixed_items):
-                await reply_update_safely(
-                    update,
-                    build_mixed_account_prompt(mixed_items),
-                    parse_mode="Markdown",
-                    reply_markup=account_keyboard("mixed_acc"),
-                )
             else:
                 await reply_update_safely(
                     update,
-                    f"{preview}\n\n{preview_action_question(True)}",
+                    f"{preview}\n\n{preview_action_question(False)}",
                     parse_mode="Markdown",
-                    reply_markup=preview_action_keyboard("mixed", True),
+                    reply_markup=preview_action_keyboard("mixed", False),
                 )
 
             return

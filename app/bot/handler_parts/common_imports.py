@@ -42,6 +42,7 @@ from app.bot.keyboards import (
     account_keyboard,
     confirm_keyboard,
     cancel_keyboard,
+    receipt_ownership_keyboard,
     SKIP_ACCOUNT_CALLBACK_VALUE,
     SKIP_ACCOUNT_NAME,
 )
@@ -666,6 +667,50 @@ async def reply_update_safely(update: Update, text: str, parse_mode: str | None 
         await reply_message_safely(update.message, text, parse_mode=parse_mode, reply_markup=reply_markup, **kwargs)
 
 
+async def edit_message_safely(message, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
+    """Edit a Telegram message and split long follow-up text when needed.
+
+    Args:
+        message: Telegram message object to edit first.
+        text: Text that should be shown to the user.
+        parse_mode: Optional Telegram parse mode.
+        reply_markup: Optional inline keyboard. For long text, the keyboard is
+            attached to the last chunk so the user sees it after reading the
+            details.
+
+    Notes:
+        Telegram has a hard message length limit. Receipt OCR output can become
+        long, so this helper edits the status message with the first chunk and
+        sends the remaining chunks as normal replies.
+    """
+    text = str(text or "").strip() or " "
+    chunks = split_long_message(text)
+
+    async def _edit(payload: str, mode: str | None, markup):
+        return await message.edit_text(
+            payload,
+            parse_mode=mode,
+            reply_markup=markup,
+            **kwargs,
+        )
+
+    first_markup = reply_markup if len(chunks) == 1 else None
+    try:
+        await _edit(chunks[0], parse_mode, first_markup)
+    except BadRequest:
+        try:
+            await _edit(chunks[0], None, first_markup)
+        except BadRequest:
+            await message.reply_text(chunks[0], reply_markup=first_markup)
+
+    for idx, chunk in enumerate(chunks[1:], start=1):
+        markup = reply_markup if idx == len(chunks) - 1 else None
+        try:
+            await message.reply_text(chunk, parse_mode=parse_mode, reply_markup=markup)
+        except BadRequest:
+            await message.reply_text(chunk, reply_markup=markup)
+
+
 async def safe_edit_message(query, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
     """Helper for safe edit message in the Telegram bot flow."""
     text = str(text or "").strip() or " "
@@ -686,8 +731,10 @@ async def safe_edit_message(query, text: str, parse_mode: str | None = None, rep
             **kwargs,
         )
 
+    first_markup = reply_markup if len(chunks) == 1 else None
+
     try:
-        await _edit(first, parse_mode, reply_markup)
+        await _edit(first, parse_mode, first_markup)
     except BadRequest as exc:
         err = str(exc).lower()
         if "message is not modified" in err:
@@ -695,20 +742,21 @@ async def safe_edit_message(query, text: str, parse_mode: str | None = None, rep
         elif "message_too_long" in err or "message is too long" in err or len(first) > 4096:
             safe_first = first[:3500].rstrip() + "\n\n📄 Pesan terlalu panjang, detail lanjutan dikirim di bawah."
             try:
-                await _edit(safe_first, None, reply_markup)
+                await _edit(safe_first, None, first_markup)
             except Exception:
-                await query.message.reply_text(safe_first, reply_markup=reply_markup)
+                await query.message.reply_text(safe_first, reply_markup=first_markup)
         else:
             try:
-                await _edit(first, None, reply_markup)
+                await _edit(first, None, first_markup)
             except BadRequest:
-                await query.message.reply_text(first, reply_markup=reply_markup)
+                await query.message.reply_text(first, reply_markup=first_markup)
 
-    for chunk in chunks[1:]:
+    for idx, chunk in enumerate(chunks[1:], start=1):
+        chunk_markup = reply_markup if idx == len(chunks) - 1 else None
         try:
-            await query.message.reply_text(chunk, parse_mode=parse_mode)
+            await query.message.reply_text(chunk, parse_mode=parse_mode, reply_markup=chunk_markup)
         except BadRequest:
-            await query.message.reply_text(chunk)
+            await query.message.reply_text(chunk, reply_markup=chunk_markup)
 
 
 async def show_callback_loading(query, text: str = "⏳ *Memproses pilihan...*"):

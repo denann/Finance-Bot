@@ -181,6 +181,7 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `async def` | `reply_long_markdown(update: Update, text: str)` | Send a Telegram reply for long markdown. |
 | `async def` | `reply_message_safely(message, text: str, parse_mode: str \| None=None, reply_markup=None, **kwargs)` | Send a Telegram reply for message safely. |
 | `async def` | `reply_update_safely(update: Update, text: str, parse_mode: str \| None=None, reply_markup=None, **kwargs)` | Send a Telegram reply for update safely. |
+| `async def` | `edit_message_safely(message, text: str, parse_mode: str \| None=None, reply_markup=None, **kwargs)` | Edit a status message and split long follow-up text when needed. |
 | `async def` | `safe_edit_message(query, text: str, parse_mode: str \| None=None, reply_markup=None, **kwargs)` | Helper for safe edit message in the application. |
 | `async def` | `show_callback_loading(query, text: str='⏳ *Memproses pilihan...*')` | Handle callback-related behavior in the application. |
 | `def` | `build_progress_bar(pct: float, length: int=10)` | Build the data structure or message text for progress bar. |
@@ -362,6 +363,7 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `async def` | `reply_long_markdown(update: Update, text: str)` | Send a Telegram reply for long markdown. |
 | `async def` | `reply_message_safely(message, text: str, parse_mode: str \| None=None, reply_markup=None, **kwargs)` | Send a Telegram reply for message safely. |
 | `async def` | `reply_update_safely(update: Update, text: str, parse_mode: str \| None=None, reply_markup=None, **kwargs)` | Send a Telegram reply for update safely. |
+| `async def` | `edit_message_safely(message, text: str, parse_mode: str \| None=None, reply_markup=None, **kwargs)` | Edit a status message and split long follow-up text when needed. |
 | `async def` | `safe_edit_message(query, text: str, parse_mode: str \| None=None, reply_markup=None, **kwargs)` | Helper for safe edit message in the Telegram bot flow. |
 | `async def` | `show_callback_loading(query, text: str='⏳ *Memproses pilihan...*')` | Handle callback-related behavior in the Telegram bot flow. |
 | `def` | `build_progress_bar(pct: float, length: int=10)` | Build the data structure or message text for progress bar. |
@@ -379,6 +381,7 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `async def` | `reply_long_markdown(update: Update, text: str)` | Send a Telegram reply for long markdown. |
 | `async def` | `reply_message_safely(message, text: str, parse_mode: str \| None=None, reply_markup=None, **kwargs)` | Send a Telegram reply for message safely. |
 | `async def` | `reply_update_safely(update: Update, text: str, parse_mode: str \| None=None, reply_markup=None, **kwargs)` | Send a Telegram reply for update safely. |
+| `async def` | `edit_message_safely(message, text: str, parse_mode: str \| None=None, reply_markup=None, **kwargs)` | Edit a status message and split long follow-up text when needed. |
 | `async def` | `safe_edit_message(query, text: str, parse_mode: str \| None=None, reply_markup=None, **kwargs)` | Helper for safe edit message in the Telegram bot flow. |
 | `async def` | `show_callback_loading(query, text: str='⏳ *Memproses pilihan...*')` | Handle callback-related behavior in the Telegram bot flow. |
 | `async def` | `error_handler(update: object, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for error. |
@@ -424,7 +427,9 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `async def` | `handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str)` | Helper for handle gemini intent in the Telegram bot flow. |
 | `def` | `normalize_text_command(text: str)` | Normalize and clean input for text command. |
 | `async def` | `handle_local_natural_intent(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str)` | Helper for handle local natural intent in the Telegram bot flow. |
-| `async def` | `image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for image. |
+| `async def` | `handle_pending_receipt_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str)` | Handle text replies for partial receipt item selection and extra-charge divisor. |
+| `async def` | `_continue_receipt_batch_after_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, mixed_items: list[dict], receipt_context: dict)` | Continue a receipt-derived batch after item selection is complete. |
+| `async def` | `image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle image input, including itemized receipt review before saving. |
 | `async def` | `message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Route natural text input into pending edits, asset flow, debt flow, parser flow, parse safety, or AI fallback. |
 | `def` | `build_transactions_full_text(transactions: list[dict], title: str, account_filter: str \| None=None)` | Build the data structure or message text for transactions full text. |
 | `def` | `build_transaction_filter_title(base_title: str, category_filter: str \| None=None, account_filter: str \| None=None)` | Build the data structure or message text for transaction filter title. |
@@ -525,12 +530,17 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `build_parse_clarification_prompt(raw: str, assessment: dict \| None=None)` | Build the data structure or message text for parse clarification prompt. |
 | `def` | `parse_participant_count(value: str)` | Parse input into structured data for participant count. |
 | `def` | `build_account_delta_summary_from_transaction_items(items: list[dict])` | Build the data structure or message text for account delta summary from transaction items. |
+| `def` | `build_mixed_detail_preview(mixed_items: list[dict], receipt_context: dict \| None=None)` | Build the detailed multi-input preview before the account step. |
+| `def` | `build_mixed_final_summary(mixed_items: list[dict], receipt_context: dict \| None=None, account_label: str \| None=None)` | Build the compact final summary for mixed and receipt batches. |
+| `def` | `build_mixed_category_summary(mixed_items: list[dict])` | Build compact category totals for the final mixed preview. |
 | `def` | `build_mixed_short_summary(mixed_items: list[dict])` | Build the data structure or message text for mixed short summary. |
 | `def` | `build_single_short_summary(parsed: dict)` | Build the data structure or message text for single short summary. |
 | `def` | `build_updated_item_summary(item: dict, index: int \| None=None)` | Build the data structure or message text for updated item summary. |
 | `def` | `_preview_edit_fields_for_scope(scope: str)` | Helper for preview edit fields for scope in the Telegram bot flow. |
 | `def` | `build_preview_edit_keyboard(scope: str='single')` | Build the data structure or message text for preview edit keyboard. |
 | `def` | `build_preview_field_help(scope: str, field: str)` | Build the data structure or message text for preview field help. |
+| `def` | `build_preview_field_value_prompt(scope: str, field: str)` | Ask for a raw replacement value after the user taps one edit field. |
+| `def` | `parse_preview_direct_field_update(field: str, value: str)` | Parse a raw replacement value for one selected edit field. |
 | `def` | `build_preview_edit_help(scope: str='single')` | Build the data structure or message text for preview edit help. |
 | `def` | `build_mixed_edit_choose_prompt(mixed_items: list[dict])` | Build the data structure or message text for mixed edit choose prompt. |
 | `def` | `_split_preview_edit_segments(raw: str)` | Helper for split preview edit segments in the Telegram bot flow. |
@@ -543,6 +553,16 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `format_split_bill_preview_line(parsed: dict)` | Format data into a readable display for split bill preview line. |
 | `def` | `build_preview(parsed: dict)` | Build the data structure or message text for preview. |
 | `def` | `build_batch_preview(parsed_items: list[dict])` | Build the data structure or message text for batch preview. |
+| `def` | `is_receipt_image_result(result: dict, items: list[dict])` | Decide whether image output should enter the receipt review flow. |
+| `def` | `build_receipt_review_text(receipt: dict, items: list[dict])` | Build the OCR detail review for itemized receipts. |
+| `def` | `build_receipt_part_selection_prompt(receipt: dict, items: list[dict])` | Build instructions for selecting only part of a receipt. |
+| `def` | `parse_receipt_part_selection(user_text: str, items: list[dict])` | Parse selected receipt rows such as `4 beli 1` or `5 beli 1 dibagi 2`. |
+| `def` | `build_receipt_selected_breakdown(receipt: dict, selection_result: dict)` | Show selected receipt item calculations before splitting extra charges. |
+| `def` | `parse_receipt_divisor(user_text: str)` | Parse how many people split receipt service, PPN, or other extra charges. |
+| `def` | `build_receipt_all_mixed_items(receipt: dict, items: list[dict])` | Convert all receipt rows into mixed batch transaction items. |
+| `def` | `build_receipt_partial_mixed_items(receipt: dict, selection_result: dict, divisor: int)` | Convert selected receipt rows into mixed batch transaction items. |
+| `def` | `build_receipt_account_prompt(mixed_items: list[dict], receipt_context: dict)` | Build the account prompt after receipt rows are converted into a batch. |
+| `def` | `build_receipt_final_preview(mixed_items: list[dict], receipt_context: dict, account_label: str \| None=None)` | Build the final receipt batch preview before saving. |
 | `def` | `strip_split_bill_phrase(text: str)` | Helper for strip split bill phrase in the Telegram bot flow. |
 | `def` | `strip_trailing_split_person_names(text: str, person_names: list[str])` | Helper for strip trailing split person names in the Telegram bot flow. |
 | `def` | `strip_split_bill_account_tail(name_text: str)` | Helper for strip split bill account tail in the Telegram bot flow. |
@@ -598,6 +618,7 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `account_keyboard(prefix: str='acc', include_skip: bool=True)` | Helper for account keyboard in the Telegram bot flow. |
 | `def` | `confirm_keyboard(txn_id: str)` | Helper for confirm keyboard in the Telegram bot flow. |
 | `def` | `cancel_keyboard()` | Helper for cancel keyboard in the Telegram bot flow. |
+| `def` | `receipt_ownership_keyboard()` | Build the initial all-items, partial-items, or cancel keyboard for receipt images. |
 
 ## `app/config.py`
 
@@ -619,8 +640,10 @@ This file is a quick reference for top-level functions and classes. It is useful
 |---|---|---|
 | `def` | `clean_gemini_json(raw_text: str)` | Clean input values for gemini json. |
 | `def` | `build_image_prompt(caption: str='')` | Build the data structure or message text for image prompt. |
-| `def` | `normalize_item(item: dict)` | Normalize and clean input for item. |
-| `def` | `parse_transactions_from_image(image_bytes: bytes, mime_type: str='image/jpeg', caption: str='')` | Parse input into structured data for transactions from image. |
+| `def` | `safe_number(value, default: float=0.0)` | Convert Gemini numeric fields into floats safely. |
+| `def` | `normalize_receipt(data: dict, items: list[dict])` | Normalize receipt-level metadata such as merchant, total, service, PPN, and discount. |
+| `def` | `normalize_item(item: dict)` | Normalize item rows from an image, including quantity and unit price when available. |
+| `def` | `parse_transactions_from_image(image_bytes: bytes, mime_type: str='image/jpeg', caption: str='')` | Parse image input into transactions plus optional receipt metadata. |
 
 ## `app/nlp/gemini_intent_router.py`
 

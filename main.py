@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
@@ -27,9 +28,6 @@ from app.sheets.client import get_spreadsheet, ensure_spreadsheet_schema
 
 # Implementation section
 # Implementation section
-app = FastAPI(title="Finance Bot")
-app.include_router(webhook_router)
-
 telegram_app = build_telegram_app()
 set_telegram_app(telegram_app)
 
@@ -102,7 +100,6 @@ def shutdown_scheduler_once():
 
 
 # ── FastAPI startup & shutdown, only active when webhook mode is used ──────
-@app.on_event("startup")
 async def startup():
     """Helper for startup in the application."""
     global _webhook_telegram_started
@@ -127,7 +124,6 @@ async def startup():
     print(f"✅ Bot started. Webhook: {WEBHOOK_URL}/webhook")
 
 
-@app.on_event("shutdown")
 async def shutdown():
     """Helper for shutdown in the application."""
     global _webhook_telegram_started
@@ -137,6 +133,20 @@ async def shutdown():
         await telegram_app.stop()
         await telegram_app.shutdown()
         _webhook_telegram_started = False
+
+
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    """Run webhook startup and shutdown without deprecated FastAPI event hooks."""
+    await startup()
+    try:
+        yield
+    finally:
+        await shutdown()
+
+
+app = FastAPI(title="Finance Bot", lifespan=lifespan)
+app.include_router(webhook_router)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────

@@ -148,7 +148,7 @@ def build_mixed_preview(mixed_items: list[dict]) -> str:
         if kind == "transaction":
             parsed = item["parsed"]
             txn_type = parsed.get("type")
-            amount = float(parsed.get("amount", 0) or 0)
+            amount = _receipt_amount(parsed.get("amount"), 0)
 
             if txn_type == "expense":
                 icon = "❌"
@@ -181,7 +181,7 @@ def build_mixed_preview(mixed_items: list[dict]) -> str:
             parsed = item["parsed"]
             intent = parsed.get("intent")
             person = parsed.get("person_name") or "-"
-            amount = float(parsed.get("amount", 0) or 0)
+            amount = _receipt_amount(parsed.get("amount"), 0)
             total_debt += amount
 
             if intent == "add_receivable":
@@ -224,6 +224,218 @@ def build_mixed_preview(mixed_items: list[dict]) -> str:
     account_summary = build_account_delta_summary_from_transaction_items(mixed_items)
     if account_summary:
         lines.append(account_summary)
+
+    return "\n".join(lines)
+
+
+
+def _mixed_transaction_totals(mixed_items: list[dict]) -> dict:
+    """Summarize transaction and debt totals for a mixed preview."""
+    totals = {
+        "expense": 0.0,
+        "income": 0.0,
+        "transfer": 0.0,
+        "debt": 0.0,
+        "transaction_count": 0,
+        "debt_count": 0,
+    }
+    for item in mixed_items or []:
+        kind = item.get("kind") if isinstance(item, dict) else None
+        parsed = item.get("parsed", {}) if isinstance(item, dict) else {}
+        amount = _receipt_amount(parsed.get("amount"), 0)
+        if kind == "transaction":
+            totals["transaction_count"] += 1
+            txn_type = parsed.get("type")
+            if txn_type == "expense":
+                totals["expense"] += amount
+            elif txn_type == "income":
+                totals["income"] += amount
+            elif txn_type == "transfer":
+                totals["transfer"] += amount
+        elif kind == "debt":
+            totals["debt_count"] += 1
+            totals["debt"] += amount
+    return totals
+
+
+def build_mixed_category_summary(mixed_items: list[dict]) -> str:
+    """Build a compact category summary for the final mixed preview."""
+    summary: dict[str, dict[str, float | int]] = {}
+    for item in mixed_items or []:
+        if not isinstance(item, dict) or item.get("kind") != "transaction":
+            continue
+        parsed = item.get("parsed", {}) or {}
+        if parsed.get("type") not in ["expense", "income"]:
+            continue
+        category = str(parsed.get("category") or "Tanpa kategori").strip() or "Tanpa kategori"
+        bucket = summary.setdefault(category, {"amount": 0.0, "count": 0})
+        bucket["amount"] = float(bucket["amount"] or 0) + _receipt_amount(parsed.get("amount"), 0)
+        bucket["count"] = int(bucket["count"] or 0) + 1
+
+    if not summary:
+        return ""
+
+    lines = ["📁 *Ringkasan kategori:*"]
+    for category, data in sorted(summary.items(), key=lambda kv: str(kv[0]).lower()):
+        lines.append(
+            f"• {md_safe(category)}: *{format_rupiah(float(data['amount'] or 0))}* "
+            f"({int(data['count'] or 0)} item)"
+        )
+    return "\n".join(lines)
+
+
+def _mixed_item_detail_lines(item: dict, index: int) -> list[str]:
+    """Build detailed lines for one mixed item before account selection."""
+    kind = item.get("kind") if isinstance(item, dict) else None
+    parsed = item.get("parsed", {}) if isinstance(item, dict) else {}
+
+    if kind == "transaction":
+        type_label = {
+            "expense": "❌ Pengeluaran",
+            "income": "✅ Pemasukan",
+            "transfer": "🔄 Transfer",
+        }.get(parsed.get("type"), "❓ Transaksi")
+        lines = [f"{index}. *{type_label}*"]
+        lines.append(f"   💰 Nominal : {format_rupiah(_receipt_amount(parsed.get('amount'), 0))}")
+        lines.append(f"   📁 Kategori: {md_safe(parsed.get('category') or '-')}")
+        lines.append(f"   👤 Subjek  : {md_safe(parsed.get('subject') or '-')}")
+        lines.append(f"   📝 Deskripsi: {md_safe(parsed.get('description') or '-')}")
+        split_preview = format_split_bill_preview_line(parsed)
+        if split_preview:
+            lines.append(f"   {md_safe(split_preview)}")
+        if parsed.get("catatan"):
+            lines.append(f"   🗒️ Catatan : {md_safe(parsed.get('catatan'))}")
+        if parsed.get("tipe_pengeluaran"):
+            lines.append(f"   🏷️ Tipe    : {md_safe(parsed.get('tipe_pengeluaran'))}")
+        lines.append(f"   📅 Tanggal : {md_safe(parsed.get('date') or '-')}")
+        lines.append(f"   🏦 Rekening: {md_safe(parsed.get('account') or '-')}")
+        if parsed.get("to_account"):
+            lines.append(f"   ➡️ Ke Rekening: {md_safe(parsed.get('to_account'))}")
+        return lines
+
+    if kind == "debt":
+        intent = parsed.get("intent")
+        label = {
+            "add_receivable": "🟢 Piutang baru",
+            "add_payable": "🔴 Utang baru",
+            "add_payment": "💸 Pembayaran debt",
+            "offset_debt": "🔁 Kompensasi debt",
+        }.get(intent, "💸 Debt")
+        return [
+            f"{index}. *{label}*",
+            f"   👤 Orang   : {md_safe(parsed.get('person_name') or '-')}",
+            f"   💰 Nominal : {format_rupiah(_receipt_amount(parsed.get('amount'), 0))}",
+            f"   📝 Deskripsi: {md_safe(parsed.get('description') or '-')}",
+            f"   📅 Tanggal : {md_safe(parsed.get('date') or parsed.get('transaction_date') or '-')}",
+            f"   🏦 Rekening: {md_safe(parsed.get('account') or '-')}",
+        ]
+
+    return [f"{index}. {md_safe(item.get('raw') or '-')}"]
+
+
+def build_mixed_detail_preview(mixed_items: list[dict], receipt_context: dict | None = None) -> str:
+    """Build the detailed multi-input preview shown before rekening selection."""
+    receipt_context = receipt_context or {}
+    receipt = receipt_context.get("receipt") or {}
+    merchant = _receipt_merchant(receipt, [item.get("parsed", {}) for item in mixed_items]) if receipt_context else ""
+    totals = _mixed_transaction_totals(mixed_items)
+
+    if receipt_context:
+        mode_label = "semua struk" if receipt_context.get("mode") == "all" else "bagian struk"
+        lines = [f"🧾 *Preview detail batch dari {mode_label}*"]
+        lines.append(f"• Merchant: *{md_safe(merchant)}*")
+    else:
+        lines = ["🧾 *Preview detail multi input*"]
+
+    lines.append(f"• Total item: *{len(mixed_items or [])}*")
+    if totals["expense"]:
+        lines.append(f"• Expense: *{format_rupiah(totals['expense'])}*")
+    if totals["income"]:
+        lines.append(f"• Income: *{format_rupiah(totals['income'])}*")
+    if totals["transfer"]:
+        lines.append(f"• Transfer: *{format_rupiah(totals['transfer'])}*")
+    if totals["debt_count"]:
+        lines.append(f"• Debt: *{int(totals['debt_count'])} item* / {format_rupiah(totals['debt'])}")
+
+    if receipt_context.get("mode") == "partial":
+        lines.append(f"• Subtotal item kamu: {format_rupiah(receipt_context.get('subtotal_items', 0))}")
+        lines.append(f"• Biaya tambahan kamu: {format_rupiah(receipt_context.get('extra_charge_amount', 0))}")
+
+    category_summary = build_mixed_category_summary(mixed_items)
+    if category_summary:
+        lines.extend(["", category_summary])
+
+    lines.append("")
+    lines.append("📋 *Rincian transaksi yang akan disimpan:*")
+    for idx, item in enumerate(mixed_items or [], 1):
+        lines.extend(_mixed_item_detail_lines(item, idx))
+        if idx != len(mixed_items or []):
+            lines.append("")
+
+    if receipt_context:
+        charges = _receipt_extra_charges(receipt)
+        if charges:
+            lines.extend(["", "💳 *Rincian biaya tambahan di output:*"])
+            divisor = receipt_context.get("extra_charge_divisor")
+            for charge in charges:
+                amount = int(charge.get("amount", 0) or 0)
+                sign = "-" if charge.get("is_discount") else ""
+                if divisor and divisor > 1:
+                    share = int(round(amount / divisor))
+                    lines.append(
+                        f"• {md_safe(charge.get('label'))}: {sign}{format_rupiah(amount)} / {divisor} = {sign}{format_rupiah(share)}"
+                    )
+                else:
+                    lines.append(f"• {md_safe(charge.get('label'))}: {sign}{format_rupiah(amount)}")
+            lines.append(f"• Total biaya tambahan kamu: *{format_rupiah(receipt_context.get('extra_charge_amount', 0))}*")
+            lines.append("\nCatatan: saat disimpan, service/PPN/diskon digabung menjadi satu transaksi biaya tambahan.")
+
+    return "\n".join(lines)
+
+
+def build_mixed_final_summary(mixed_items: list[dict], receipt_context: dict | None = None, account_label: str | None = None) -> str:
+    """Build a compact final confirmation summary for mixed or receipt batches."""
+    receipt_context = receipt_context or {}
+    receipt = receipt_context.get("receipt") or {}
+    merchant = _receipt_merchant(receipt, [item.get("parsed", {}) for item in mixed_items]) if receipt_context else ""
+    totals = _mixed_transaction_totals(mixed_items)
+
+    if receipt_context:
+        mode_label = "semua struk" if receipt_context.get("mode") == "all" else "bagian struk"
+        lines = [f"🧾 *Ringkasan batch dari {mode_label}*"]
+        lines.append(f"• Merchant: *{md_safe(merchant)}*")
+    else:
+        lines = ["🧾 *Ringkasan batch:*"]
+
+    lines.append(f"• Total item: *{len(mixed_items or [])}*")
+    if totals["transaction_count"]:
+        lines.append(f"• Transaksi: *{int(totals['transaction_count'])} item*")
+    if totals["expense"]:
+        lines.append(f"• Expense: *{format_rupiah(totals['expense'])}*")
+    if totals["income"]:
+        lines.append(f"• Income: *{format_rupiah(totals['income'])}*")
+    if totals["transfer"]:
+        lines.append(f"• Transfer: *{format_rupiah(totals['transfer'])}*")
+    if totals["debt_count"]:
+        lines.append(f"• Debt: *{int(totals['debt_count'])} item* / {format_rupiah(totals['debt'])}")
+
+    account = account_label
+    if not account:
+        for item in mixed_items or []:
+            parsed = item.get("parsed", {}) if isinstance(item, dict) else {}
+            if parsed.get("account"):
+                account = parsed.get("account")
+                break
+    if account:
+        lines.append(f"• Rekening: {md_safe(account)}")
+
+    category_summary = build_mixed_category_summary(mixed_items)
+    if category_summary:
+        lines.extend(["", category_summary])
+
+    account_summary = build_account_delta_summary_from_transaction_items(mixed_items)
+    if account_summary:
+        lines.extend(["", account_summary])
 
     return "\n".join(lines)
 
@@ -348,7 +560,7 @@ async def continue_after_missing_amount_mixed(update: Update, context: ContextTy
     context.user_data.pop("pending_debt_batch", None)
     context.user_data.pop("mixed_review_preview_sent", None)
 
-    preview = build_mixed_preview(mixed_items)
+    preview = build_mixed_detail_preview(mixed_items)
 
     if mixed_split_bill_needs_decision(mixed_items):
         await reply_update_safely(
@@ -357,19 +569,12 @@ async def continue_after_missing_amount_mixed(update: Update, context: ContextTy
             parse_mode="Markdown",
             reply_markup=mixed_split_bill_keyboard(mixed_items),
         )
-    elif mixed_needs_account(mixed_items):
-        await reply_update_safely(
-            update,
-            build_mixed_account_prompt(mixed_items),
-            parse_mode="Markdown",
-            reply_markup=account_keyboard("mixed_acc"),
-        )
     else:
         await reply_update_safely(
             update,
-            f"{preview}\n\n{preview_action_question(True)}",
+            f"{preview}\n\n{preview_action_question(False)}",
             parse_mode="Markdown",
-            reply_markup=preview_action_keyboard("mixed", True),
+            reply_markup=preview_action_keyboard("mixed", False),
         )
 
 
@@ -806,7 +1011,7 @@ def build_mixed_short_summary(mixed_items: list[dict]) -> str:
     for item in mixed_items or []:
         kind = item.get("kind")
         parsed = item.get("parsed", {}) or {}
-        amount = float(parsed.get("amount", 0) or 0)
+        amount = _receipt_amount(parsed.get("amount"), 0)
         if kind == "transaction":
             transaction_count += 1
             txn_type = parsed.get("type")
@@ -919,7 +1124,7 @@ def build_updated_item_summary(item: dict, index: int | None = None) -> str:
 
     if kind == "transaction":
         label = md_safe(parsed.get("description") or parsed.get("subject") or "Transaksi")
-        amount = float(parsed.get("amount", 0) or 0)
+        amount = _receipt_amount(parsed.get("amount"), 0)
         category = md_safe(parsed.get("category") or "-")
         account = md_safe(parsed.get("account") or "-")
         return (
@@ -931,7 +1136,7 @@ def build_updated_item_summary(item: dict, index: int | None = None) -> str:
 
     if kind == "debt":
         person = md_safe(parsed.get("person_name") or "-")
-        amount = float(parsed.get("amount", 0) or 0)
+        amount = _receipt_amount(parsed.get("amount"), 0)
         account = md_safe(parsed.get("account") or "-")
         return (
             f"✅ *{prefix} debt sudah diupdate.*\n"
@@ -1032,6 +1237,48 @@ def build_preview_field_help(scope: str, field: str) -> str:
         "`nominal: 20k, kategori: Other Expense, rekening: DANA`"
     )
 
+
+
+
+def build_preview_field_value_prompt(scope: str, field: str) -> str:
+    """Build the direct-value prompt after the user taps one edit field."""
+    examples = {
+        "amount": ("Nominal", "Tulis nominal yang kamu mau.", "20k"),
+        "category": ("Kategori", "Tulis kategori yang kamu mau.", "Jajan"),
+        "description": ("Deskripsi", "Tulis deskripsi yang kamu mau.", "Kopi susu"),
+        "subject": ("Subjek", "Tulis subjek yang kamu mau.", "Mie Goreng"),
+        "person_name": ("Orang", "Tulis nama orang yang kamu mau.", "Budi"),
+        "type": ("Tipe transaksi", "Tulis tipe transaksi yang kamu mau.", "expense"),
+        "date": ("Tanggal", "Tulis tanggal yang kamu mau.", "2026-07-03"),
+        "due_date": ("Tanggal jatuh tempo", "Tulis tanggal jatuh tempo yang kamu mau.", "2026-07-30"),
+        "month": ("Bulan", "Tulis bulan yang kamu mau.", "2026-07"),
+        "account": ("Rekening", "Tulis rekening yang kamu mau.", "DANA"),
+        "to_account": ("Rekening tujuan", "Tulis rekening tujuan yang kamu mau.", "BCA"),
+        "catatan": ("Catatan", "Tulis catatan yang kamu mau.", "sudah dicek manual"),
+        "name": ("Nama", "Tulis nama yang kamu mau.", "Laptop kerja"),
+        "quantity": ("Jumlah", "Tulis jumlah yang kamu mau.", "2"),
+        "unit": ("Satuan", "Tulis satuan yang kamu mau.", "gram"),
+        "price_per_unit": ("Harga per unit", "Tulis harga per unit yang kamu mau.", "2594000"),
+        "purchase_price_per_unit": ("Harga beli per unit", "Tulis harga beli per unit yang kamu mau.", "2559000"),
+        "purchase_date": ("Tanggal beli", "Tulis tanggal beli yang kamu mau.", "2026-06-10"),
+    }
+    title, instruction, example = examples.get(
+        field,
+        (field.replace("_", " ").title(), "Tulis nilai baru yang kamu mau.", "nilai baru"),
+    )
+    return (
+        f"✏️ *Edit {md_safe(title)}*\n\n"
+        f"{instruction}\n\n"
+        f"Contoh: `{md_code_text(example)}`"
+    )
+
+
+def parse_preview_direct_field_update(field: str, value: str) -> dict:
+    """Parse a raw value for one field selected from the edit keyboard."""
+    canonical = PREVIEW_EDIT_KEY_ALIASES.get(str(field or "").strip().lower(), str(field or "").strip())
+    if not canonical:
+        return {}
+    return _parse_preview_edit_pair(f"{canonical}: {value}")
 
 def build_preview_edit_help(scope: str = "single") -> str:
     """Build the data structure or message text for preview edit help."""
@@ -1296,9 +1543,10 @@ async def proceed_after_preview_edit(query, context: ContextTypes.DEFAULT_TYPE, 
             )
             return
 
-        short_summary = build_mixed_short_summary(mixed_items)
+        receipt_context = context.user_data.get("pending_receipt_context")
+        final_summary = build_mixed_final_summary(mixed_items, receipt_context)
         await safe_edit_message(query, 
-            f"{short_summary}\n\n{preview_action_question(True)}",
+            f"{final_summary}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
             reply_markup=preview_action_keyboard("mixed", True),
         )
@@ -1438,10 +1686,18 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
         )
         return True
 
-    updates = parse_preview_edit_updates(user_text)
+    direct_field = state.get("field") if step == "direct_field" else None
+    updates = (
+        parse_preview_direct_field_update(direct_field, user_text)
+        if direct_field else parse_preview_edit_updates(user_text)
+    )
     if not updates:
+        help_text = (
+            build_preview_field_value_prompt(scope or "single", direct_field)
+            if direct_field else build_preview_edit_help(scope or "single")
+        )
         await update.message.reply_text(
-            "❌ Format edit belum kebaca.\n\n" + build_preview_edit_help(scope or "single"),
+            "❌ Format edit belum kebaca.\n\n" + help_text,
             parse_mode="Markdown",
         )
         return True
@@ -1467,19 +1723,21 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
         context.user_data.pop("pending_preview_edit", None)
 
         item_summary = build_updated_item_summary(item, item_index + 1)
+        receipt_context = context.user_data.get("pending_receipt_context")
         if mixed_needs_account(mixed_items):
+            detail_preview = build_mixed_detail_preview(mixed_items, receipt_context)
             await reply_update_safely(
                 update,
-                f"{item_summary}\n\n{build_mixed_account_prompt(mixed_items)}",
+                f"{item_summary}\n\n{detail_preview}\n\n{preview_action_question(False)}",
                 parse_mode="Markdown",
-                reply_markup=account_keyboard("mixed_acc"),
+                reply_markup=preview_action_keyboard("mixed", False),
             )
             return True
 
-        short_summary = build_mixed_short_summary(mixed_items)
+        final_summary = build_mixed_final_summary(mixed_items, receipt_context)
         await reply_update_safely(
             update,
-            f"{item_summary}\n\n{short_summary}\n\n{preview_action_question(True)}",
+            f"{item_summary}\n\n{final_summary}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
             reply_markup=preview_action_keyboard("mixed", True),
         )
@@ -1698,7 +1956,7 @@ def build_batch_preview(parsed_items: list[dict]) -> str:
             "transfer": "🔄",
         }.get(parsed.get("type"), "❓")
 
-        amount = float(parsed.get("amount", 0) or 0)
+        amount = _receipt_amount(parsed.get("amount"), 0)
 
         if parsed.get("type") == "expense":
             total_expense += amount
@@ -1730,6 +1988,561 @@ def build_batch_preview(parsed_items: list[dict]) -> str:
     account_summary = build_account_delta_summary_from_transaction_items(parsed_items)
     if account_summary:
         lines.append(account_summary)
+
+    return "\n".join(lines)
+
+
+# ── Receipt / Image Selection Flow ────────────────────────────────────────────
+
+RECEIPT_NUMBER_WORDS = {
+    "nol": 0,
+    "satu": 1,
+    "se": 1,
+    "dua": 2,
+    "tiga": 3,
+    "empat": 4,
+    "lima": 5,
+    "enam": 6,
+    "tujuh": 7,
+    "delapan": 8,
+    "sembilan": 9,
+    "sepuluh": 10,
+    "sebelas": 11,
+    "dua belas": 12,
+}
+
+
+def is_receipt_image_result(result: dict, items: list[dict]) -> bool:
+    """Check whether Gemini output should enter the receipt review flow.
+
+    Args:
+        result: Parsed image result from the NLP layer.
+        items: Normalized transaction items from the image.
+
+    Returns:
+        True when the image behaves like an itemized receipt, otherwise False.
+    """
+    receipt = (result or {}).get("receipt") or {}
+    return bool(receipt.get("is_receipt")) and len(items or []) > 0
+
+
+def _receipt_merchant(receipt: dict, items: list[dict] | None = None) -> str:
+    """Resolve the merchant name used in receipt previews."""
+    merchant = str((receipt or {}).get("merchant") or "").strip()
+    if merchant:
+        return merchant
+    for item in items or []:
+        subject = str(item.get("subject") or "").strip()
+        if subject:
+            return subject
+    return "Struk"
+
+
+
+
+def _receipt_amount(value, default: float = 0.0) -> float:
+    """Parse receipt amount fields that may use Indonesian thousand separators."""
+    try:
+        if isinstance(value, str):
+            raw = value.strip().replace("Rp", "").replace("rp", "").replace(" ", "")
+            raw = re.sub(r"[^0-9.,-]", "", raw)
+            if "," in raw and "." in raw:
+                raw = raw.replace(".", "").replace(",", ".")
+            elif "," in raw:
+                raw = raw.replace(",", ".")
+            elif "." in raw:
+                parts = raw.split(".")
+                if len(parts) > 1 and all(len(part) == 3 for part in parts[1:]):
+                    raw = raw.replace(".", "")
+            return float(raw or default)
+        return float(value or default)
+    except Exception:
+        return float(default)
+
+def _receipt_item_quantity(item: dict) -> float:
+    """Return the receipt item quantity with a safe fallback."""
+    try:
+        quantity = float(item.get("quantity", 1) or 1)
+        return quantity if quantity > 0 else 1.0
+    except Exception:
+        return 1.0
+
+
+def _receipt_extra_charges(receipt: dict) -> list[dict]:
+    """Return normalized extra charge components from receipt metadata."""
+    charges = []
+    for charge in (receipt or {}).get("extra_charges") or []:
+        if not isinstance(charge, dict):
+            continue
+        amount = _receipt_amount(charge.get("amount"), 0)
+        if amount <= 0:
+            continue
+        charges.append({
+            "label": str(charge.get("label") or "Biaya tambahan").strip(),
+            "amount": int(round(amount)),
+            "is_discount": bool(charge.get("is_discount")),
+        })
+    return charges
+
+
+def receipt_extra_charge_net_amount(receipt: dict) -> int:
+    """Calculate net extra charge from service, tax, other charges, and discount."""
+    total = 0
+    for charge in _receipt_extra_charges(receipt):
+        amount = int(charge.get("amount", 0) or 0)
+        total += -amount if charge.get("is_discount") else amount
+    return int(round(total))
+
+
+def _receipt_extra_charge_detail(receipt: dict, divisor: int | None = None) -> str:
+    """Build a compact note for the combined extra charge transaction."""
+    parts = []
+    for charge in _receipt_extra_charges(receipt):
+        label = charge.get("label") or "Biaya tambahan"
+        amount = int(charge.get("amount", 0) or 0)
+        sign = "-" if charge.get("is_discount") else ""
+        if divisor and divisor > 1:
+            share = int(round(amount / divisor))
+            parts.append(f"{label} {sign}{format_rupiah(amount)} dibagi {divisor} = {sign}{format_rupiah(share)}")
+        else:
+            parts.append(f"{label} {sign}{format_rupiah(amount)}")
+    return "; ".join(parts)
+
+
+def _receipt_extra_charge_description(receipt: dict, merchant: str) -> str:
+    """Build the saved description for the combined receipt extra charge."""
+    labels = [str(charge.get("label") or "").strip().lower() for charge in _receipt_extra_charges(receipt)]
+    has_service = any("service" in label or "layanan" in label for label in labels)
+    has_tax = any("ppn" in label or "tax" in label or "pajak" in label for label in labels)
+    has_discount = any(charge.get("is_discount") for charge in _receipt_extra_charges(receipt))
+
+    if has_service and has_tax and has_discount:
+        prefix = "Service, PPN & Diskon"
+    elif has_service and has_tax:
+        prefix = "Service & PPN"
+    elif has_discount:
+        prefix = "Biaya tambahan & Diskon"
+    else:
+        prefix = "Biaya tambahan"
+
+    return f"{prefix} {merchant}".strip()[:80]
+
+
+def build_receipt_review_text(receipt: dict, items: list[dict]) -> str:
+    """Build the first OCR review text for receipt images.
+
+    Args:
+        receipt: Receipt-level metadata from Gemini Vision.
+        items: Itemized receipt rows parsed from the image.
+
+    Returns:
+        Markdown text that shows OCR details before the user chooses whether all
+        items or only part of the receipt should be recorded.
+    """
+    merchant = _receipt_merchant(receipt, items)
+    date = (receipt or {}).get("date") or (items[0].get("date") if items else "-")
+    item_total = sum(_receipt_amount(item.get("amount"), 0) for item in items)
+    net_extra = receipt_extra_charge_net_amount(receipt)
+    total = float((receipt or {}).get("total") or 0) or item_total + net_extra
+
+    lines = [
+        "🧾 *Struk berhasil dibaca.*",
+        "",
+        f"Merchant: *{md_safe(merchant)}*",
+        f"Tanggal : {md_safe(date)}",
+        f"Total   : *{format_rupiah(total)}*",
+        "",
+        "📋 *Rincian item:*",
+    ]
+
+    for idx, item in enumerate(items, 1):
+        desc = md_safe(item.get("description") or item.get("subject") or f"Item {idx}")
+        qty = _receipt_item_quantity(item)
+        amount = _receipt_amount(item.get("amount"), 0)
+        unit_price = _receipt_amount(item.get("unit_price"), 0) or (amount / qty if qty else amount)
+        lines.extend([
+            f"{idx}. *{desc}*",
+            f"   Qty: {qty:g}",
+            f"   Total: {format_rupiah(amount)}",
+            f"   Harga satuan: {format_rupiah(unit_price)}",
+        ])
+
+    charges = _receipt_extra_charges(receipt)
+    if charges:
+        lines.extend(["", "💳 *Biaya tambahan:*"])
+        for charge in charges:
+            label = md_safe(charge.get("label") or "Biaya tambahan")
+            sign = "-" if charge.get("is_discount") else ""
+            lines.append(f"• {label}: {sign}{format_rupiah(charge.get('amount', 0))}")
+        lines.append(f"• Total biaya tambahan: *{format_rupiah(net_extra)}*")
+
+    lines.extend([
+        "",
+        "🧮 *Pengecekan total:*",
+        f"• Subtotal item: {format_rupiah(item_total)}",
+        f"• Biaya tambahan net: {format_rupiah(net_extra)}",
+        f"• Total struk: *{format_rupiah(total)}*",
+        "",
+        "Apakah semua item di struk ini masuk ke pengeluaran kamu?",
+    ])
+    return "\n".join(lines)
+
+
+def build_receipt_part_selection_prompt(receipt: dict, items: list[dict]) -> str:
+    """Build instructions for selecting only part of a receipt."""
+    lines = [
+        "🧩 *Pilih item yang menjadi bagian kamu.*",
+        "",
+        "Gunakan nomor item dari daftar struk.",
+        "",
+        "Contoh:",
+        "`4 beli 1`",
+        "`5 beli 1 dibagi 2`",
+        "",
+        "Daftar item:",
+    ]
+
+    for idx, item in enumerate(items, 1):
+        desc = md_safe(item.get("description") or item.get("subject") or f"Item {idx}")
+        qty = _receipt_item_quantity(item)
+        amount = _receipt_amount(item.get("amount"), 0)
+        unit_price = _receipt_amount(item.get("unit_price"), 0) or (amount / qty if qty else amount)
+        lines.append(
+            f"{idx}. {desc} | Qty {qty:g} | Total {format_rupiah(amount)} | Satuan {format_rupiah(unit_price)}"
+        )
+
+    return "\n".join(lines)
+
+
+def _parse_receipt_number(value: str | None, default: float = 1.0) -> float:
+    """Parse a small quantity or divisor from natural Indonesian text."""
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return default
+
+    if raw in RECEIPT_NUMBER_WORDS:
+        return float(RECEIPT_NUMBER_WORDS[raw])
+
+    match = re.search(r"\d+(?:[.,]\d+)?", raw)
+    if match:
+        return float(match.group(0).replace(",", "."))
+
+    return default
+
+
+def parse_receipt_part_selection(user_text: str, items: list[dict]) -> dict:
+    """Parse the user's selected receipt rows and shares.
+
+    Args:
+        user_text: Natural text such as `4 beli 1` or `5 beli 1 dibagi 2`.
+        items: Receipt items shown to the user.
+
+    Returns:
+        Dict with `success`, selected parts, and total amount. No data is saved
+        here; this only prepares the next receipt step.
+    """
+    selected = []
+    failed_lines = []
+
+    for raw_line in re.split(r"[\n;]+", str(user_text or "")):
+        line = raw_line.strip(" .,-")
+        if not line:
+            continue
+
+        index_match = re.match(r"^\s*(\d+)\b", line)
+        if not index_match:
+            failed_lines.append(line)
+            continue
+
+        item_index = int(index_match.group(1)) - 1
+        if item_index < 0 or item_index >= len(items):
+            failed_lines.append(line)
+            continue
+
+        qty_match = re.search(
+            r"\b(?:beli|ambil|porsi|qty|x)\s+([\w.,]+(?:\s+belas)?)",
+            line,
+            flags=re.IGNORECASE,
+        )
+        take_qty = _parse_receipt_number(qty_match.group(1) if qty_match else "1", 1)
+        if take_qty <= 0:
+            failed_lines.append(line)
+            continue
+
+        divisor_match = re.search(
+            r"\b(?:di\s*-?\s*bagi|dibagi|bagi|split|share)\s+([\w.,]+(?:\s+belas)?)",
+            line,
+            flags=re.IGNORECASE,
+        )
+        share_divisor = int(round(_parse_receipt_number(divisor_match.group(1), 1))) if divisor_match else 1
+        share_divisor = max(1, share_divisor)
+
+        item = items[item_index]
+        receipt_qty = _receipt_item_quantity(item)
+        line_amount = _receipt_amount(item.get("amount"), 0)
+        unit_amount = line_amount / receipt_qty if receipt_qty else line_amount
+        before_share = unit_amount * take_qty
+        amount = int(round(before_share / share_divisor))
+
+        selected.append({
+            "item_index": item_index,
+            "item": item,
+            "take_qty": take_qty,
+            "receipt_qty": receipt_qty,
+            "share_divisor": share_divisor,
+            "unit_amount": unit_amount,
+            "before_share": before_share,
+            "amount": amount,
+            "raw": line,
+        })
+
+    if not selected:
+        return {
+            "success": False,
+            "message": "Pilihan item belum kebaca. Coba tulis seperti `4 beli 1` atau `5 beli 1 dibagi 2`.",
+            "failed_lines": failed_lines,
+            "selected": [],
+            "subtotal": 0,
+        }
+
+    return {
+        "success": True,
+        "message": "ok",
+        "failed_lines": failed_lines,
+        "selected": selected,
+        "subtotal": sum(part["amount"] for part in selected),
+    }
+
+
+def build_receipt_selected_breakdown(receipt: dict, selection_result: dict) -> str:
+    """Build the selected receipt item breakdown before asking extra charge split."""
+    lines = ["🧮 *Bagian kamu dari item struk:*", ""]
+
+    for idx, part in enumerate(selection_result.get("selected") or [], 1):
+        item = part["item"]
+        desc = md_safe(item.get("description") or item.get("subject") or f"Item {idx}")
+        lines.append(f"{idx}. *{desc}*")
+        lines.append(f"   Ambil: {part['take_qty']:g} dari {part['receipt_qty']:g} qty")
+        lines.append(f"   Hitung item: {format_rupiah(item.get('amount', 0))} / {part['receipt_qty']:g} x {part['take_qty']:g}")
+        if part["share_divisor"] > 1:
+            lines.append(f"   Dibagi lagi: {format_rupiah(part['before_share'])} / {part['share_divisor']}")
+        lines.append(f"   Bagian kamu: *{format_rupiah(part['amount'])}*")
+        lines.append("")
+
+    lines.append(f"Subtotal item kamu: *{format_rupiah(selection_result.get('subtotal', 0))}*")
+
+    charges = _receipt_extra_charges(receipt)
+    if charges:
+        lines.extend(["", "💳 *Biaya tambahan di struk:*"])
+        for charge in charges:
+            sign = "-" if charge.get("is_discount") else ""
+            lines.append(f"• {md_safe(charge.get('label'))}: {sign}{format_rupiah(charge.get('amount', 0))}")
+        lines.append("")
+        lines.append("Biaya tambahan ini dibagi berapa orang?")
+    else:
+        lines.extend(["", "Tidak ada biaya tambahan yang terbaca."])
+
+    failed_lines = selection_result.get("failed_lines") or []
+    if failed_lines:
+        lines.extend(["", "⚠️ Baris yang belum kebaca:"])
+        for line in failed_lines[:5]:
+            lines.append(f"• `{md_code_text(line)}`")
+
+    return "\n".join(lines).strip()
+
+
+def parse_receipt_divisor(user_text: str) -> int:
+    """Parse the divisor used for receipt service/tax sharing."""
+    match = re.search(
+        r"\b(?:di\s*-?\s*bagi|dibagi|bagi|split|share)\s+([\w.,]+(?:\s+belas)?)",
+        str(user_text or ""),
+        flags=re.IGNORECASE,
+    )
+    divisor = _parse_receipt_number(match.group(1) if match else user_text, 0)
+    return max(0, int(round(divisor)))
+
+
+def _receipt_transaction_item(parsed: dict, raw: str, amount: int | None = None, catatan: str | None = None) -> dict:
+    """Create one mixed transaction item from a receipt row."""
+    data = dict(parsed or {})
+    if amount is not None:
+        data["amount"] = int(round(amount))
+    if catatan is not None:
+        old_note = str(data.get("catatan") or "").strip()
+        data["catatan"] = f"{catatan} | {old_note}".strip(" |")
+    data["parsed_by"] = data.get("parsed_by") or "gemini_image"
+    return {"kind": "transaction", "parsed": data, "raw": raw}
+
+
+def _receipt_extra_charge_item(receipt: dict, items: list[dict], amount: int, divisor: int | None = None) -> dict | None:
+    """Create the combined Service/PPN receipt transaction item."""
+    if amount <= 0:
+        return None
+
+    merchant = _receipt_merchant(receipt, items)
+    base_item = items[0] if items else {}
+    description = _receipt_extra_charge_description(receipt, merchant)
+    note = _receipt_extra_charge_detail(receipt, divisor=divisor)
+
+    parsed = {
+        "type": "expense",
+        "amount": int(round(amount)),
+        "category": base_item.get("category") or "Food & Beverage",
+        "account": base_item.get("account"),
+        "to_account": None,
+        "subject": merchant,
+        "description": description,
+        "catatan": note,
+        "tipe_pengeluaran": base_item.get("tipe_pengeluaran") or "Harian",
+        "date": (receipt or {}).get("date") or base_item.get("date"),
+        "parsed_by": "gemini_image",
+    }
+    return {"kind": "transaction", "parsed": parsed, "raw": f"biaya tambahan struk {merchant}"}
+
+
+def build_receipt_all_mixed_items(receipt: dict, items: list[dict]) -> tuple[list[dict], dict]:
+    """Build mixed items when all receipt rows belong to the user."""
+    mixed_items = []
+    for idx, item in enumerate(items, 1):
+        desc = item.get("description") or item.get("subject") or f"Item {idx}"
+        mixed_items.append(_receipt_transaction_item(item, f"struk item {idx}: {desc}"))
+
+    net_extra = receipt_extra_charge_net_amount(receipt)
+    extra_item = _receipt_extra_charge_item(receipt, items, net_extra)
+    if extra_item:
+        mixed_items.append(extra_item)
+
+    context = {
+        "mode": "all",
+        "receipt": receipt,
+        "extra_charge_amount": max(0, net_extra),
+        "extra_charge_divisor": None,
+        "selected_parts": [],
+    }
+    return mixed_items, context
+
+
+def build_receipt_partial_mixed_items(receipt: dict, selection_result: dict, divisor: int) -> tuple[list[dict], dict]:
+    """Build mixed items when only selected receipt rows belong to the user."""
+    selected_parts = selection_result.get("selected") or []
+    selected_items = [part["item"] for part in selected_parts]
+    mixed_items = []
+
+    for idx, part in enumerate(selected_parts, 1):
+        item = part["item"]
+        desc = item.get("description") or item.get("subject") or f"Item {idx}"
+        if part["share_divisor"] > 1:
+            note = f"{part['take_qty']:g} dari {part['receipt_qty']:g} qty, lalu dibagi {part['share_divisor']} orang"
+        else:
+            note = f"{part['take_qty']:g} dari {part['receipt_qty']:g} qty"
+        mixed_items.append(
+            _receipt_transaction_item(
+                item,
+                f"bagian struk item {part['item_index'] + 1}: {desc}",
+                amount=part["amount"],
+                catatan=note,
+            )
+        )
+
+    net_extra = receipt_extra_charge_net_amount(receipt)
+    extra_share = int(round(net_extra / divisor)) if divisor > 0 else 0
+    extra_item = _receipt_extra_charge_item(receipt, selected_items, max(0, extra_share), divisor=divisor)
+    if extra_item:
+        mixed_items.append(extra_item)
+
+    context = {
+        "mode": "partial",
+        "receipt": receipt,
+        "extra_charge_amount": max(0, extra_share),
+        "extra_charge_divisor": divisor,
+        "selected_parts": selected_parts,
+        "subtotal_items": selection_result.get("subtotal", 0),
+    }
+    return mixed_items, context
+
+
+def build_receipt_account_prompt(mixed_items: list[dict], receipt_context: dict) -> str:
+    """Build the rekening prompt after receipt rows are converted to mixed items."""
+    receipt = (receipt_context or {}).get("receipt") or {}
+    merchant = _receipt_merchant(receipt, [item.get("parsed", {}) for item in mixed_items])
+    total = sum(_receipt_amount(item.get("parsed", {}).get("amount"), 0) for item in mixed_items)
+    mode = (receipt_context or {}).get("mode")
+    mode_label = "semua item" if mode == "all" else "bagian kamu"
+
+    lines = [
+        f"🧾 Struk *{md_safe(merchant)}* sudah diproses sebagai batch ({mode_label}).",
+        f"• Total item disimpan: *{len(mixed_items)}*",
+        f"• Total expense: *{format_rupiah(total)}*",
+        "",
+    ]
+
+    if mode == "partial":
+        lines.append(f"• Subtotal item kamu: {format_rupiah((receipt_context or {}).get('subtotal_items', 0))}")
+        lines.append(f"• Biaya tambahan kamu: {format_rupiah((receipt_context or {}).get('extra_charge_amount', 0))}")
+        lines.append("")
+
+    lines.append("💳 Dari rekening mana?")
+    lines.append("Atau pilih *Sudah berlalu* jika transaksi hanya catatan historis dan tidak mau mengubah saldo.")
+    return "\n".join(lines)
+
+
+def build_receipt_final_preview(mixed_items: list[dict], receipt_context: dict, account_label: str | None = None) -> str:
+    """Build the final receipt batch preview before save."""
+    receipt_context = receipt_context or {}
+    receipt = receipt_context.get("receipt") or {}
+    merchant = _receipt_merchant(receipt, [item.get("parsed", {}) for item in mixed_items])
+    total = sum(_receipt_amount(item.get("parsed", {}).get("amount"), 0) for item in mixed_items)
+    category = "-"
+    account = account_label or "-"
+    for item in mixed_items:
+        parsed = item.get("parsed", {})
+        if parsed.get("category") and category == "-":
+            category = parsed.get("category")
+        if parsed.get("account") and (not account_label):
+            account = parsed.get("account")
+
+    mode = receipt_context.get("mode")
+    mode_label = "semua struk" if mode == "all" else "bagian struk"
+
+    lines = [
+        f"🧾 *Ringkasan batch dari {mode_label}*",
+        f"• Merchant: *{md_safe(merchant)}*",
+        f"• Total item: *{len(mixed_items)}*",
+        f"• Expense: *{format_rupiah(total)}*",
+        f"• Kategori: {md_safe(category)}",
+        f"• Rekening: {md_safe(account)}",
+        "",
+        "📋 *Rincian transaksi yang akan disimpan:*",
+    ]
+
+    for idx, item in enumerate(mixed_items, 1):
+        parsed = item.get("parsed", {})
+        desc = md_safe(parsed.get("description") or parsed.get("subject") or f"Item {idx}")
+        amount = _receipt_amount(parsed.get("amount"), 0)
+        lines.append(f"{idx}. {desc}: *{format_rupiah(amount)}*")
+        note = parsed.get("catatan")
+        if note:
+            lines.append(f"   Catatan: {md_safe(note)}")
+
+    charges = _receipt_extra_charges(receipt)
+    if charges:
+        lines.extend(["", "💳 *Rincian biaya tambahan:*"])
+        divisor = receipt_context.get("extra_charge_divisor")
+        for charge in charges:
+            amount = int(charge.get("amount", 0) or 0)
+            sign = "-" if charge.get("is_discount") else ""
+            if divisor and divisor > 1:
+                share = int(round(amount / divisor))
+                lines.append(
+                    f"• {md_safe(charge.get('label'))}: {sign}{format_rupiah(amount)} / {divisor} = {sign}{format_rupiah(share)}"
+                )
+            else:
+                lines.append(f"• {md_safe(charge.get('label'))}: {sign}{format_rupiah(amount)}")
+        lines.append(f"• Total biaya tambahan kamu: *{format_rupiah(receipt_context.get('extra_charge_amount', 0))}*")
+
+    account_summary = build_account_delta_summary_from_transaction_items(mixed_items)
+    if account_summary:
+        lines.extend(["", account_summary])
 
     return "\n".join(lines)
 
@@ -2323,7 +3136,7 @@ def build_mixed_split_bill_queue_prompt(mixed_items: list[dict]) -> str:
     current_index = get_next_mixed_split_bill_index(mixed_items)
 
     if current_index is None:
-        return build_mixed_preview(mixed_items)
+        return build_mixed_detail_preview(mixed_items)
 
     current_pos = split_indexes.index(current_index) + 1 if current_index in split_indexes else 1
     total_split = len(split_indexes)
@@ -2505,7 +3318,7 @@ def summarize_saved_transaction_items(items: list[dict]) -> dict:
     total_transfer = 0.0
     for item in items or []:
         parsed = item.get("parsed", {})
-        amount = float(parsed.get("amount", 0) or 0)
+        amount = _receipt_amount(parsed.get("amount"), 0)
         if parsed.get("type") == "expense":
             total_expense += amount
         elif parsed.get("type") == "income":
@@ -3127,7 +3940,7 @@ def build_debt_batch_confirm_preview(
         parsed = item["parsed"]
         intent = parsed.get("intent")
         person = parsed.get("person_name") or "-"
-        amount = float(parsed.get("amount", 0) or 0)
+        amount = _receipt_amount(parsed.get("amount"), 0)
         raw = item.get("raw") or parsed.get("raw_input") or "-"
 
         debt_type_for_payment = parsed.get("debt_type_for_payment")
@@ -3195,7 +4008,7 @@ def build_debt_batch_account_prompt(debt_items: list[dict]) -> str:
         parsed = item["parsed"]
         intent = parsed.get("intent")
         person = parsed.get("person_name") or "-"
-        amount = float(parsed.get("amount", 0) or 0)
+        amount = _receipt_amount(parsed.get("amount"), 0)
 
         if intent == "add_receivable":
             label = "🟢 Piutang Baru"

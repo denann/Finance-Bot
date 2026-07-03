@@ -67,3 +67,17 @@ def cancel_keyboard() -> InlineKeyboardMarkup:
     """
     keyboard = [[InlineKeyboardButton("❌ Batal", callback_data="cancel")]]
     return InlineKeyboardMarkup(keyboard)
+
+def receipt_ownership_keyboard() -> InlineKeyboardMarkup:
+    """Build the first decision keyboard for receipt image parsing.
+
+    Returns:
+        Inline keyboard that lets the user choose whether all receipt items are
+        personal expenses, only part of them, or the receipt flow should be
+        cancelled.
+    """
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Ini transaksi saya semua", callback_data="receipt:all")],
+        [InlineKeyboardButton("🧩 Saya hanya sebagian", callback_data="receipt:part")],
+        [InlineKeyboardButton("❌ Batal", callback_data="cancel:receipt")],
+    ])
