@@ -58,6 +58,19 @@ from app.bot.handler_parts.transaction_flow import (
     split_bill_keyboard,
     split_bill_needs_decision,
     build_debt_only_confirm_preview,
+    build_meal_split_allocation_prompt,
+    build_meal_split_detail_preview,
+    build_meal_split_final_payload,
+    build_meal_split_final_summary,
+    build_meal_split_payer_prompt,
+    build_social_spending_expense,
+    compute_equal_meal_split_shares,
+    meal_split_allocation_keyboard,
+    meal_split_continue_keyboard,
+    meal_split_payer_keyboard,
+    meal_split_status_keyboard,
+    build_meal_split_status_prompt,
+    build_meal_split_custom_allocation_prompt,
 )
 from app.nlp.parse_safety import extract_person_candidate
 from app.nlp.regex_parser import detect_category
@@ -709,6 +722,78 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+
+        if choice == "payable":
+            amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
+            person = extract_person_candidate(raw) or parsed.get("person_name") or parsed.get("subject") or ""
+            person = re.sub(r"\s+", " ", str(person or "")).strip().title()
+            if not person or amount <= 0:
+                clear_parse_clarification_state(context)
+                await safe_edit_message(
+                    query,
+                    "❌ Nama orang atau nominal belum kebaca. Silakan tulis ulang inputnya.",
+                    parse_mode="Markdown",
+                )
+                return
+            debt_parsed = {
+                "intent": "add_payable",
+                "person_name": person,
+                "amount": amount,
+                "description": f"Utang ke {person}",
+                "date": detect_date(raw),
+                "raw_input": raw,
+                "cashflow_mode": "debt_only",
+                "fronting_mode": "clarified_payable",
+            }
+            context.user_data["pending_debt"] = debt_parsed
+            context.user_data.pop("pending_parsed", None)
+            context.user_data.pop("pending_raw", None)
+            context.user_data.pop("pending_batch", None)
+            context.user_data.pop("pending_mixed", None)
+            clear_parse_clarification_state(context)
+            await safe_edit_message(
+                query,
+                f"{build_debt_only_confirm_preview(debt_parsed)}\n\n{preview_action_question(True)}",
+                parse_mode="Markdown",
+                reply_markup=preview_action_keyboard("debt", True),
+            )
+            return
+
+        if choice == "split":
+            amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
+            person = extract_person_candidate(raw) or parsed.get("person_name") or parsed.get("subject") or ""
+            person = re.sub(r"\s+", " ", str(person or "")).strip().title()
+            if not person or amount <= 0:
+                clear_parse_clarification_state(context)
+                await safe_edit_message(
+                    query,
+                    "❌ Nama orang atau nominal belum kebaca untuk split bill. Silakan tulis ulang inputnya.",
+                    parse_mode="Markdown",
+                )
+                return
+            guard = {
+                "raw": raw,
+                "people": [person],
+                "amount": amount,
+                "parsed": build_clarified_expense(raw, parsed) or parsed,
+            }
+            context.user_data["pending_social_spending_guard"] = guard
+            context.user_data["pending_meal_split"] = {
+                "raw": raw,
+                "people": [person],
+                "amount": amount,
+                "parsed": guard["parsed"],
+                "stage": "payer",
+            }
+            clear_parse_clarification_state(context)
+            await safe_edit_message(
+                query,
+                build_meal_split_payer_prompt(context.user_data["pending_meal_split"]),
+                parse_mode="Markdown",
+                reply_markup=meal_split_payer_keyboard(),
+            )
+            return
+
         if choice == "debt_payment":
             debt_parsed = build_clarified_debt_payment(raw, parsed)
             if not debt_parsed:
@@ -827,6 +912,188 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         await safe_edit_message(query, "❌ Pilihan klarifikasi tidak valid.")
+        return
+
+
+    if data.startswith("meal_guard:"):
+        choice = data.split(":", 1)[1].strip()
+        guard = context.user_data.get("pending_social_spending_guard") or {}
+        raw = guard.get("raw") or ""
+
+        if choice == "rewrite":
+            context.user_data.pop("pending_social_spending_guard", None)
+            context.user_data.pop("pending_meal_split", None)
+            await safe_edit_message(
+                query,
+                "✍️ Oke. Silakan tulis ulang inputnya dengan format yang lebih jelas.",
+                parse_mode="Markdown",
+            )
+            return
+
+        if not guard or not raw:
+            await safe_edit_message(query, "❌ Sesi makan bareng expired. Coba input ulang.")
+            return
+
+        if choice == "expense":
+            parsed = build_social_spending_expense(raw, guard)
+            context.user_data["pending_parsed"] = parsed
+            context.user_data["pending_raw"] = raw
+            context.user_data.pop("pending_social_spending_guard", None)
+            context.user_data.pop("pending_meal_split", None)
+
+            if needs_account(parsed):
+                await safe_edit_message(
+                    query,
+                    build_single_account_prompt(parsed),
+                    parse_mode="Markdown",
+                    reply_markup=account_keyboard("acc"),
+                )
+                return
+
+            await safe_edit_message(
+                query,
+                f"{build_preview(parsed)}\n\n{preview_action_question(True)}",
+                parse_mode="Markdown",
+                reply_markup=preview_action_keyboard("single", True),
+            )
+            return
+
+        if choice == "split":
+            state = {
+                "raw": raw,
+                "people": guard.get("people") or [],
+                "amount": guard.get("amount") or 0,
+                "parsed": guard.get("parsed") or {},
+                "stage": "payer",
+            }
+            context.user_data["pending_meal_split"] = state
+            await safe_edit_message(
+                query,
+                build_meal_split_payer_prompt(state),
+                parse_mode="Markdown",
+                reply_markup=meal_split_payer_keyboard(),
+            )
+            return
+
+        await safe_edit_message(query, "❌ Pilihan makan bareng tidak valid.")
+        return
+
+    if data.startswith("meal_split:"):
+        parts = data.split(":")
+        action = parts[1] if len(parts) > 1 else ""
+        value = parts[2] if len(parts) > 2 else ""
+        state = context.user_data.get("pending_meal_split") or {}
+
+        if not state:
+            await safe_edit_message(query, "❌ Sesi split bill expired. Coba input ulang.")
+            return
+
+        if action == "payer":
+            if value not in {"self", "other"}:
+                await safe_edit_message(query, "❌ Pilihan pembayar tidak valid.")
+                return
+            state["payer"] = value
+            state["stage"] = "allocation"
+            context.user_data["pending_meal_split"] = state
+            await safe_edit_message(
+                query,
+                build_meal_split_allocation_prompt(state),
+                parse_mode="Markdown",
+                reply_markup=meal_split_allocation_keyboard(),
+            )
+            return
+
+        if action == "allocation":
+            if value == "equal":
+                state["shares"] = compute_equal_meal_split_shares(
+                    float(state.get("amount") or 0),
+                    state.get("people") or [],
+                )
+                state["allocation_mode"] = "equal"
+                state["stage"] = "status"
+                context.user_data["pending_meal_split"] = state
+                await safe_edit_message(
+                    query,
+                    build_meal_split_status_prompt(state),
+                    parse_mode="Markdown",
+                    reply_markup=meal_split_status_keyboard(state.get("payer") or "self"),
+                )
+                return
+
+            if value == "custom":
+                state["stage"] = "custom_allocation"
+                context.user_data["pending_meal_split"] = state
+                await safe_edit_message(
+                    query,
+                    build_meal_split_custom_allocation_prompt(state),
+                    parse_mode="Markdown",
+                )
+                return
+
+            await safe_edit_message(query, "❌ Pilihan pembagian tidak valid.")
+            return
+
+        if action == "status":
+            if value not in {"paid", "unpaid"}:
+                await safe_edit_message(query, "❌ Pilihan status pembayaran tidak valid.")
+                return
+            state["status"] = value
+            state["stage"] = "detail_preview"
+            payload = build_meal_split_final_payload(state)
+            state["payload"] = payload
+            context.user_data["pending_meal_split"] = state
+            await safe_edit_message(
+                query,
+                build_meal_split_detail_preview(state, payload),
+                parse_mode="Markdown",
+                reply_markup=meal_split_continue_keyboard(),
+            )
+            return
+
+        if action == "continue":
+            payload = state.get("payload") or build_meal_split_final_payload(state)
+            mode = payload.get("mode")
+            raw = state.get("raw") or ""
+            context.user_data.pop("pending_social_spending_guard", None)
+
+            if mode == "debt":
+                debt_parsed = payload.get("debt") or {}
+                context.user_data["pending_debt"] = debt_parsed
+                context.user_data.pop("pending_parsed", None)
+                context.user_data.pop("pending_raw", None)
+                context.user_data.pop("pending_meal_split", None)
+                await safe_edit_message(
+                    query,
+                    f"{build_debt_only_confirm_preview(debt_parsed)}\n\n{preview_action_question(True)}",
+                    parse_mode="Markdown",
+                    reply_markup=preview_action_keyboard("debt", True),
+                )
+                return
+
+            parsed = payload.get("parsed") or {}
+            context.user_data["pending_parsed"] = parsed
+            context.user_data["pending_raw"] = raw
+            context.user_data.pop("pending_debt", None)
+            context.user_data.pop("pending_meal_split", None)
+
+            if needs_account(parsed):
+                await safe_edit_message(
+                    query,
+                    build_single_account_prompt(parsed, preview_text=build_meal_split_final_summary(parsed, "transaction")),
+                    parse_mode="Markdown",
+                    reply_markup=account_keyboard("acc"),
+                )
+                return
+
+            await safe_edit_message(
+                query,
+                f"{build_meal_split_final_summary(parsed, 'transaction')}\n\n{preview_action_question(True)}",
+                parse_mode="Markdown",
+                reply_markup=preview_action_keyboard("single", True),
+            )
+            return
+
+        await safe_edit_message(query, "❌ Pilihan split bill tidak valid.")
         return
 
     if data.startswith("recurring_paid:"):
@@ -1409,7 +1676,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         short_summary = build_single_short_summary(parsed)
-        preview = build_preview(parsed)
+        if str(parsed.get("parsed_by") or "").strip() == "meal_split":
+            preview = build_meal_split_final_summary(parsed, "transaction")
+        else:
+            preview = build_preview(parsed)
         await safe_edit_message(query, 
             f"✅ Pilihan rekening: *{md_safe(account_label)}*.\n\n{preview}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
@@ -3057,6 +3327,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_preview_edit", None)
         context.user_data.pop("pending_missing_amount", None)
         context.user_data.pop("pending_parse_clarification", None)
+        context.user_data.pop("pending_social_spending_guard", None)
+        context.user_data.pop("pending_meal_split", None)
         context.user_data.pop("pending_receipt", None)
         context.user_data.pop("pending_receipt_context", None)
         context.user_data.pop("pending_receipt_part_selection", None)

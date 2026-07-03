@@ -72,6 +72,13 @@ from app.bot.handler_parts.transaction_flow import (
     split_bill_keyboard,
     split_bill_needs_decision,
     split_user_inputs,
+    build_meal_split_custom_allocation_prompt,
+    build_meal_split_status_prompt,
+    build_social_spending_guard_prompt,
+    detect_social_spending_ambiguity,
+    meal_split_status_keyboard,
+    parse_meal_split_allocation,
+    social_spending_guard_keyboard,
 )
 from app.bot.handler_parts.command_handlers import (
     budget_history_handler,
@@ -87,6 +94,7 @@ from app.bot.handler_parts.command_handlers import (
     saldo_handler,
 )
 from app.nlp.gemini_parser import parse_with_gemini
+from app.nlp.regex_parser import detect_account, extract_debt_account
 from app.nlp.parse_safety import (
     CLARIFICATION,
     GEMINI_DRAFT_PREVIEW,
@@ -203,6 +211,10 @@ async def debt_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     # Split bill parsing note: separate the paid transaction from each person share.
     # Implementation section
     debt_parsed = enrich_ditalangin_split_bill_if_any(debt_parsed, text)
+    if debt_parsed and not debt_parsed.get("account"):
+        debt_account = extract_debt_account(text) or detect_account(text)
+        if debt_account:
+            debt_parsed["account"] = debt_account
 
     person = debt_parsed.get("person_name")
     intent = debt_parsed.get("intent")
@@ -1129,6 +1141,31 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if missing_amount_handled:
         return
 
+    meal_split_state = context.user_data.get("pending_meal_split") or {}
+    if meal_split_state.get("stage") == "custom_allocation":
+        shares = parse_meal_split_allocation(
+            user_text,
+            float(meal_split_state.get("amount") or 0),
+            meal_split_state.get("people") or [],
+        )
+        if not shares:
+            await update.message.reply_text(
+                "❌ Pembagian belum kebaca. Tulis dalam format seperti `saya 30k, Budi 50k` atau `saya 100%, Budi 100%`.",
+                parse_mode="Markdown",
+            )
+            return
+
+        meal_split_state["shares"] = shares
+        meal_split_state["allocation_mode"] = "custom"
+        meal_split_state["stage"] = "status"
+        context.user_data["pending_meal_split"] = meal_split_state
+        await update.message.reply_text(
+            build_meal_split_status_prompt(meal_split_state),
+            parse_mode="Markdown",
+            reply_markup=meal_split_status_keyboard(meal_split_state.get("payer") or "self"),
+        )
+        return
+
     preview_edit_handled = await handle_pending_preview_edit(update, context, user_text)
     if preview_edit_handled:
         return
@@ -1183,6 +1220,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{build_asset_confirm_preview(natural_asset)}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
             reply_markup=preview_action_keyboard("asset", True),
+        )
+        return
+
+    social_guard = detect_social_spending_ambiguity(user_text)
+    if social_guard:
+        context.user_data["pending_social_spending_guard"] = social_guard
+        context.user_data.pop("pending_parsed", None)
+        context.user_data.pop("pending_debt", None)
+        await update.message.reply_text(
+            build_social_spending_guard_prompt(user_text, social_guard),
+            parse_mode="Markdown",
+            reply_markup=social_spending_guard_keyboard(),
         )
         return
 
@@ -1243,6 +1292,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     selected_debt_settle_handled = await handle_natural_debt_settle(update, context, user_text)
     if selected_debt_settle_handled:
         return
+
+    # Phase 2: explicit debt/split/talangin intent must win before parse safety.
+    early_debt_parsed = parse_debt_input(user_text)
+    if early_debt_parsed:
+        debt_handled = await debt_message_handler(update, context)
+        if debt_handled:
+            return
 
     # Implementation section
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.

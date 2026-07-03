@@ -4,6 +4,7 @@ __pycache__/
 *.db
 credentials.json
 service_account.json
+service_account_test.json
 .venv/
 venv/
 tests/

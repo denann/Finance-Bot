@@ -110,6 +110,31 @@ def _display_runtime_account_name(raw: str | None) -> str | None:
         clean = "sea bank"
     return display_account_name(clean)
 
+
+
+def extract_debt_account(text: str) -> str | None:
+    """Extract account for debt/talangin flows using explicit account markers."""
+    text_lower = normalize_text(text)
+    account_pattern = _account_pattern_from_sheet()
+    marker_match = re.search(
+        rf"\b(?:dari|ke|pakai|pake|via|rekening)\s+({account_pattern})\b",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if marker_match:
+        return _display_runtime_account_name(marker_match.group(1))
+    return detect_account(text)
+
+
+def attach_debt_account_payload(payload: dict | None, text: str) -> dict | None:
+    """Attach detected account to parsed debt payload if available."""
+    if not isinstance(payload, dict):
+        return payload
+    account = extract_debt_account(text)
+    if account and not payload.get("account"):
+        payload["account"] = account
+    return payload
+
 CATEGORY_KEYWORDS = {
     "Jajan": [
         "jajan", "ngemil", "cemilan", "camilan", "snack",
@@ -314,6 +339,51 @@ def parse_debt_input(text: str) -> dict | None:
         if desc_lower:
             return desc_lower.title()
         return desc or "Talangan"
+
+
+    # Phase 2: payment intent must be evaluated before generic `Budi hutang 50k`
+    # receivable patterns, otherwise `Budi bayar utang 50k` becomes `Budi Bayar`.
+    person_pays_debt_match = re.search(
+        r"^\s*(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)\s+"
+        r"(?:bayar|byr|melunasi|lunasin|lunasi|nyicil|cicil|transfer\s+balik|kembaliin|balikin|dibalikin)\s+"
+        r"(?:hutang|utang|piutang|debt|cicilan)\b(?=.*(?:\d|rp|idr))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if person_pays_debt_match:
+        person = re.sub(r"\s+", " ", person_pays_debt_match.group("person")).strip().title()
+        if person and person.lower() not in {"saya", "aku", "gw", "gue", "gua"} and person.lower() not in ACCOUNT_NAMES:
+            return attach_debt_account_payload({
+                "intent": "add_payment",
+                "person_name": person,
+                "amount": amount,
+                "description": f"Pembayaran piutang dari {person}",
+                "date": detect_date(text),
+                "raw_input": text,
+                "target_debt_type": "receivable",
+            }, text)
+
+    self_pays_debt_match = re.search(
+        r"^\s*(?:saya|aku|gw|gue|gua)\s+"
+        r"(?:bayar|byr|melunasi|lunasin|lunasi|nyicil|cicil)\s+"
+        r"(?:hutang|utang|debt|cicilan)\s+"
+        r"(?:ke|sama)?\s*"
+        r"(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if self_pays_debt_match:
+        person = re.sub(r"\s+", " ", self_pays_debt_match.group("person")).strip().title()
+        if person:
+            return attach_debt_account_payload({
+                "intent": "add_payment",
+                "person_name": person,
+                "amount": amount,
+                "description": f"Bayar hutang ke {person}",
+                "date": detect_date(text),
+                "raw_input": text,
+                "target_debt_type": "payable",
+            }, text)
 
     # Debt flow section
     # Debt flow section

@@ -7,6 +7,8 @@
 from app.bot.handler_parts.common_imports import *
 from app.bot.handler_parts.networth_assets import build_asset_confirm_preview
 from app.services.resolver_service import resolve_parsed_transaction
+from app.nlp.regex_parser import detect_category, detect_account
+from app.nlp.normalizer import normalize_text
 
 
 def parse_input(text: str) -> dict:
@@ -465,7 +467,32 @@ def parse_income_missing_amount(line: str) -> dict | None:
         flags=re.IGNORECASE,
     )
     if not match:
-        return None
+        expense_like = re.search(
+            r"\b(?:beli|bayar|byr|jajan|makan|minum|ngopi|belanja|isi|top\s*up|topup)\b",
+            raw,
+            flags=re.IGNORECASE,
+        )
+        if not expense_like:
+            return None
+
+        description = strip_date_phrases(raw)
+        description = re.sub(r"\b(?:dari|via|pakai|pake|ke|rekening)\s+[A-Za-zÀ-ÿ0-9\s]+$", " ", description, flags=re.IGNORECASE)
+        description = re.sub(r"^\s*(?:beli|bayar|byr|jajan|makan|minum|ngopi|belanja|isi|top\s*up|topup)\s+", " ", description, flags=re.IGNORECASE)
+        description = re.sub(r"\s+", " ", description).strip(" .,-;") or "Expense"
+        return {
+            "type": "expense",
+            "amount": None,
+            "category": detect_category(raw, "expense"),
+            "account": detect_account(raw),
+            "to_account": None,
+            "subject": description.title(),
+            "description": description.title(),
+            "catatan": raw,
+            "tipe_pengeluaran": "Harian",
+            "date": detect_date(raw),
+            "parsed_by": "missing_amount",
+            "needs_amount": True,
+        }
 
     person_raw = match.group(1).strip()
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
@@ -925,12 +952,14 @@ def build_pending_expense_confirm_preview(item: dict, include_question: bool = T
 def parse_clarification_keyboard() -> InlineKeyboardMarkup:
     """Parse input into structured data for clarification keyboard."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("1️⃣ Debt payment", callback_data="clarify_parse:debt_payment")],
-        [InlineKeyboardButton("2️⃣ Expense saya", callback_data="clarify_parse:expense")],
-        [InlineKeyboardButton("3️⃣ No cashflow", callback_data="clarify_parse:no_cashflow")],
-        [InlineKeyboardButton("4️⃣ Saya talangin", callback_data="clarify_parse:fronting")],
-        [InlineKeyboardButton("5️⃣ Tulis ulang", callback_data="clarify_parse:rewrite")],
-        [InlineKeyboardButton("❌ Batal", callback_data="cancel:clarification")],
+        [InlineKeyboardButton("🟢 Orang ini bayar ke saya", callback_data="clarify_parse:debt_payment")],
+        [InlineKeyboardButton("🔴 Saya hutang ke orang ini", callback_data="clarify_parse:payable")],
+        [InlineKeyboardButton("🧾 Pengeluaran biasa", callback_data="clarify_parse:expense")],
+        [InlineKeyboardButton("👤 Orang lain yang bayar", callback_data="clarify_parse:no_cashflow")],
+        [InlineKeyboardButton("🤝 Split bill", callback_data="clarify_parse:split")],
+        [InlineKeyboardButton("🙋 Saya talangin", callback_data="clarify_parse:fronting")],
+        [InlineKeyboardButton("✍️ Tulis ulang", callback_data="clarify_parse:rewrite")],
+        [InlineKeyboardButton("🚫 Batal", callback_data="cancel:clarification")],
     ])
 
 
@@ -952,14 +981,446 @@ def build_parse_clarification_prompt(raw: str, assessment: dict | None = None) -
     lines.extend([
         "",
         "Maksudnya yang mana?",
-        "1. Budi/orang ini bayar hutang/piutang ke saya",
-        "2. Saya mencatat pengeluaran biasa",
-        "3. Orang lain yang membayar, tidak perlu mengubah saldo saya",
-        "4. Saya talangin orang ini",
-        "5. Saya tulis ulang inputnya",
+        "• 🟢 Orang ini bayar ke saya",
+        "• 🔴 Saya hutang ke orang ini",
+        "• 🧾 Pengeluaran biasa",
+        "• 👤 Orang lain yang bayar",
+        "• 🤝 Split bill",
+        "• 🙋 Saya talangin",
+        "• ✍️ Tulis ulang",
+        "• 🚫 Batal",
     ])
     return "\n".join(lines)
 
+
+
+# ── Phase 2: social-money ambiguity and split bill wizard helpers ─────────────
+
+SOCIAL_MEAL_KEYWORDS = r"(?:makan|minum|ngopi|lunch|dinner|brunch|jajan)"
+SOCIAL_FRIEND_MARKER = r"(?:bareng|sama|dengan|ama)"
+
+
+def extract_people_from_social_input(raw: str) -> list[str]:
+    """Extract friend names from ambiguous social-spending text."""
+    clean = str(raw or "").strip()
+    if not clean:
+        return []
+
+    match = re.search(
+        rf"\b{SOCIAL_FRIEND_MARKER}\s+(?P<names>[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{{0,100}}?)(?=\s*(?:\d|rp|idr|tanggal|tgl|kemarin|hari\s+ini|besok|dari|via|pakai|pake|$))",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        match = re.search(
+            rf"\b{SOCIAL_MEAL_KEYWORDS}\s+{SOCIAL_FRIEND_MARKER}\s+(?P<names>[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{{0,100}}?)(?=\s*(?:\d|rp|idr|tanggal|tgl|kemarin|hari\s+ini|besok|dari|via|pakai|pake|$))",
+            clean,
+            flags=re.IGNORECASE,
+        )
+    if not match:
+        return []
+
+    names = split_split_bill_person_names(match.group("names") or "")
+    noise = {"makan", "minum", "ngopi", "lunch", "dinner", "brunch", "jajan"}
+    result = []
+    seen = set()
+    for name in names:
+        key = normalize_text(name)
+        if not key or key in noise or key in seen:
+            continue
+        result.append(str(name).strip().title())
+        seen.add(key)
+    return result
+
+
+def detect_social_spending_ambiguity(raw: str) -> dict | None:
+    """Detect inputs like `Makan bareng Budi 80k` that need a guard."""
+    clean = normalize_text(raw)
+    if not clean or not extract_amount_from_text(clean):
+        return None
+
+    # Explicit intent should stay in the debt/split flow and not be caught here.
+    if re.search(r"\b(?:hutang|utang|piutang|minjem|pinjem|pinjam|talangin|ditalangin|nitip|dibayarin|duluin|bayar\s+(?:hutang|utang)|split\s*bill|split|ptpt|patungan|dibagi|bagi|berdua|bertiga|berempat)\b", clean, flags=re.IGNORECASE):
+        return None
+
+    has_social_phrase = bool(re.search(rf"\b{SOCIAL_MEAL_KEYWORDS}\b.*\b{SOCIAL_FRIEND_MARKER}\b|\b{SOCIAL_FRIEND_MARKER}\s+[a-zA-ZÀ-ÿ]+", clean, flags=re.IGNORECASE))
+    if not has_social_phrase:
+        return None
+
+    people = extract_people_from_social_input(raw)
+    if not people:
+        return None
+
+    parsed = parse_with_regex(raw) or {}
+    if parsed.get("type") != "expense":
+        return None
+
+    amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
+    if amount <= 0:
+        return None
+
+    return {
+        "raw": raw,
+        "people": people,
+        "amount": amount,
+        "parsed": parsed,
+    }
+
+
+def social_spending_guard_keyboard() -> InlineKeyboardMarkup:
+    """Keyboard for `makan bareng` ambiguity."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🤝 Split bill", callback_data="meal_guard:split")],
+        [InlineKeyboardButton("🧾 Pengeluaran biasa", callback_data="meal_guard:expense")],
+        [InlineKeyboardButton("✍️ Tulis ulang", callback_data="meal_guard:rewrite")],
+        [InlineKeyboardButton("🚫 Batal", callback_data="cancel:meal_guard")],
+    ])
+
+
+def build_social_spending_guard_prompt(raw: str, guard: dict) -> str:
+    """Build a concise guard prompt for ambiguous social spending."""
+    people_text = ", ".join(guard.get("people") or []) or "teman"
+    amount = float(guard.get("amount") or 0)
+    return (
+        "🤔 *Input ini terlihat seperti makan/bareng orang lain.*\n\n"
+        f"Input: `{md_safe(raw)}`\n"
+        f"Total: *{format_rupiah(amount)}*\n"
+        f"Orang terdeteksi: *kamu dan {md_safe(people_text)}*\n\n"
+        "Mau dicatat sebagai split bill atau pengeluaran biasa?\n\n"
+        "Kalau pengeluaran biasa, transaksi akan dicatat sebagai pengeluaran pribadi "
+        f"dengan catatan makan bareng/traktir {md_safe(people_text)}."
+    )
+
+
+def build_social_spending_expense(raw: str, guard: dict) -> dict:
+    """Convert ambiguous social spending into a normal personal expense."""
+    parsed = dict((guard or {}).get("parsed") or parse_with_regex(raw) or {})
+    amount = float(parsed.get("amount") or (guard or {}).get("amount") or parse_human_amount(raw) or 0)
+    people = (guard or {}).get("people") or extract_people_from_social_input(raw)
+    people_text = ", ".join(people) if people else "teman"
+    subject = f"Makan bareng {people_text}" if people else (parsed.get("subject") or "Makan bareng")
+
+    parsed.update({
+        "type": "expense",
+        "amount": amount,
+        "category": parsed.get("category") or detect_category(raw, "expense"),
+        "subject": subject,
+        "description": subject,
+        "catatan": f"Dicatat sebagai pengeluaran biasa / traktir {people_text}",
+        "date": parsed.get("date") or detect_date(raw),
+        "parsed_by": parsed.get("parsed_by") or "social_guard",
+    })
+    parsed.pop("split_bill", None)
+    return parsed
+
+
+def meal_split_payer_keyboard() -> InlineKeyboardMarkup:
+    """Ask who paid the transaction first."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🙋 Saya yang bayar", callback_data="meal_split:payer:self")],
+        [InlineKeyboardButton("👤 Bukan saya yang bayar", callback_data="meal_split:payer:other")],
+        [InlineKeyboardButton("✍️ Tulis ulang", callback_data="meal_guard:rewrite")],
+        [InlineKeyboardButton("🚫 Batal", callback_data="cancel:meal_split")],
+    ])
+
+
+def build_meal_split_payer_prompt(guard: dict) -> str:
+    """Prompt for payer step in social split bill."""
+    people = guard.get("people") or []
+    people_text = ", ".join(people) or "teman"
+    return (
+        "Siapa yang membayar transaksi ini di awal?\n\n"
+        f"Total transaksi: *{format_rupiah(guard.get('amount') or 0)}*\n"
+        f"Orang yang terdeteksi: *kamu dan {md_safe(people_text)}*"
+    )
+
+
+def meal_split_allocation_keyboard() -> InlineKeyboardMarkup:
+    """Ask whether split bill is equal or custom."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚖️ Bagi rata", callback_data="meal_split:allocation:equal")],
+        [InlineKeyboardButton("📊 Atur pembagian", callback_data="meal_split:allocation:custom")],
+        [InlineKeyboardButton("✍️ Tulis ulang", callback_data="meal_guard:rewrite")],
+        [InlineKeyboardButton("🚫 Batal", callback_data="cancel:meal_split")],
+    ])
+
+
+def build_meal_split_allocation_prompt(state: dict) -> str:
+    """Prompt for allocation step in social split bill."""
+    people = state.get("people") or []
+    people_text = ", ".join(people) or "teman"
+    return (
+        "Pembagiannya gimana?\n\n"
+        f"Total transaksi: *{format_rupiah(state.get('amount') or 0)}*\n"
+        f"Orang yang terdeteksi: *kamu dan {md_safe(people_text)}*"
+    )
+
+
+def build_meal_split_custom_allocation_prompt(state: dict) -> str:
+    """Prompt for custom allocation input."""
+    people = state.get("people") or []
+    people_text = ", ".join(people) or "Budi"
+    return (
+        "Tulis pembagiannya dalam satu pesan.\n\n"
+        "Bisa pakai bobot persen atau nominal langsung.\n\n"
+        f"Contoh bobot:\n`saya 100%, {people_text} 100%`\n\n"
+        f"Contoh nominal:\n`saya 30k, {people_text} 50k`\n\n"
+        "Catatan:\n"
+        "Angka persen di sini adalah bobot pembagian, bukan total yang harus berjumlah 100%.\n"
+        "Contohnya kalau saya 100% dan Budi 100%, berarti dibagi rata. "
+        "Kalau saya 100% dan Budi 80%, berarti bagian Budi lebih kecil dari bagian saya."
+    )
+
+
+def compute_equal_meal_split_shares(amount: float, people: list[str]) -> dict:
+    """Compute equal split shares for user and friends."""
+    participant_count = max(len(people or []) + 1, 1)
+    share = float(amount or 0) / participant_count
+    shares = {"Kamu": share}
+    for person in people or []:
+        shares[str(person).strip().title()] = share
+    return shares
+
+
+def parse_meal_split_allocation(text: str, amount: float, people: list[str]) -> dict | None:
+    """Parse custom social split allocation using weighted percent or nominal values."""
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    aliases = {"saya": "Kamu", "aku": "Kamu", "gw": "Kamu", "gue": "Kamu", "gua": "Kamu", "kamu": "Kamu"}
+    for person in people or []:
+        aliases[normalize_text(person)] = str(person).strip().title()
+
+    pattern = r"(?P<name>saya|aku|gw|gue|gua|kamu|[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{0,40}?)\s*:?\s*(?P<value>\d+(?:[.,]\d+)?\s*(?:%|rb|ribu|k|jt|juta|m)?)"
+    entries = []
+    for match in re.finditer(pattern, raw, flags=re.IGNORECASE):
+        name_raw = re.sub(r"\s+", " ", match.group("name") or "").strip()
+        value_raw = str(match.group("value") or "").strip()
+        key = normalize_text(name_raw)
+        name = aliases.get(key) or name_raw.title()
+        if name not in {"Kamu", *[str(p).strip().title() for p in people or []]}:
+            continue
+        entries.append((name, value_raw))
+
+    if not entries:
+        return None
+
+    has_percent = any(value.strip().endswith("%") for _, value in entries)
+    has_nominal = any(not value.strip().endswith("%") for _, value in entries)
+    if has_percent and has_nominal:
+        return None
+
+    seen = {}
+    for name, value in entries:
+        seen[name] = value
+
+    expected_names = ["Kamu"] + [str(p).strip().title() for p in people or [] if str(p).strip()]
+    if has_percent:
+        weights = {}
+        for name in expected_names:
+            raw_value = str(seen.get(name) or "").strip()
+            if raw_value.endswith("%"):
+                try:
+                    weights[name] = max(float(raw_value[:-1].replace(",", ".").strip()), 0.0)
+                except Exception:
+                    weights[name] = 0.0
+            else:
+                weights[name] = 0.0
+        total_weight = sum(weights.values())
+        if total_weight <= 0:
+            return None
+        return {name: float(amount or 0) * weight / total_weight for name, weight in weights.items()}
+
+    shares = {}
+    for name in expected_names:
+        raw_value = str(seen.get(name) or "").strip()
+        shares[name] = parse_human_amount(raw_value) if raw_value else 0.0
+    total_shares = sum(shares.values())
+    if total_shares <= 0:
+        return None
+    return shares
+
+
+def meal_split_status_keyboard(payer: str) -> InlineKeyboardMarkup:
+    """Ask whether the relevant share has already been paid."""
+    if payer == "self":
+        paid_label = "✅ Sudah bayar"
+        unpaid_label = "⏳ Belum bayar"
+    else:
+        paid_label = "✅ Sudah bayar"
+        unpaid_label = "⏳ Belum bayar"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(paid_label, callback_data="meal_split:status:paid")],
+        [InlineKeyboardButton(unpaid_label, callback_data="meal_split:status:unpaid")],
+        [InlineKeyboardButton("🚫 Batal", callback_data="cancel:meal_split")],
+    ])
+
+
+def build_meal_split_status_prompt(state: dict) -> str:
+    """Prompt for payment status in social split bill."""
+    people = state.get("people") or []
+    people_text = ", ".join(people) or "teman"
+    if state.get("payer") == "self":
+        return f"Apakah {md_safe(people_text)} sudah bayar bagian dia ke kamu?"
+    return "Apakah kamu sudah bayar bagian kamu?"
+
+
+def build_meal_split_final_payload(state: dict) -> dict:
+    """Build pending parsed/debt payload from the social split bill wizard."""
+    amount = float(state.get("amount") or 0)
+    people = [str(p).strip().title() for p in (state.get("people") or []) if str(p).strip()]
+    shares = state.get("shares") or compute_equal_meal_split_shares(amount, people)
+    user_share = float(shares.get("Kamu", 0) or 0)
+    person_shares = {person: float(shares.get(person, 0) or 0) for person in people}
+    total_receivable = sum(person_shares.values())
+    payer = state.get("payer") or "self"
+    status = state.get("status") or "unpaid"
+    parsed = dict(state.get("parsed") or {})
+    raw = state.get("raw") or parsed.get("raw_input") or ""
+    people_text = ", ".join(people) or "teman"
+    description = f"Makan bareng {people_text}"
+    category = parsed.get("category") or detect_category(raw, "expense")
+    date = parsed.get("date") or detect_date(raw)
+
+    if payer == "self":
+        cashflow_amount = amount if status == "unpaid" else user_share
+        parsed.update({
+            "type": "expense",
+            "amount": cashflow_amount,
+            "category": category,
+            "subject": description,
+            "description": description,
+            "catatan": "Split bill: saya yang bayar; " + ("teman belum bayar" if status == "unpaid" else "teman sudah bayar"),
+            "date": date,
+            "parsed_by": parsed.get("parsed_by") or "meal_split",
+            "split_bill": {
+                "person_name": " ".join(people),
+                "person_names": people,
+                "participants": len(people) + 1,
+                "share_amount": user_share,
+                "user_share_amount": user_share,
+                "base_share_amount": amount / max(len(people) + 1, 1),
+                "person_shares": person_shares,
+                "has_custom_share": bool(state.get("allocation_mode") == "custom"),
+                "total_receivable": total_receivable if status == "unpaid" else 0,
+                "total_amount": amount,
+                "status": "unpaid" if status == "unpaid" else "paid",
+            },
+        })
+        return {"mode": "transaction", "parsed": parsed, "cashflow_amount": cashflow_amount}
+
+    payer_name = people[0] if people else "Teman"
+    if status == "unpaid":
+        return {
+            "mode": "debt",
+            "debt": {
+                "intent": "add_payable",
+                "person_name": payer_name,
+                "amount": user_share,
+                "description": f"Split bill {description}",
+                "date": date,
+                "raw_input": raw,
+                "cashflow_mode": "debt_only",
+                "fronting_mode": "split_bill_orang_lain_bayar",
+            },
+            "cashflow_amount": 0,
+        }
+
+    parsed.update({
+        "type": "expense",
+        "amount": user_share,
+        "category": category,
+        "subject": description,
+        "description": description,
+        "catatan": f"Split bill: {payer_name} yang bayar; saya sudah bayar bagian saya",
+        "date": date,
+        "parsed_by": parsed.get("parsed_by") or "meal_split",
+    })
+    parsed.pop("split_bill", None)
+    return {"mode": "transaction", "parsed": parsed, "cashflow_amount": user_share}
+
+
+def build_meal_split_detail_preview(state: dict, payload: dict | None = None) -> str:
+    """Build preview detail before account selection in social split bill."""
+    amount = float(state.get("amount") or 0)
+    people = state.get("people") or []
+    shares = state.get("shares") or compute_equal_meal_split_shares(amount, people)
+    payer = state.get("payer") or "self"
+    status = state.get("status") or "unpaid"
+    allocation_label = "Bagi rata" if state.get("allocation_mode") != "custom" else "Atur pembagian"
+
+    lines = [
+        "🤝 *Preview split bill*\n",
+        f"Total transaksi: *{format_rupiah(amount)}*",
+        f"Pembagian: *{md_safe(allocation_label)}*",
+        f"Orang terlibat: *kamu dan {md_safe(', '.join(people) or 'teman')}*",
+        "",
+        "📋 *Rincian bagian:*",
+    ]
+    for name, share in shares.items():
+        label = "Kamu" if name == "Kamu" else name
+        lines.append(f"• {md_safe(label)}: *{format_rupiah(share)}*")
+
+    lines.extend(["", "💸 *Status:*"])
+    if payer == "self":
+        lines.append("• Pembayar awal: Saya")
+        for person in people:
+            lines.append(f"• {md_safe(person)} {'belum bayar' if status == 'unpaid' else 'sudah bayar'}")
+        if status == "unpaid":
+            lines.append(f"• Piutang teman: *{format_rupiah(sum(float(shares.get(p, 0) or 0) for p in people))}*")
+            lines.append(f"• Saldo keluar dari rekening saya: *{format_rupiah(amount)}*")
+        else:
+            lines.append(f"• Expense pribadi: *{format_rupiah(float(shares.get('Kamu', 0) or 0))}*")
+            lines.append(f"• Saldo keluar dari rekening saya: *{format_rupiah(float(shares.get('Kamu', 0) or 0))}*")
+    else:
+        payer_name = people[0] if people else "Teman"
+        lines.append(f"• Pembayar awal: {md_safe(payer_name)}")
+        if status == "unpaid":
+            lines.append(f"• Kamu belum bayar ke {md_safe(payer_name)}")
+            lines.append(f"• Utang kamu: *{format_rupiah(float(shares.get('Kamu', 0) or 0))}*")
+            lines.append("• Tidak ada saldo rekening yang berubah sekarang")
+        else:
+            lines.append(f"• Kamu sudah bayar ke {md_safe(payer_name)}")
+            lines.append(f"• Expense pribadi: *{format_rupiah(float(shares.get('Kamu', 0) or 0))}*")
+            lines.append(f"• Saldo keluar dari rekening saya: *{format_rupiah(float(shares.get('Kamu', 0) or 0))}*")
+
+    lines.append("\nMau lanjut, edit dulu, atau batal?")
+    return "\n".join(lines)
+
+
+def meal_split_continue_keyboard() -> InlineKeyboardMarkup:
+    """Continue keyboard after social split detail preview."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➡️ Lanjut", callback_data="meal_split:continue")],
+        [InlineKeyboardButton("✏️ Edit dulu", callback_data="meal_guard:rewrite")],
+        [InlineKeyboardButton("🚫 Batal", callback_data="cancel:meal_split")],
+    ])
+
+
+def build_meal_split_final_summary(parsed_or_debt: dict, mode: str) -> str:
+    """Build final ringkas summary for social split bill after rekening/debt decision."""
+    if mode == "debt":
+        return build_debt_only_confirm_preview(parsed_or_debt)
+
+    parsed = parsed_or_debt
+    split_bill = parsed.get("split_bill") or {}
+    total = float(split_bill.get("total_amount", parsed.get("amount", 0)) or 0)
+    user_share = float(split_bill.get("user_share_amount", parsed.get("amount", 0)) or 0)
+    total_receivable = float(split_bill.get("total_receivable", 0) or 0)
+    lines = [
+        "🧾 *Ringkasan split bill:*",
+        f"• Total transaksi: *{format_rupiah(total)}*",
+        f"• Expense pribadi: *{format_rupiah(user_share)}*",
+    ]
+    if total_receivable > 0:
+        names = ", ".join(split_bill.get("person_names") or []) or "teman"
+        lines.append(f"• Piutang {md_safe(names)}: *{format_rupiah(total_receivable)}*")
+    lines.append(f"• Rekening: *{md_safe(parsed.get('account') or '-')}*")
+    account_summary = build_account_delta_summary_from_transaction_items([{"parsed": parsed}])
+    if account_summary:
+        lines.extend(["", account_summary])
+    return "\n".join(lines)
 
 def parse_participant_count(value: str) -> int | None:
     """Parse input into structured data for participant count."""
@@ -2559,7 +3020,7 @@ def strip_split_bill_phrase(text: str) -> str:
     # Split bill parsing note: separate the paid transaction from each person share.
     # sering already kehilangan angka pembagi, misalnya:
     # "Nasi Kuning Dibagi Sama Raka".
-    split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
+    split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|ptpt|split\s*bill|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
     participant_token = r"(?:\d+|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|berdua|bertiga|berempat|berlima|berenam)"
     name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s,;&:%./]{0,140}"
@@ -2862,7 +3323,7 @@ def build_split_bill_item_description_from_raw(raw: str, fallback: str = "") -> 
     text = strip_date_phrases(text)
     text = re.sub(r"\b(?:rp|idr)?\s*\d[\d.,]*\s*(?:rb|ribu|k|jt|juta|m|miliar)?\b", " ", text, flags=re.IGNORECASE)
 
-    split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
+    split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|ptpt|split\s*bill|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
     participant_token = r"(?:\d+|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|berdua|bertiga|berempat|berlima|berenam)"
     name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s,;&:%./]{0,140}"
@@ -2908,10 +3369,52 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     # Split bill parsing note: separate the paid transaction from each person share.
     text = normalize_slash_split_syntax(str(raw or ""))
-    split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|split|share)"
+    split_word = r"(?:di\s*-?\s*bagi|dibagi|bagi|patungan|ptpt|split\s*bill|split|share)"
     friend_marker = r"(?:sama|ama|dengan|bareng)"
     participant_token = r"(?:\d+|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|berdua|bertiga|berempat|berlima|berenam)"
     name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s,;&:%./]{0,140}"
+
+    # Phase 2 compact split: `split bill makan Budi 80k` or `ptpt makan 80k sama Budi`.
+    compact_patterns_early = [
+        rf"\b(?:split\s*bill|split|patungan|ptpt)\b\s+(?P<body>.+?)\s+(?:sama|ama|dengan|bareng)\s+(?P<names>{name_chunk})(?=\s*(?:tanggal|tgl|kemarin|hari\s+ini|besok|via|pakai|pake|dari|\d|rp|idr|$))",
+        rf"\b(?:split\s*bill|split|patungan|ptpt)\b\s+(?P<body>.+?)\s+(?P<names>[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{{0,80}}?)(?=\s*(?:\d|rp|idr|$))",
+    ]
+    for compact_pattern in compact_patterns_early:
+        compact_match = re.search(compact_pattern, text, flags=re.IGNORECASE)
+        if not compact_match:
+            continue
+        compact_names = split_split_bill_person_names(compact_match.group("names") or "")
+        compact_names = [
+            name for name in compact_names
+            if normalize_text(name) not in {"makan", "minum", "ngopi", "lunch", "dinner", "brunch", "jajan"}
+        ]
+        if not compact_names:
+            continue
+
+        participants = len(compact_names) + 1
+        base_share_amount = amount / participants
+        person_shares = {person: base_share_amount for person in compact_names}
+        parsed["amount"] = amount
+        clean_desc = build_split_bill_item_description_from_raw(raw, parsed.get("description") or "")
+        clean_desc = strip_trailing_split_person_names(clean_desc, compact_names)
+        parsed["description"] = clean_desc
+        if parsed.get("subject"):
+            parsed["subject"] = clean_desc
+
+        return {
+            "person_name": " ".join(compact_names),
+            "person_names": compact_names,
+            "participants": participants,
+            "share_amount": base_share_amount,
+            "user_share_amount": base_share_amount,
+            "base_share_amount": base_share_amount,
+            "person_shares": person_shares,
+            "has_custom_share": False,
+            "total_receivable": sum(float(v or 0) for v in person_shares.values()),
+            "total_amount": amount,
+            "status": None,
+        }
+
     patterns = [
         # "dibagi 2 sama raka" / "bagi dua sama raka" / "patungan berempat sama ..."
         rf"\b{split_word}\s*(?:jadi\s*)?({participant_token})\s*(?:orang)?\s+{friend_marker}\s+({name_chunk})",
@@ -2957,6 +3460,29 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
         )
         has_custom_share = bool(share_parse.get("has_custom_share"))
         break
+
+    if not participants or participants < 2 or not person_names:
+        # Phase 2: support compact input such as `split bill makan Budi 80k`
+        # or `ptpt makan 80k sama Budi`. If no participant count is written,
+        # treat the user + detected friend(s) as the participants.
+        compact_patterns = [
+            rf"\b(?:split\s*bill|split|patungan|ptpt)\b\s+(?P<body>.+?)\s+(?:sama|ama|dengan|bareng)\s+(?P<names>{name_chunk})(?=\s*(?:tanggal|tgl|kemarin|hari\s+ini|besok|via|pakai|pake|dari|\d|rp|idr|$))",
+            rf"\b(?:split\s*bill|split|patungan|ptpt)\b\s+(?P<body>.+?)\s+(?P<names>[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{0,80}?)(?=\s*(?:\d|rp|idr|$))",
+        ]
+        for pattern in compact_patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            raw_names = match.group("names") or ""
+            person_names = split_split_bill_person_names(raw_names)
+            person_names = [name for name in person_names if normalize_text(name) not in {"makan", "ngopi", "lunch", "dinner"}]
+            if not person_names:
+                continue
+            participants = len(person_names) + 1
+            base_share_amount = amount / participants
+            person_shares = {person: base_share_amount for person in person_names}
+            has_custom_share = False
+            break
 
     if not participants or participants < 2 or not person_names:
         return None
