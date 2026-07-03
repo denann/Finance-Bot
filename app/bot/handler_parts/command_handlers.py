@@ -5,6 +5,7 @@
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
 from app.bot.handler_parts.transaction_flow import build_pending_expense_confirm_preview, edit_or_continue_keyboard, preview_action_keyboard, preview_action_question
+from app.bot.handler_parts.state_utils import clear_pending_flow_state, describe_active_pending_flow, has_active_pending_flow
 from app.services.resolver_service import resolve_account_name
 
 
@@ -222,6 +223,30 @@ async def quickstart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
+async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel any active wizard, preview, or pending confirmation state."""
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    active_label = describe_active_pending_flow(context)
+    removed = clear_pending_flow_state(context)
+
+    if removed:
+        await update.message.reply_text(
+            "🚫 *Flow aktif dibatalkan.*\n\n"
+            f"State yang dibersihkan: *{md_safe(active_label or 'pending flow')}*\n\n"
+            "Tidak ada data yang disimpan.",
+            parse_mode="Markdown",
+        )
+        return
+
+    await update.message.reply_text(
+        "ℹ️ Tidak ada flow aktif yang perlu dibatalkan.",
+        parse_mode="Markdown",
+    )
+
+
 async def set_saldo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /set_saldo and prepare a confirmation preview before updating an account balance."""
     if not is_authorized(update):
@@ -334,7 +359,8 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📖 *Panduan Penggunaan Finance Bot*\n\n"
         "`/start` — ringkasan fitur utama bot\n"
         "`/quickstart` — panduan langkah awal untuk user baru\n"
-        "`/help` — panduan lengkap ini\n\n"
+        "`/help` — panduan lengkap ini\n"
+        "`/cancel` — batalkan wizard/preview yang sedang aktif\n\n"
 
         "*A. Cara Input Utama*\n"
         "Bot bisa menerima 1 transaksi, banyak transaksi sekaligus, foto struk/QRIS, atau command.\n\n"
@@ -516,7 +542,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/asset_add` — tambah aset mode tanya-jawab/guided input\n"
         "Format lama tetap bisa dipakai:\n"
         "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja`\n"
-        "`/asset_add Emas Antam | 41 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
+        "`/asset_add Emas Antam | 999 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
         "Dalam mode guided, bot akan tanya nama aset, jumlah/unit, harga beli, tanggal beli, harga saat ini, kategori, dan deskripsi.\n"
         "Tanggal beli boleh dikosongkan dengan mengetik `lewati`, `kosong`, atau `-`.\n"
         "Setiap step punya tombol `Batal`.\n"
@@ -1758,6 +1784,7 @@ async def set_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     text = update.message.text.strip()
+    text = re.sub(r"^/(?:set_budget)(?:@\w+)?\s*", "budget ", text, flags=re.IGNORECASE).strip()
     text_lower = text.lower()
 
     from app.nlp.normalizer import extract_amount_from_text
@@ -1855,23 +1882,23 @@ async def set_budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     budget_label = matched_category or label_text.title()
 
-    result = set_budget(budget_label, amount, month=month)
-
-    if not result.get("success"):
-        await update.message.reply_text(f"❌ {result.get('message')}")
-        return
-
-    action_label = "diset" if result["action"] == "created" else "diupdate"
     source_note = "kategori resmi" if matched_category else "budget custom"
+    context.user_data["pending_budget_confirm"] = {
+        "category": budget_label,
+        "amount": float(amount),
+        "month": month,
+        "source_note": source_note,
+    }
 
     await update.message.reply_text(
-        f"✅ Budget *{budget_label}* {action_label}!\n"
-        f"📅 Bulan: *{format_month_label(month)}*\n"
-        f"💰 {format_rupiah(amount)} / bulan\n"
-        f"🏷️ Tipe: {source_note}\n\n"
-        f"Cek dengan:\n"
-        f"`/budget {month}`",
+        "📊 *Preview Set Budget*\n\n"
+        f"Kategori: *{md_safe(budget_label)}*\n"
+        f"Bulan: *{format_month_label(month)}*\n"
+        f"Nominal: *{format_rupiah(amount)} / bulan*\n"
+        f"Tipe: {md_safe(source_note)}\n\n"
+        "Mau simpan budget ini?",
         parse_mode="Markdown",
+        reply_markup=confirm_keyboard("budget"),
     )
 
 

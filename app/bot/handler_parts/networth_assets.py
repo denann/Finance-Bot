@@ -281,7 +281,7 @@ def parse_pipe_add_args(args: list[str], item_type: str) -> dict:
 
     amount = parse_human_amount(amount_raw)
     if amount <= 0:
-        raise ValueError("Nominal harus angka. Contoh: `8000000`, `2.4 juta`, atau aset satuan `41 gram`.")
+        raise ValueError("Nominal harus angka. Contoh: `8000000`, `2.4 juta`, atau aset satuan `999 gram`.")
 
     return {
         "name": name,
@@ -304,7 +304,7 @@ def parse_natural_asset_add(text: str) -> dict | None:
     raw = str(text or "").strip()
 
     amount_match = re.fullmatch(
-        r"(?:catat|catet|add|tambah)(?:\s+aset)\s+(.+?)\s+"
+        r"(?:(?:catat|catet|add|tambah)\s+aset|aset)\s+(.+?)\s+"
         r"((?:rp\.?\s*)?\d[\d.,]*(?:\s*(?:rb|ribu|k|jt|juta|m|mio))?)",
         raw,
         flags=re.IGNORECASE,
@@ -375,40 +375,53 @@ def parse_natural_asset_add(text: str) -> dict | None:
     }
 
 def parse_pipe_update_args(args: list[str], command_name: str) -> tuple[str, dict]:
-    """Parse input into structured data for pipe update args."""
+    """Parse update args and support both old pipe format and new key=value format."""
     raw = " ".join(args).strip()
 
     if not raw:
         raise ValueError(
             f"Format kosong.\n\n"
-            f"Contoh:\n"
-            f"`/{command_name} id_xxx | value=9000000`"
+            f"Contoh baru: `/{command_name} id_xxx amount=9000000`\n"
+            f"Format lama tetap bisa: `/{command_name} id_xxx | value=9000000`"
         )
 
-    parts = [p.strip() for p in raw.split("|") if p.strip()]
-
-    if len(parts) < 2:
-        raise ValueError(
-            f"Format belum lengkap.\n\n"
-            f"Contoh:\n"
-            f"`/{command_name} id_xxx | value=9000000`"
-        )
-
-    record_id = parts[0]
-    update_parts = parts[1:]
+    if "|" in raw:
+        parts = [p.strip() for p in raw.split("|") if p.strip()]
+        if len(parts) < 2:
+            raise ValueError(
+                f"Format belum lengkap.\n\n"
+                f"Contoh: `/{command_name} id_xxx | value=9000000`"
+            )
+        record_id = parts[0]
+        update_tokens = parts[1:]
+    else:
+        try:
+            tokens = shlex.split(raw)
+        except Exception:
+            tokens = raw.split()
+        if len(tokens) < 2:
+            raise ValueError(
+                f"Format belum lengkap.\n\n"
+                f"Contoh: `/{command_name} id_xxx amount=9000000`"
+            )
+        record_id = tokens[0]
+        update_tokens = tokens[1:]
 
     updates = {}
 
-    for part in update_parts:
-        if "=" not in part:
-            raise ValueError(f"Format `{part}` salah. Gunakan field=value.")
+    for token in update_tokens:
+        if "=" not in token:
+            raise ValueError(f"Format `{token}` salah. Gunakan field=value.")
 
-        field, value = part.split("=", 1)
-        field = field.strip()
+        field, value = token.split("=", 1)
+        field = field.strip().lower()
         value = value.strip()
 
         if not field or not value:
-            raise ValueError(f"Format `{part}` salah. Field dan value wajib diisi.")
+            raise ValueError(f"Format `{token}` salah. Field dan value wajib diisi.")
+
+        if command_name == "asset_update" and field == "amount":
+            field = "value"
 
         updates[field] = value
 
@@ -496,8 +509,8 @@ def build_assets_text(assets: list[dict]) -> str:
             "📭 Belum ada aset aktif.\n\n"
             "Tambah aset:\n"
             "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja`\n"
-            "`/asset_add Emas Antam | 41 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
-            "atau natural: `add emas 41 gram`"
+            "`/asset_add Emas Antam | 999 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
+            "atau natural: `add emas 999 gram`"
         )
 
     lines = ["📦 *Daftar Aset Aktif*\n"]
@@ -774,22 +787,34 @@ def build_asset_confirm_preview(data: dict) -> str:
 
 
 ASSET_ADD_FLOW_KEY = "pending_asset_add_flow"
+ASSET_ADD_PROMPT_MESSAGE_KEY = "pending_asset_add_prompt_message_id"
 ASSET_ADD_SKIP_WORDS = {"skip", "lewati", "kosong", "-", "tidak", "tidak ada", "ga ada", "gak ada", "nggak ada"}
 ASSET_ADD_CANCEL_WORDS = {"cancel", "batal", "/cancel"}
+ASSET_ADD_OPTIONAL_STEPS = {"purchase_price", "purchase_date", "category", "description"}
+ASSET_ADD_MIN_MANUAL_VALUE = 1_000
 
 
 def _asset_flow_is_skip(text: str) -> bool:
-    """Helper for asset flow is skip in the Telegram bot flow."""
+    """Check whether user wants to skip an optional asset wizard field."""
     return str(text or "").strip().lower() in ASSET_ADD_SKIP_WORDS
 
 
 def _asset_flow_is_cancel(text: str) -> bool:
-    """Helper for asset flow is cancel in the Telegram bot flow."""
+    """Check whether user wants to cancel the asset wizard."""
     return str(text or "").strip().lower() in ASSET_ADD_CANCEL_WORDS
 
 
+def asset_add_step_keyboard(step: str) -> InlineKeyboardMarkup:
+    """Build the inline keyboard for one asset_add wizard step."""
+    rows = []
+    if step in ASSET_ADD_OPTIONAL_STEPS:
+        rows.append([InlineKeyboardButton("⏭️ Lewati", callback_data="asset_add:skip")])
+    rows.append([InlineKeyboardButton("🚫 Batal", callback_data="cancel:asset_add")])
+    return InlineKeyboardMarkup(rows)
+
+
 def _asset_flow_prompt(step: str, data: dict | None = None) -> str:
-    """Helper for asset flow prompt in the Telegram bot flow."""
+    """Build one prompt text for the asset_add wizard."""
     data = data or {}
 
     prompts = {
@@ -805,10 +830,12 @@ def _asset_flow_prompt(step: str, data: dict | None = None) -> str:
             f"Aset: *{md_safe(data.get('name') or '-')}*\n\n"
             "Berapa jumlah/unitnya?\n\n"
             "Contoh aset satuan:\n"
-            "`41 gram`\n"
+            "`999 gram`\n"
             "`1 buah`\n\n"
             "Kalau aset tidak berbasis unit, ketik nilai saat ini langsung:\n"
-            "`8000000`"
+            "`8000000`\n"
+            "`8 juta`\n\n"
+            "Catatan: kalau kamu menulis `1`, bot akan minta konfirmasi ulang karena rawan salah maksud."
         ),
         "purchase_price": (
             "🧾 *Tambah Aset — Step 3/7*\n\n"
@@ -817,7 +844,7 @@ def _asset_flow_prompt(step: str, data: dict | None = None) -> str:
             "Contoh:\n"
             "`2559000`\n"
             "`2.55 juta`\n\n"
-            "Kalau belum mau diisi, ketik `lewati`."
+            "Kalau belum mau diisi, klik *Lewati* atau ketik `lewati`."
         ),
         "purchase_date": (
             "📆 *Tambah Aset — Step 4/7*\n\n"
@@ -826,7 +853,7 @@ def _asset_flow_prompt(step: str, data: dict | None = None) -> str:
             "`2026-06-10`\n"
             "`10/06/2026`\n"
             "`kemarin`\n\n"
-            "Kalau tidak tahu / tidak mau isi, ketik `lewati`."
+            "Kalau tidak tahu / tidak mau isi, klik *Lewati* atau ketik `lewati`."
         ),
         "current_price": (
             "🏷️ *Tambah Aset — Step 5/7*\n\n"
@@ -843,7 +870,7 @@ def _asset_flow_prompt(step: str, data: dict | None = None) -> str:
             "`Gold`\n"
             "`Electronics`\n"
             "`Investment`\n\n"
-            "Kalau mau otomatis, ketik `lewati`."
+            "Kalau mau otomatis, klik *Lewati* atau ketik `lewati`."
         ),
         "description": (
             "📝 *Tambah Aset — Step 7/7*\n\n"
@@ -851,25 +878,52 @@ def _asset_flow_prompt(step: str, data: dict | None = None) -> str:
             "Contoh:\n"
             "`Tabungan emas`\n"
             "`Laptop kerja`\n\n"
-            "Kalau kosong, ketik `lewati`."
+            "Kalau kosong, klik *Lewati* atau ketik `lewati`."
         ),
     }
 
-    return prompts.get(step, "Input tidak dikenali. Ketik `batal` untuk membatalkan.") + "\n\nTekan tombol ❌ Batal atau ketik `batal` untuk cancel."
+    return prompts.get(step, "Input tidak dikenali. Ketik `batal` untuk membatalkan.")
 
 
-def start_asset_add_flow(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Helper for start asset add flow in the Telegram bot flow."""
+async def send_asset_add_step_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, step: str, data: dict | None = None):
+    """Send one asset wizard prompt and track its inline keyboard for later cleanup."""
+    return await reply_tracked_inline_keyboard(
+        update,
+        context,
+        _asset_flow_prompt(step, data),
+        parse_mode="Markdown",
+        reply_markup=asset_add_step_keyboard(step),
+        state_key=ASSET_ADD_PROMPT_MESSAGE_KEY,
+    )
+
+
+async def clear_asset_add_step_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Remove the old asset wizard keyboard after the user answers."""
+    chat = getattr(update, "effective_chat", None)
+    chat_id = getattr(chat, "id", None) or getattr(getattr(update, "message", None), "chat_id", None)
+    await clear_tracked_inline_keyboard(context, chat_id, ASSET_ADD_PROMPT_MESSAGE_KEY)
+
+
+def start_asset_add_flow(context: ContextTypes.DEFAULT_TYPE, initial_data: dict | None = None, step: str = "name") -> None:
+    """Start asset add wizard without discarding fields already known from command args."""
     context.user_data.pop("pending_asset_price", None)
     context.user_data.pop("pending_asset_confirm", None)
     context.user_data[ASSET_ADD_FLOW_KEY] = {
-        "step": "name",
-        "data": {},
+        "step": step or "name",
+        "data": dict(initial_data or {}),
     }
 
 
+def _asset_manual_value_too_small(amount: float, raw_text: str) -> bool:
+    """Guard accidental Rp1/Rp2 asset values that usually mean the user misunderstood the field."""
+    raw = str(raw_text or "").strip().lower()
+    if amount >= ASSET_ADD_MIN_MANUAL_VALUE:
+        return False
+    return bool(re.fullmatch(r"(?:rp\.?\s*)?\d+(?:[.,]0+)?", raw))
+
+
 def _build_asset_data_from_flow(data: dict) -> dict:
-    """Build the data structure or message text for asset data from flow."""
+    """Build normalized asset data from wizard state."""
     name = str(data.get("name") or "").strip()
     category = str(data.get("category") or "").strip()
     name, category = guess_asset_category_and_name(name, category)
@@ -905,19 +959,35 @@ def _build_asset_data_from_flow(data: dict) -> dict:
     }
 
 
+async def _finish_asset_add_flow(update: Update, context: ContextTypes.DEFAULT_TYPE, data: dict) -> bool:
+    """Move completed asset wizard state into confirmation preview."""
+    asset_data = _build_asset_data_from_flow(data)
+    context.user_data["pending_asset_confirm"] = asset_data
+    context.user_data.pop(ASSET_ADD_FLOW_KEY, None)
+    context.user_data.pop(ASSET_ADD_PROMPT_MESSAGE_KEY, None)
+
+    await update.message.reply_text(
+        f"{build_asset_confirm_preview(asset_data)}\n\nMau simpan, edit dulu, atau batal?",
+        parse_mode="Markdown",
+        reply_markup=asset_edit_or_continue_keyboard(),
+    )
+    return True
+
+
 async def handle_pending_asset_add_flow(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
-    """Helper for handle pending asset add flow in the Telegram bot flow."""
+    """Handle one text answer for the asset_add wizard."""
     flow = context.user_data.get(ASSET_ADD_FLOW_KEY)
     if not flow:
         return False
 
     text = str(user_text or "").strip()
+    await clear_asset_add_step_keyboard(update, context)
 
     if _asset_flow_is_cancel(text):
         context.user_data.pop(ASSET_ADD_FLOW_KEY, None)
         context.user_data.pop("pending_asset_price", None)
         context.user_data.pop("pending_asset_confirm", None)
-        await update.message.reply_text("❌ Tambah aset dibatalkan.")
+        await update.message.reply_text("🚫 Tambah aset dibatalkan. Tidak ada data yang disimpan.")
         return True
 
     step = flow.get("step", "name")
@@ -925,11 +995,11 @@ async def handle_pending_asset_add_flow(update: Update, context: ContextTypes.DE
 
     if step == "name":
         if not text:
-            await update.message.reply_text(_asset_flow_prompt("name", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+            await send_asset_add_step_prompt(update, context, "name", data)
             return True
         data["name"] = text
         flow["step"] = "quantity"
-        await update.message.reply_text(_asset_flow_prompt("quantity", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+        await send_asset_add_step_prompt(update, context, "quantity", data)
         return True
 
     if step == "quantity":
@@ -940,25 +1010,32 @@ async def handle_pending_asset_add_flow(update: Update, context: ContextTypes.DE
             if qty_info.get("price_per_unit"):
                 data["price_per_unit"] = qty_info.get("price_per_unit")
             flow["step"] = "purchase_price"
-            await update.message.reply_text(_asset_flow_prompt("purchase_price", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+            await send_asset_add_step_prompt(update, context, "purchase_price", data)
             return True
 
         amount = parse_human_amount(text)
         if amount > 0:
+            if _asset_manual_value_too_small(amount, text):
+                await update.message.reply_text(
+                    "⚠️ Nilai aset terlihat terlalu kecil. Kalau maksudnya 1 juta, tulis `1 juta`.\n"
+                    "Kalau ini aset berbasis unit, tulis seperti `1 buah` atau `999 gram`.",
+                    parse_mode="Markdown",
+                )
+                await send_asset_add_step_prompt(update, context, "quantity", data)
+                return True
             data["amount"] = amount
             data["quantity"] = None
             data["unit"] = ""
             data["price_per_unit"] = None
             flow["step"] = "purchase_price"
-            await update.message.reply_text(_asset_flow_prompt("purchase_price", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+            await send_asset_add_step_prompt(update, context, "purchase_price", data)
             return True
 
         await update.message.reply_text(
-            "❌ Jumlah/nilai aset belum valid.\n\n"
-            "Contoh: `41 gram`, `1 buah`, atau `8000000`.",
+            "❌ Jumlah/nilai aset belum valid.\n\nContoh: `999 gram`, `1 buah`, `8000000`, atau `8 juta`.",
             parse_mode="Markdown",
-            reply_markup=cancel_keyboard(),
         )
+        await send_asset_add_step_prompt(update, context, "quantity", data)
         return True
 
     if step == "purchase_price":
@@ -968,15 +1045,15 @@ async def handle_pending_asset_add_flow(update: Update, context: ContextTypes.DE
             purchase_price = parse_human_amount(text)
             if purchase_price <= 0:
                 await update.message.reply_text(
-                    "❌ Harga beli belum valid. Contoh: `2559000`, `2.55 juta`, atau ketik `lewati`.",
+                    "❌ Harga beli belum valid. Contoh: `2559000`, `2.55 juta`, atau klik *Lewati*.",
                     parse_mode="Markdown",
-                    reply_markup=cancel_keyboard(),
                 )
+                await send_asset_add_step_prompt(update, context, "purchase_price", data)
                 return True
             data["purchase_price_per_unit"] = purchase_price
 
         flow["step"] = "purchase_date"
-        await update.message.reply_text(_asset_flow_prompt("purchase_date", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+        await send_asset_add_step_prompt(update, context, "purchase_date", data)
         return True
 
     if step == "purchase_date":
@@ -987,11 +1064,11 @@ async def handle_pending_asset_add_flow(update: Update, context: ContextTypes.DE
 
         if data.get("quantity") not in [None, ""] and str(data.get("unit") or "").strip() and not data.get("price_per_unit"):
             flow["step"] = "current_price"
-            await update.message.reply_text(_asset_flow_prompt("current_price", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+            await send_asset_add_step_prompt(update, context, "current_price", data)
             return True
 
         flow["step"] = "category"
-        await update.message.reply_text(_asset_flow_prompt("category", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+        await send_asset_add_step_prompt(update, context, "category", data)
         return True
 
     if step == "current_price":
@@ -1000,41 +1077,80 @@ async def handle_pending_asset_add_flow(update: Update, context: ContextTypes.DE
             await update.message.reply_text(
                 "❌ Harga saat ini belum valid. Contoh: `2594000` atau `2.594 juta`.",
                 parse_mode="Markdown",
-                reply_markup=cancel_keyboard(),
             )
+            await send_asset_add_step_prompt(update, context, "current_price", data)
             return True
         data["price_per_unit"] = current_price
         data["amount"] = float(data.get("quantity") or 0) * current_price
         flow["step"] = "category"
-        await update.message.reply_text(_asset_flow_prompt("category", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+        await send_asset_add_step_prompt(update, context, "category", data)
         return True
 
     if step == "category":
         data["category"] = "" if _asset_flow_is_skip(text) else text
         flow["step"] = "description"
-        await update.message.reply_text(_asset_flow_prompt("description", data), parse_mode="Markdown", reply_markup=cancel_keyboard())
+        await send_asset_add_step_prompt(update, context, "description", data)
         return True
 
     if step == "description":
         data["description"] = "" if _asset_flow_is_skip(text) else text
-        asset_data = _build_asset_data_from_flow(data)
-        context.user_data["pending_asset_confirm"] = asset_data
-        context.user_data.pop(ASSET_ADD_FLOW_KEY, None)
-
-        await update.message.reply_text(
-            f"{build_asset_confirm_preview(asset_data)}\n\nMau simpan, edit dulu, atau batal?",
-            parse_mode="Markdown",
-            reply_markup=asset_edit_or_continue_keyboard(),
-        )
-        return True
+        return await _finish_asset_add_flow(update, context, data)
 
     context.user_data.pop(ASSET_ADD_FLOW_KEY, None)
+    context.user_data.pop(ASSET_ADD_PROMPT_MESSAGE_KEY, None)
     await update.message.reply_text("❌ Sesi tambah aset tidak valid. Coba ulangi `/asset_add`.", parse_mode="Markdown")
     return True
 
 
+async def handle_asset_add_skip_callback(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle Lewati button for optional asset_add wizard steps."""
+    flow = context.user_data.get(ASSET_ADD_FLOW_KEY)
+    if not flow:
+        await safe_edit_message(query, "❌ Sesi tambah aset expired. Jalankan `/asset_add` lagi.", parse_mode="Markdown")
+        return
+
+    step = flow.get("step", "name")
+    data = flow.setdefault("data", {})
+
+    if step not in ASSET_ADD_OPTIONAL_STEPS:
+        await safe_edit_message(query, "ℹ️ Step ini wajib diisi, jadi tidak bisa dilewati.", parse_mode="Markdown")
+        return
+
+    if step == "purchase_price":
+        data["purchase_price_per_unit"] = None
+        next_step = "purchase_date"
+    elif step == "purchase_date":
+        data["purchase_date"] = ""
+        next_step = "current_price" if data.get("quantity") not in [None, ""] and str(data.get("unit") or "").strip() and not data.get("price_per_unit") else "category"
+    elif step == "category":
+        data["category"] = ""
+        next_step = "description"
+    else:
+        data["description"] = ""
+        asset_data = _build_asset_data_from_flow(data)
+        context.user_data["pending_asset_confirm"] = asset_data
+        context.user_data.pop(ASSET_ADD_FLOW_KEY, None)
+        context.user_data.pop(ASSET_ADD_PROMPT_MESSAGE_KEY, None)
+        await safe_edit_message(
+            query,
+            f"{build_asset_confirm_preview(asset_data)}\n\nMau simpan, edit dulu, atau batal?",
+            parse_mode="Markdown",
+            reply_markup=asset_edit_or_continue_keyboard(),
+        )
+        return
+
+    flow["step"] = next_step
+    await safe_edit_message(
+        query,
+        _asset_flow_prompt(next_step, data),
+        parse_mode="Markdown",
+        reply_markup=asset_add_step_keyboard(next_step),
+    )
+    context.user_data[ASSET_ADD_PROMPT_MESSAGE_KEY] = getattr(query.message, "message_id", None)
+
+
 async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle the Telegram request for asset add."""
+    """Handle /asset_add as a guided wizard, while keeping old pipe format compatible."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
@@ -1042,11 +1158,13 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not context.args:
             start_asset_add_flow(context)
-            await update.message.reply_text(
-                _asset_flow_prompt("name", {}),
-                parse_mode="Markdown",
-                reply_markup=cancel_keyboard(),
-            )
+            await send_asset_add_step_prompt(update, context, "name", {})
+            return
+
+        raw_arg = " ".join(context.args).strip()
+        if "|" not in raw_arg:
+            start_asset_add_flow(context, {"name": raw_arg}, step="quantity")
+            await send_asset_add_step_prompt(update, context, "quantity", {"name": raw_arg})
             return
 
         data = parse_pipe_add_args(context.args, "asset")
@@ -1056,6 +1174,7 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 build_asset_unit_price_prompt(data),
                 parse_mode="Markdown",
+                reply_markup=cancel_keyboard("asset_price"),
             )
             return
 
@@ -1073,8 +1192,9 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Gagal tambah aset.\n\n"
             f"{str(e)}\n\n"
             "Contoh:\n"
+            "`/asset_add Laptop`\n"
             "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja`\n"
-            "`/asset_add Emas Antam | 41 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
+            "`/asset_add Emas Antam | 999 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
             "`/asset_add Laptop | 1 buah | Electronics | Laptop kerja`",
             parse_mode="Markdown",
         )

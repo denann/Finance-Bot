@@ -13,6 +13,7 @@ from app.bot.handler_parts.networth_assets import (
     handle_pending_asset_add_flow,
     parse_natural_asset_add,
 )
+from app.bot.handler_parts.health_recurring_export import handle_pending_recurring_add_flow
 from app.bot.handler_parts.command_router import (
     build_delete_preview_text,
     build_gemini_fallback_text,
@@ -1168,6 +1169,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     preview_edit_handled = await handle_pending_preview_edit(update, context, user_text)
     if preview_edit_handled:
+        return
+
+    recurring_add_flow_handled = await handle_pending_recurring_add_flow(update, context, user_text)
+    if recurring_add_flow_handled:
         return
 
     asset_add_flow_handled = await handle_pending_asset_add_flow(update, context, user_text)

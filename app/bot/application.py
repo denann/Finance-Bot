@@ -29,6 +29,7 @@ from app.bot.handlers import (
     pending_paid_handler,
     bulanan_handler,
     callback_handler,
+    cancel_handler,
     cari_handler,
     coach_handler,
     debt_edit_handler,
@@ -68,6 +69,7 @@ from app.bot.handlers import (
     unknown_command_handler,
 )
 from app.config import ALLOWED_USER_ID, TELEGRAM_BOT_TOKEN
+from app.bot.handler_parts.state_utils import clear_pending_flow_state_before_command
 from app.sheets.client import sheets_transaction
 
 
@@ -80,7 +82,19 @@ def atomic_bot_handler(callback):
     @wraps(callback)
     async def wrapped(update, context, *args, **kwargs):
         """Helper for wrapped in the Telegram bot flow."""
-        with sheets_transaction(label=getattr(callback, "__name__", "telegram_handler")):
+        callback_name = getattr(callback, "__name__", "telegram_handler")
+
+        # Valid slash commands should start from a clean transient state.
+        # Without this, an old wizard such as /asset_add can keep consuming the
+        # next normal chat even after the user has already run /saldo, /last, or
+        # another command. Keep /cancel and unknown commands excluded so they can
+        # give the right feedback.
+        message_text = str(getattr(getattr(update, "message", None), "text", "") or "").strip()
+        if message_text.startswith("/") and callback_name not in {"cancel_handler", "unknown_command_handler"}:
+            command_token = message_text.split()[0].lstrip("/").split("@", 1)[0].lower()
+            clear_pending_flow_state_before_command(context, command_token)
+
+        with sheets_transaction(label=callback_name):
             return await callback(update, context, *args, **kwargs)
 
     return wrapped
@@ -103,6 +117,8 @@ def register_handlers(telegram_app: Application) -> Application:
     # Basic commands for onboarding and bot checks.
     add_command("start", start_handler)
     add_command("quickstart", quickstart_handler)
+    add_command("cancel", cancel_handler)
+    add_command("batal", cancel_handler)
     add_command("help", help_handler)
     add_command("examples", examples_handler)
     add_command("contoh", examples_handler)
@@ -129,6 +145,7 @@ def register_handlers(telegram_app: Application) -> Application:
 
     # Budget commands. The regex handler supports natural input such as "budget makan 1jt".
     add_command("budget", budget_handler)
+    add_command("set_budget", set_budget_handler)
     add_command("budget_history", budget_history_handler)
     add_message(filters.Regex(r"(?i)^budget\b"), set_budget_handler)
 

@@ -456,7 +456,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/asset_add` — tambah aset mode tanya-jawab/guided input\n"
         "Format lama tetap bisa dipakai:\n"
         "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja`\n"
-        "`/asset_add Emas Antam | 41 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
+        "`/asset_add Emas Antam | 999 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
         "Dalam mode guided, bot akan tanya nama aset, jumlah/unit, harga beli, tanggal beli, harga saat ini, kategori, dan deskripsi.\n"
         "Tanggal beli boleh dikosongkan dengan mengetik `lewati`, `kosong`, atau `-`.\n"
         "Setiap step punya tombol `Batal`.\n"

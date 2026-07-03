@@ -2126,6 +2126,10 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
     if not state:
         return False
 
+    chat = getattr(update, "effective_chat", None)
+    chat_id = getattr(chat, "id", None) or getattr(getattr(update, "message", None), "chat_id", None)
+    await clear_tracked_inline_keyboard(context, chat_id, "pending_preview_edit_prompt_message_id")
+
     scope = state.get("scope")
     step = state.get("step")
 

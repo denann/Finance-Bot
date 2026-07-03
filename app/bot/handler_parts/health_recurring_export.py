@@ -5,6 +5,7 @@
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
+from app.services.resolver_service import resolve_account_name
 
 def health_status_icon(ok: bool) -> str:
     """Helper for health status icon in the Telegram bot flow."""
@@ -203,6 +204,377 @@ async def health_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         build_health_report_text(results),
         parse_mode="Markdown",
     )
+
+RECURRING_ADD_FLOW_KEY = "pending_recurring_add_flow"
+RECURRING_ADD_PROMPT_MESSAGE_KEY = "pending_recurring_add_prompt_message_id"
+RECURRING_ADD_SKIP_WORDS = {"skip", "lewati", "kosong", "-", "tidak", "tidak ada", "ga ada", "gak ada", "nggak ada"}
+RECURRING_ADD_STEPS = ["name", "txn_type", "amount", "category", "account", "frequency", "day_of_month", "description"]
+RECURRING_ADD_OPTIONAL_STEPS = {"description"}
+
+
+def _recurring_is_skip(text: str) -> bool:
+    """Check whether the user wants to skip an optional recurring field."""
+    return str(text or "").strip().lower() in RECURRING_ADD_SKIP_WORDS
+
+
+def recurring_add_step_keyboard(step: str) -> InlineKeyboardMarkup:
+    """Build a per-step keyboard for recurring add wizard."""
+    rows = []
+    if step in RECURRING_ADD_OPTIONAL_STEPS:
+        rows.append([InlineKeyboardButton("⏭️ Lewati", callback_data="recurring_add:skip")])
+    rows.append([InlineKeyboardButton("🚫 Batal", callback_data="cancel:recurring_add")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _recurring_step_prompt(step: str, data: dict | None = None) -> str:
+    """Build the prompt for one recurring add wizard step."""
+    data = data or {}
+    prompts = {
+        "name": (
+            "🔁 *Tambah Recurring — Step 1/8*\n\n"
+            "Nama transaksi rutinnya apa?\n\n"
+            "Contoh:\n"
+            "`Netflix`\n"
+            "`Internet rumah`"
+        ),
+        "txn_type": (
+            "↕️ *Tambah Recurring — Step 2/8*\n\n"
+            f"Nama: *{md_safe(data.get('name') or '-')}*\n\n"
+            "Tipe transaksinya apa?\n\n"
+            "Contoh: `expense` / `pengeluaran` atau `income` / `pemasukan`."
+        ),
+        "amount": (
+            "💰 *Tambah Recurring — Step 3/8*\n\n"
+            "Nominalnya berapa?\n\n"
+            "Contoh: `65000`, `65k`, atau `1.5 juta`."
+        ),
+        "category": (
+            "📁 *Tambah Recurring — Step 4/8*\n\n"
+            "Kategorinya apa?\n\n"
+            "Contoh: `Entertainment`, `Bills & Utilities`, atau `Food & Beverage`."
+        ),
+        "account": (
+            "🏦 *Tambah Recurring — Step 5/8*\n\n"
+            "Pakai rekening apa?\n\n"
+            "Contoh: `DANA`, `BRI`, atau `Cash`."
+        ),
+        "frequency": (
+            "📆 *Tambah Recurring — Step 6/8*\n\n"
+            "Frekuensinya apa?\n\n"
+            "Untuk sekarang isi `monthly` atau `bulanan`."
+        ),
+        "day_of_month": (
+            "🗓️ *Tambah Recurring — Step 7/8*\n\n"
+            "Setiap tanggal berapa?\n\n"
+            "Contoh: `5`, `10`, atau `30`."
+        ),
+        "description": (
+            "📝 *Tambah Recurring — Step 8/8*\n\n"
+            "Deskripsinya apa?\n\n"
+            "Contoh: `Langganan Netflix`.\n\n"
+            "Kalau mau pakai nama transaksi saja, tekan `Lewati`."
+        ),
+    }
+    suffix = "\n\nGunakan tombol di bawah, atau ketik `batal` untuk cancel."
+    if step in RECURRING_ADD_OPTIONAL_STEPS:
+        suffix += " Untuk field opsional, boleh tekan `Lewati`."
+    return prompts.get(step, "Step recurring tidak dikenali.") + suffix
+
+
+async def send_recurring_add_step_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, step: str, data: dict | None = None):
+    """Send a recurring wizard prompt and clean the previous wizard keyboard."""
+    return await reply_tracked_inline_keyboard(
+        update,
+        context,
+        _recurring_step_prompt(step, data),
+        parse_mode="Markdown",
+        reply_markup=recurring_add_step_keyboard(step),
+        state_key=RECURRING_ADD_PROMPT_MESSAGE_KEY,
+    )
+
+
+async def clear_recurring_add_step_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Remove the active recurring wizard step keyboard after user answers."""
+    chat = getattr(update, "effective_chat", None)
+    chat_id = getattr(chat, "id", None) or getattr(getattr(update, "message", None), "chat_id", None)
+    await clear_tracked_inline_keyboard(context, chat_id, RECURRING_ADD_PROMPT_MESSAGE_KEY)
+
+
+def start_recurring_add_flow(context: ContextTypes.DEFAULT_TYPE, initial_data: dict | None = None, step: str = "name") -> None:
+    """Start recurring add wizard with optional prefilled fields."""
+    context.user_data.pop("pending_recurring_confirm", None)
+    context.user_data[RECURRING_ADD_FLOW_KEY] = {
+        "step": step or "name",
+        "data": dict(initial_data or {}),
+    }
+
+
+def _normalize_recurring_txn_type(value: str) -> str | None:
+    """Normalize Indonesian and English recurring type aliases."""
+    clean = str(value or "").strip().lower()
+    aliases = {
+        "expense": "expense",
+        "pengeluaran": "expense",
+        "keluar": "expense",
+        "income": "income",
+        "pemasukan": "income",
+        "masuk": "income",
+    }
+    return aliases.get(clean)
+
+
+def _normalize_recurring_frequency_text(value: str) -> str | None:
+    """Normalize recurring frequency aliases supported by the service."""
+    clean = str(value or "").strip().lower()
+    aliases = {
+        "monthly": "monthly",
+        "bulan": "monthly",
+        "bulanan": "monthly",
+        "setiap bulan": "monthly",
+    }
+    return aliases.get(clean)
+
+
+def _resolve_recurring_account(value: str) -> str:
+    """Use account resolver when possible, but keep typed value as fallback."""
+    raw = str(value or "").strip()
+    try:
+        resolved = resolve_account_name(raw)
+        if resolved.get("status") == "exact":
+            return str(resolved.get("account_name") or raw).strip()
+    except Exception:
+        pass
+    return raw
+
+
+def _next_missing_recurring_step(data: dict) -> str | None:
+    """Return the first recurring wizard field that is still missing."""
+    for step in RECURRING_ADD_STEPS:
+        if step == "description":
+            continue
+        if data.get(step) in [None, ""]:
+            return step
+    return "description" if "description" not in data else None
+
+
+def build_recurring_confirm_preview(data: dict) -> str:
+    """Build recurring add preview before saving."""
+    return (
+        "🔁 *Preview Tambah Recurring*\n\n"
+        f"Nama: *{md_safe(data.get('name') or '-')}*\n"
+        f"Tipe: *{md_safe(data.get('txn_type') or '-')}*\n"
+        f"Nominal: *{format_rupiah(float(data.get('amount', 0) or 0))}*\n"
+        f"Kategori: *{md_safe(data.get('category') or '-')}*\n"
+        f"Rekening: *{md_safe(data.get('account') or '-')}*\n"
+        f"Jadwal: *{md_safe(data.get('frequency') or 'monthly')}*, setiap tanggal *{md_safe(data.get('day_of_month') or '-')}*\n"
+        f"Deskripsi: {md_safe(data.get('description') or data.get('name') or '-')}\n\n"
+        "Mau simpan atau batal?"
+    )
+
+
+def build_recurring_saved_text(rule: dict) -> str:
+    """Build recurring saved confirmation text."""
+    return (
+        "✅ *Recurring transaction berhasil dibuat!*\n\n"
+        f"🔁 Nama: *{md_safe(rule.get('name') or '-')}*\n"
+        f"💰 Nominal: *{format_rupiah(float(rule.get('amount', 0) or 0))}*\n"
+        f"📁 Kategori: *{md_safe(rule.get('category') or '-')}*\n"
+        f"🏦 Rekening: *{md_safe(rule.get('account') or '-')}*\n"
+        f"📅 Jadwal: setiap tanggal *{md_safe(rule.get('day_of_month') or '-')}*\n"
+        f"⏭️ Next run: `{md_code_text(rule.get('next_run_date') or '-')}`\n"
+        f"🔖 ID: `{md_code_text(rule.get('id') or '-')}`"
+    )
+
+
+def save_pending_recurring_rule(data: dict) -> dict:
+    """Persist a pending recurring rule using the existing recurring service."""
+    return add_recurring_rule(
+        name=data["name"],
+        txn_type=data["txn_type"],
+        amount=data["amount"],
+        category=data["category"],
+        account=data["account"],
+        frequency=data.get("frequency") or "monthly",
+        day_of_month=data["day_of_month"],
+        description=data.get("description") or data.get("name"),
+    )
+
+
+def _partial_recurring_data_from_args(args: list[str]) -> dict:
+    """Read partial /recurring_add args without forcing the old full pipe format."""
+    raw = " ".join(args or []).strip()
+    if not raw:
+        return {}
+    if "|" not in raw:
+        return {"name": raw}
+
+    parts = [p.strip() for p in raw.split("|")]
+    keys = ["name", "txn_type", "amount", "category", "account", "frequency", "day_of_month", "description"]
+    data = {}
+    for key, value in zip(keys, parts):
+        if not value:
+            continue
+        if key == "txn_type":
+            normalized = _normalize_recurring_txn_type(value)
+            if normalized:
+                data[key] = normalized
+        elif key == "amount":
+            amount = parse_human_amount(value)
+            if amount > 0:
+                data[key] = amount
+        elif key == "frequency":
+            normalized = _normalize_recurring_frequency_text(value)
+            if normalized:
+                data[key] = normalized
+        elif key == "day_of_month":
+            data[key] = value
+        elif key == "account":
+            data[key] = _resolve_recurring_account(value)
+        else:
+            data[key] = value
+    return data
+
+
+async def _finish_recurring_add_flow(update: Update, context: ContextTypes.DEFAULT_TYPE, data: dict) -> bool:
+    """Move recurring wizard to final preview."""
+    if not data.get("description"):
+        data["description"] = data.get("name") or ""
+    context.user_data["pending_recurring_confirm"] = dict(data)
+    context.user_data.pop(RECURRING_ADD_FLOW_KEY, None)
+    context.user_data.pop(RECURRING_ADD_PROMPT_MESSAGE_KEY, None)
+    await update.message.reply_text(
+        build_recurring_confirm_preview(data),
+        parse_mode="Markdown",
+        reply_markup=confirm_keyboard("recurring"),
+    )
+    return True
+
+
+async def handle_pending_recurring_add_flow(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
+    """Handle text replies for recurring add wizard."""
+    flow = context.user_data.get(RECURRING_ADD_FLOW_KEY)
+    if not flow:
+        return False
+
+    text = str(user_text or "").strip()
+    await clear_recurring_add_step_keyboard(update, context)
+
+    if text.lower() in {"batal", "cancel", "/cancel"}:
+        context.user_data.pop(RECURRING_ADD_FLOW_KEY, None)
+        context.user_data.pop(RECURRING_ADD_PROMPT_MESSAGE_KEY, None)
+        context.user_data.pop("pending_recurring_confirm", None)
+        await update.message.reply_text("❌ Tambah recurring dibatalkan.")
+        return True
+
+    step = flow.get("step", "name")
+    data = flow.setdefault("data", {})
+
+    if step == "name":
+        if not text:
+            await send_recurring_add_step_prompt(update, context, "name", data)
+            return True
+        data["name"] = text
+        flow["step"] = "txn_type"
+        await send_recurring_add_step_prompt(update, context, "txn_type", data)
+        return True
+
+    if step == "txn_type":
+        txn_type = _normalize_recurring_txn_type(text)
+        if not txn_type:
+            await update.message.reply_text("❌ Tipe belum valid. Isi `expense` atau `income`.", parse_mode="Markdown")
+            await send_recurring_add_step_prompt(update, context, "txn_type", data)
+            return True
+        data["txn_type"] = txn_type
+        flow["step"] = "amount"
+        await send_recurring_add_step_prompt(update, context, "amount", data)
+        return True
+
+    if step == "amount":
+        amount = parse_human_amount(text)
+        if amount <= 0:
+            await update.message.reply_text("❌ Nominal belum valid. Contoh: `65000`, `65k`, atau `1.5 juta`.", parse_mode="Markdown")
+            await send_recurring_add_step_prompt(update, context, "amount", data)
+            return True
+        data["amount"] = amount
+        flow["step"] = "category"
+        await send_recurring_add_step_prompt(update, context, "category", data)
+        return True
+
+    if step == "category":
+        if not text:
+            await send_recurring_add_step_prompt(update, context, "category", data)
+            return True
+        data["category"] = text
+        flow["step"] = "account"
+        await send_recurring_add_step_prompt(update, context, "account", data)
+        return True
+
+    if step == "account":
+        if not text:
+            await send_recurring_add_step_prompt(update, context, "account", data)
+            return True
+        data["account"] = _resolve_recurring_account(text)
+        flow["step"] = "frequency"
+        await send_recurring_add_step_prompt(update, context, "frequency", data)
+        return True
+
+    if step == "frequency":
+        frequency = _normalize_recurring_frequency_text(text)
+        if not frequency:
+            await update.message.reply_text("❌ Frekuensi belum valid. Saat ini gunakan `monthly` atau `bulanan`.", parse_mode="Markdown")
+            await send_recurring_add_step_prompt(update, context, "frequency", data)
+            return True
+        data["frequency"] = frequency
+        flow["step"] = "day_of_month"
+        await send_recurring_add_step_prompt(update, context, "day_of_month", data)
+        return True
+
+    if step == "day_of_month":
+        try:
+            day_int = int(re.sub(r"[^0-9]", "", text))
+            if day_int < 1 or day_int > 31:
+                raise ValueError
+        except Exception:
+            await update.message.reply_text("❌ Tanggal recurring harus angka 1 sampai 31.", parse_mode="Markdown")
+            await send_recurring_add_step_prompt(update, context, "day_of_month", data)
+            return True
+        data["day_of_month"] = day_int
+        flow["step"] = "description"
+        await send_recurring_add_step_prompt(update, context, "description", data)
+        return True
+
+    if step == "description":
+        data["description"] = data.get("name") if _recurring_is_skip(text) else text
+        return await _finish_recurring_add_flow(update, context, data)
+
+    context.user_data.pop(RECURRING_ADD_FLOW_KEY, None)
+    await update.message.reply_text("❌ Sesi recurring tidak valid. Coba ulangi `/recurring_add`.", parse_mode="Markdown")
+    return True
+
+
+async def handle_recurring_add_skip_callback(query, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Handle inline Lewati button for recurring wizard."""
+    flow = context.user_data.get(RECURRING_ADD_FLOW_KEY)
+    if not flow:
+        await safe_edit_message(query, "❌ Sesi recurring expired. Coba ulangi `/recurring_add`.", parse_mode="Markdown")
+        return True
+    step = flow.get("step", "")
+    data = flow.setdefault("data", {})
+    if step != "description":
+        await safe_edit_message(query, "❌ Step ini tidak bisa dilewati.", parse_mode="Markdown")
+        return True
+    data["description"] = data.get("name") or ""
+    context.user_data["pending_recurring_confirm"] = dict(data)
+    context.user_data.pop(RECURRING_ADD_FLOW_KEY, None)
+    context.user_data.pop(RECURRING_ADD_PROMPT_MESSAGE_KEY, None)
+    await safe_edit_message(
+        query,
+        build_recurring_confirm_preview(data),
+        parse_mode="Markdown",
+        reply_markup=confirm_keyboard("recurring"),
+    )
+    return True
+
 
 def parse_recurring_add_args(args: list[str]) -> dict:
     """Parse input into structured data for recurring add args."""
@@ -464,35 +836,46 @@ async def recurring_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def recurring_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle the Telegram request for recurring add."""
+    """Handle /recurring_add with guided wizard or old pipe format preview."""
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
 
     try:
-        data = parse_recurring_add_args(context.args)
+        if not context.args:
+            start_recurring_add_flow(context)
+            await send_recurring_add_step_prompt(update, context, "name", {})
+            return
 
-        rule = add_recurring_rule(
-            name=data["name"],
-            txn_type=data["txn_type"],
-            amount=data["amount"],
-            category=data["category"],
-            account=data["account"],
-            frequency=data["frequency"],
-            day_of_month=data["day_of_month"],
-            description=data["description"],
-        )
+        raw_arg = " ".join(context.args).strip()
+
+        if "|" not in raw_arg:
+            start_recurring_add_flow(context, {"name": raw_arg}, step="txn_type")
+            await send_recurring_add_step_prompt(update, context, "txn_type", {"name": raw_arg})
+            return
+
+        partial = _partial_recurring_data_from_args(context.args)
+        missing_step = _next_missing_recurring_step(partial)
+
+        if missing_step and missing_step != "description":
+            start_recurring_add_flow(context, partial, step=missing_step)
+            await send_recurring_add_step_prompt(update, context, missing_step, partial)
+            return
+
+        if missing_step == "description":
+            start_recurring_add_flow(context, partial, step="description")
+            await send_recurring_add_step_prompt(update, context, "description", partial)
+            return
+
+        data = parse_recurring_add_args(context.args)
+        data["account"] = _resolve_recurring_account(data.get("account"))
+        context.user_data["pending_recurring_confirm"] = data
+        context.user_data.pop(RECURRING_ADD_FLOW_KEY, None)
 
         await update.message.reply_text(
-            "✅ *Recurring transaction berhasil dibuat!*\n\n"
-            f"🔁 Nama: *{rule.get('name')}*\n"
-            f"💰 Nominal: *{format_rupiah(float(rule.get('amount', 0) or 0))}*\n"
-            f"📁 Kategori: *{rule.get('category')}*\n"
-            f"🏦 Rekening: *{rule.get('account')}*\n"
-            f"📅 Jadwal: setiap tanggal *{rule.get('day_of_month')}*\n"
-            f"⏭️ Next run: `{rule.get('next_run_date')}`\n"
-            f"🔖 ID: `{rule.get('id')}`",
+            build_recurring_confirm_preview(data),
             parse_mode="Markdown",
+            reply_markup=confirm_keyboard("recurring"),
         )
 
     except Exception as e:

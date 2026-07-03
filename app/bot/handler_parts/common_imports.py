@@ -910,3 +910,53 @@ def extract_split_bill_total_amount(raw_text: str) -> float | None:
             return parse_amount_text(match.group("amount"))
 
     return None
+
+
+async def clear_tracked_inline_keyboard(context: ContextTypes.DEFAULT_TYPE, chat_id, state_key: str) -> None:
+    """Remove the inline keyboard from a previously tracked prompt message."""
+    if context is None:
+        return
+    user_data = getattr(context, "user_data", {}) or {}
+    message_id = user_data.pop(state_key, None)
+    if not message_id or not chat_id:
+        return
+    try:
+        await context.bot.edit_message_reply_markup(
+            chat_id=chat_id,
+            message_id=int(message_id),
+            reply_markup=None,
+        )
+    except Exception:
+        pass
+
+
+async def reply_tracked_inline_keyboard(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    *,
+    parse_mode: str | None = None,
+    reply_markup=None,
+    state_key: str = "last_inline_prompt_message_id",
+    **kwargs,
+):
+    """Reply with an inline keyboard and remember its message id for cleanup."""
+    message = getattr(update, "message", None)
+    if message is None:
+        return None
+
+    chat = getattr(update, "effective_chat", None)
+    chat_id = getattr(chat, "id", None) or getattr(message, "chat_id", None)
+    await clear_tracked_inline_keyboard(context, chat_id, state_key)
+
+    sent = await message.reply_text(
+        text,
+        parse_mode=parse_mode,
+        reply_markup=reply_markup,
+        **kwargs,
+    )
+    if reply_markup is not None:
+        context.user_data[state_key] = getattr(sent, "message_id", None)
+    else:
+        context.user_data.pop(state_key, None)
+    return sent

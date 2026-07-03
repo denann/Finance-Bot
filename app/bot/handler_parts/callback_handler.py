@@ -6,9 +6,15 @@
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
 from app.services.resolver_service import create_account
+from app.bot.handler_parts.state_utils import clear_pending_flow_state
 
-from app.bot.handler_parts.networth_assets import build_asset_added_text
+from app.bot.handler_parts.networth_assets import build_asset_added_text, handle_asset_add_skip_callback
 from app.bot.handler_parts.command_router import short_txn_id
+from app.bot.handler_parts.health_recurring_export import (
+    build_recurring_saved_text,
+    handle_recurring_add_skip_callback,
+    save_pending_recurring_rule,
+)
 from app.bot.handler_parts.transaction_flow import (
     append_saved_summary_lines,
     apply_split_bill_decision_to_current_mixed,
@@ -576,6 +582,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data or ""
     await show_callback_loading(query)
+
+    if data == "asset_add:skip":
+        await handle_asset_add_skip_callback(query, context)
+        return
+
+    if data == "recurring_add:skip":
+        await handle_recurring_add_skip_callback(query, context)
+        return
 
     if data.startswith("set_balance_similar:"):
         action = data.split(":", 1)[1]
@@ -1146,6 +1160,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{scope}")]]),
             )
+            context.user_data["pending_preview_edit_prompt_message_id"] = getattr(query.message, "message_id", None)
             return
 
         if action == "edit":
@@ -1172,6 +1187,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown",
                     reply_markup=build_preview_edit_keyboard("debt"),
                 )
+                context.user_data["pending_preview_edit_prompt_message_id"] = getattr(query.message, "message_id", None)
                 return
 
             if scope == "pending_expense":
@@ -1185,6 +1201,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown",
                     reply_markup=build_preview_edit_keyboard("pending_expense"),
                 )
+                context.user_data["pending_preview_edit_prompt_message_id"] = getattr(query.message, "message_id", None)
                 return
 
             if scope == "asset":
@@ -1198,6 +1215,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown",
                     reply_markup=build_preview_edit_keyboard("asset"),
                 )
+                context.user_data["pending_preview_edit_prompt_message_id"] = getattr(query.message, "message_id", None)
                 return
 
             if not context.user_data.get("pending_parsed"):
@@ -1209,6 +1227,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=build_preview_edit_keyboard("single"),
             )
+            context.user_data["pending_preview_edit_prompt_message_id"] = getattr(query.message, "message_id", None)
             return
 
         await safe_edit_message(query, "❌ Aksi edit tidak valid.")
@@ -1876,6 +1895,66 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Catatan: ini hanya mengubah saldo di sheet `accounts`, tidak membuat row transaksi baru.",
                 parse_mode="Markdown",
             )
+            return
+
+        if confirm_target == "budget":
+            pending_budget = context.user_data.get("pending_budget_confirm") or {}
+
+            if not pending_budget:
+                await safe_edit_message(
+                    query,
+                    "❌ Sesi set budget expired. Jalankan `/set_budget` lagi.",
+                    parse_mode="Markdown",
+                )
+                return
+
+            category = str(pending_budget.get("category") or "").strip()
+            amount = float(pending_budget.get("amount", 0) or 0)
+            month = str(pending_budget.get("month") or normalize_month(None)).strip()
+            source_note = str(pending_budget.get("source_note") or "budget").strip()
+
+            result = set_budget(category, amount, month=month)
+            if not result.get("success"):
+                await safe_edit_message(query, f"❌ {md_safe(result.get('message') or 'Gagal menyimpan budget.')}", parse_mode="Markdown")
+                return
+
+            action_label = "diset" if result.get("action") == "created" else "diupdate"
+            context.user_data.pop("pending_budget_confirm", None)
+
+            await safe_edit_message(
+                query,
+                f"✅ Budget *{md_safe(category)}* {md_safe(action_label)}!\n"
+                f"📅 Bulan: *{format_month_label(month)}*\n"
+                f"💰 {format_rupiah(amount)} / bulan\n"
+                f"🏷️ Tipe: {md_safe(source_note)}\n\n"
+                f"Cek dengan:\n"
+                f"`/budget {md_code_text(month)}`",
+                parse_mode="Markdown",
+            )
+            return
+
+        if confirm_target == "recurring":
+            pending_recurring = context.user_data.get("pending_recurring_confirm") or {}
+
+            if not pending_recurring:
+                await safe_edit_message(
+                    query,
+                    "❌ Sesi recurring transaction expired. Jalankan `/recurring_add` lagi.",
+                    parse_mode="Markdown",
+                )
+                return
+
+            try:
+                rule = save_pending_recurring_rule(pending_recurring)
+            except Exception as e:
+                await safe_edit_message(query, f"❌ Gagal menyimpan recurring transaction: {md_safe(str(e))}", parse_mode="Markdown")
+                return
+
+            context.user_data.pop("pending_recurring_confirm", None)
+            context.user_data.pop("pending_recurring_add_flow", None)
+            context.user_data.pop("pending_recurring_add_prompt_message_id", None)
+
+            await safe_edit_message(query, build_recurring_saved_text(rule), parse_mode="Markdown")
             return
     
         if confirm_target == "asset":
@@ -3305,37 +3384,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("cancel"):
-        context.user_data.pop("pending_parsed", None)
-        context.user_data.pop("pending_raw", None)
-        context.user_data.pop("pending_batch", None)
-        context.user_data.pop("pending_debt", None)
-        context.user_data.pop("pending_debt_batch", None)
-        context.user_data.pop("pending_mixed", None)
-        context.user_data.pop("pending_payment", None)
-        context.user_data.pop("pending_delete_refs", None)
-        context.user_data.pop("pending_delete_txn_ids", None)
-        context.user_data.pop("pending_edit_txn", None)
-        context.user_data.pop("pending_bulk_edit_txns", None)
-        context.user_data.pop("pending_debt_void", None)
-        context.user_data.pop("pending_debt_settle", None)
-        context.user_data.pop("pending_asset_price", None)
-        context.user_data.pop("pending_asset_confirm", None)
-        context.user_data.pop("pending_asset_add_flow", None)
-        context.user_data.pop("pending_expense_confirm", None)
-        context.user_data.pop("pending_set_balance", None)
-        context.user_data.pop("pending_set_balance_suggestion", None)
-        context.user_data.pop("pending_preview_edit", None)
-        context.user_data.pop("pending_missing_amount", None)
-        context.user_data.pop("pending_parse_clarification", None)
-        context.user_data.pop("pending_social_spending_guard", None)
-        context.user_data.pop("pending_meal_split", None)
-        context.user_data.pop("pending_receipt", None)
-        context.user_data.pop("pending_receipt_context", None)
-        context.user_data.pop("pending_receipt_part_selection", None)
-        context.user_data.pop("pending_receipt_extra_divisor", None)
-        context.user_data.pop("mixed_review_preview_sent", None)
+        clear_pending_flow_state(context)
 
-        await safe_edit_message(query, "❌ Input dibatalkan.")
+        await safe_edit_message(query, "🚫 Input dibatalkan. Tidak ada data yang disimpan.")
         return
 
     if data.startswith("pay_debt:"):

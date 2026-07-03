@@ -111,6 +111,14 @@ KNOWN_COMMANDS = {
         "description": "Panduan langkah awal untuk user baru.",
         "destructive": False,
     },
+    "cancel": {
+        "description": "Batalkan wizard, preview, atau konfirmasi yang sedang aktif.",
+        "destructive": False,
+    },
+    "batal": {
+        "description": "Alias /cancel untuk membatalkan flow aktif.",
+        "destructive": False,
+    },
     "examples": {
         "description": "Lihat contoh input cepat untuk mencoba bot.",
         "destructive": False,
@@ -154,6 +162,10 @@ KNOWN_COMMANDS = {
     "budget": {
         "description": "Lihat budget bulan berjalan atau bulan tertentu.",
         "destructive": False,
+    },
+    "set_budget": {
+        "description": "Set budget kategori tertentu dengan format natural.",
+        "destructive": True,
     },
     "budget_history": {
         "description": "Lihat daftar bulan yang punya data budget.",
@@ -219,6 +231,30 @@ KNOWN_COMMANDS = {
         "description": "Edit utang/piutang aktif dari hasil /hutang.",
         "destructive": True,
     },
+    "debt_settle": {
+        "description": "Lunasi utang/piutang aktif dari hasil /hutang.",
+        "destructive": True,
+    },
+    "recurring": {
+        "description": "Lihat daftar recurring transaction.",
+        "destructive": False,
+    },
+    "recurring_add": {
+        "description": "Tambah recurring transaction baru.",
+        "destructive": True,
+    },
+    "recurring_run": {
+        "description": "Jalankan recurring transaction yang sudah jatuh tempo.",
+        "destructive": True,
+    },
+    "recurring_edit": {
+        "description": "Edit recurring transaction existing.",
+        "destructive": True,
+    },
+    "recurring_off": {
+        "description": "Nonaktifkan recurring transaction.",
+        "destructive": True,
+    },
     "insight": {
         "description": "Buat insight/narasi finansial dengan Gemini.",
         "destructive": False,
@@ -239,6 +275,18 @@ KNOWN_COMMANDS = {
         "description": "Lihat daftar aset aktif.",
         "destructive": False,
     },
+    "asset_add": {
+        "description": "Tambah aset baru dengan wizard atau format pipe.",
+        "destructive": True,
+    },
+    "asset_update": {
+        "description": "Update nilai aset existing.",
+        "destructive": True,
+    },
+    "asset_off": {
+        "description": "Nonaktifkan aset existing.",
+        "destructive": True,
+    },
     "networth": {
         "description": "Lihat kekayaan bersih.",
         "destructive": False,
@@ -250,6 +298,8 @@ COMMAND_ALIASES = {
     "examples": "examples",
     "contoh": "examples",
     "sample": "examples",
+    "cancel": "cancel",
+    "batal": "cancel",
     "export": "export",
     "download_data": "download_data",
     "download": "download_data",
@@ -272,6 +322,8 @@ COMMAND_ALIASES = {
     "budged": "budget",
     "bujet": "budget",
     "budget": "budget",
+    "set_budget": "set_budget",
+    "budget_set": "set_budget",
 
     "budgethistory": "budget_history",
     "budget_history": "budget_history",
@@ -300,6 +352,18 @@ COMMAND_ALIASES = {
     "void_utang": "debt_void",
     "void_piutang": "debt_void",
     "debt_void": "debt_void",
+    "debt_edit": "debt_edit",
+    "edit_hutang": "debt_edit",
+    "debt_settle": "debt_settle",
+    "lunasi_hutang": "debt_settle",
+
+    # Recurring flow section
+    "recurring": "recurring",
+    "recurring_add": "recurring_add",
+    "tambah_recurring": "recurring_add",
+    "recurring_run": "recurring_run",
+    "recurring_edit": "recurring_edit",
+    "recurring_off": "recurring_off",
 
     # Account flow section
     "rekening": "rekening",
@@ -357,6 +421,12 @@ COMMAND_ALIASES = {
     "aset": "assets",
     "asset": "assets",
     "assets": "assets",
+    "asset_add": "asset_add",
+    "tambah_aset": "asset_add",
+    "asset_update": "asset_update",
+    "update_aset": "asset_update",
+    "asset_off": "asset_off",
+    "nonaktif_aset": "asset_off",
     "networth": "networth",
     "net_worth": "networth",
     "kekayaan": "networth",
@@ -579,8 +649,8 @@ def build_command_suggestion_text(resolved: dict, original_text: str) -> str:
             f"❓ Command `/{clean}` belum bisa saya pastikan.\n\n"
             "Command tersebut mirip dengan beberapa command lain, jadi saya tidak mau menebak.\n\n"
             "Command yang tersedia:\n"
-            "`/saldo`, `/set_saldo`, `/quickstart`, `/harian`, `/mingguan`, `/bulanan`, `/budget`, `/budget_history`, "
-            "`/hutang`, `/pending`, `/cari`, `/last`, `/delete_txn`, `/edit_txn`, `/help`"
+            "`/saldo`, `/set_saldo`, `/quickstart`, `/cancel`, `/harian`, `/mingguan`, `/bulanan`, `/budget`, `/set_budget`, `/budget_history`, "
+            "`/hutang`, `/pending`, `/recurring`, `/asset_add`, `/assets`, `/cari`, `/last`, `/delete_txn`, `/edit_txn`, `/help`"
         )
 
     return (

@@ -320,7 +320,7 @@ def add_asset(
     # Debt flow section
     if quantity_value > 0 or unit or unit_price > 0:
         if quantity_value <= 0:
-            raise ValueError("Quantity aset harus lebih dari 0. Contoh: `41 gram` atau `1 buah`.")
+            raise ValueError("Quantity aset harus lebih dari 0. Contoh: `999 gram` atau `1 buah`.")
 
         if not unit:
             raise ValueError("Satuan aset wajib diisi. Contoh: `gram`, `buah`, `unit`.")
