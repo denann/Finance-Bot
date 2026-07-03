@@ -6,6 +6,7 @@ import re
 import uuid
 
 from app.nlp.normalizer import extract_amount_from_text
+from app.services.resolver_service import ensure_category_for_transaction
 
 from app.config import SHEET_ACCOUNTS, SHEET_TRANSACTIONS
 from app.sheets.client import (
@@ -539,7 +540,11 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
             "transaction_id": None,
             "message": validation_message,
             "new_balance": None,
+            "new_balances": {},
         }
+
+    if parsed.get("type") in {"expense", "income"}:
+        parsed["category"] = ensure_category_for_transaction(parsed.get("category"), parsed.get("type"))
 
     deltas = calculate_account_deltas([
         {
@@ -554,6 +559,7 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
             "transaction_id": None,
             "message": "Rekening tidak ditemukan: " + ", ".join(missing_accounts),
             "new_balance": None,
+            "new_balances": {},
         }
 
     txn_id, row = build_transaction_row(parsed, raw_input)
@@ -567,6 +573,7 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
             "transaction_id": None,
             "message": f"Gagal menyimpan transaksi: {str(e)}",
             "new_balance": None,
+            "new_balances": {},
         }
 
     new_balance = None
@@ -597,6 +604,7 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
                 ),
                 "new_balance": new_balance,
                 "new_balance_account": new_balance_account,
+                "new_balances": balance_result.get("new_balances", {}),
             }
 
     except Exception as e:
@@ -605,6 +613,7 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
             "transaction_id": txn_id,
             "message": f"⚠️ Transaksi tersimpan, tapi saldo gagal diupdate: {str(e)}",
             "new_balance": None,
+            "new_balances": {},
         }
 
     return {
@@ -613,6 +622,7 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
         "message": "ok",
         "new_balance": new_balance,
         "new_balance_account": new_balance_account,
+        "new_balances": balance_result.get("new_balances", {}) if "balance_result" in locals() else {},
     }
 
 
@@ -644,6 +654,9 @@ def save_transactions_batch(parsed_items: list[dict]) -> dict:
                 "message": validation_message,
             })
             continue
+
+        if parsed.get("type") in {"expense", "income"}:
+            parsed["category"] = ensure_category_for_transaction(parsed.get("category"), parsed.get("type"))
 
         txn_id, row = build_transaction_row(parsed, raw)
         saved_ids.append(txn_id)

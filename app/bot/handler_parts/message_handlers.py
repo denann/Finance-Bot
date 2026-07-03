@@ -1169,10 +1169,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Asset flow section
     natural_asset = parse_natural_asset_add(user_text)
     if natural_asset:
-        context.user_data["pending_asset_price"] = natural_asset
+        if natural_asset.get("needs_unit_price"):
+            context.user_data["pending_asset_price"] = natural_asset
+            await update.message.reply_text(
+                build_asset_unit_price_prompt(natural_asset),
+                parse_mode="Markdown",
+            )
+            return
+
+        context.user_data["pending_asset_confirm"] = natural_asset
+        context.user_data.pop("pending_asset_price", None)
         await update.message.reply_text(
-            build_asset_unit_price_prompt(natural_asset),
+            f"{build_asset_confirm_preview(natural_asset)}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
+            reply_markup=preview_action_keyboard("asset", True),
         )
         return
 

@@ -300,10 +300,44 @@ def parse_pipe_add_args(args: list[str], item_type: str) -> dict:
 
 
 def parse_natural_asset_add(text: str) -> dict | None:
-    """Parse input into structured data for natural asset add."""
+    """Parse natural asset input before it falls back to expense parsing."""
     raw = str(text or "").strip()
+
+    amount_match = re.fullmatch(
+        r"(?:catat|catet|add|tambah)(?:\s+aset)\s+(.+?)\s+"
+        r"((?:rp\.?\s*)?\d[\d.,]*(?:\s*(?:rb|ribu|k|jt|juta|m|mio))?)",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    if amount_match:
+        name_raw = amount_match.group(1).strip()
+        amount = parse_human_amount(amount_match.group(2))
+        if amount <= 0:
+            return None
+
+        name = name_raw.title()
+        if name.lower() == "emas":
+            name = "Emas"
+        name, category = guess_asset_category_and_name(name)
+        asset_type = "gold" if "emas" in name.lower() else "unit"
+
+        return {
+            "name": name,
+            "amount": amount,
+            "category": category,
+            "description": "",
+            "asset_type": asset_type,
+            "quantity": 1,
+            "unit": "unit",
+            "price_source": "manual",
+            "price_per_unit": amount,
+            "purchase_price_per_unit": amount,
+            "purchase_date": "",
+            "needs_unit_price": False,
+        }
+
     match = re.fullmatch(
-        r"(?:add|tambah)(?:\s+aset)?\s+(.+?)\s+(\d+(?:[.,]\d+)?)\s*(g|gr|gram|grams|buah|unit|pcs|pc|lembar|kg|kilogram)",
+        r"(?:add|tambah|catat|catet)(?:\s+aset)?\s+(.+?)\s+(\d+(?:[.,]\d+)?)\s*(g|gr|gram|grams|buah|unit|pcs|pc|lembar|kg|kilogram)",
         raw,
         flags=re.IGNORECASE,
     )

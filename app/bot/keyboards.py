@@ -4,7 +4,8 @@
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-ACCOUNTS = ["Cash", "BRI", "BSI", "DANA", "GoPay"]
+# Fallback only. Runtime rekening choices are read from sheet `accounts`.
+ACCOUNTS = ["Cash", "BRI", "BSI", "BCA", "DANA", "GoPay", "Seabank"]
 
 # Internal callback value for historical transactions that should not mutate saldo.
 SKIP_ACCOUNT_CALLBACK_VALUE = "__skip_account__"
@@ -12,8 +13,25 @@ SKIP_ACCOUNT_NAME = "Sudah Berlalu"
 SKIP_ACCOUNT_LABEL = "🕘 Sudah berlalu / jangan ubah saldo"
 
 
+def _get_runtime_account_names() -> list[str]:
+    """Read rekening names from sheet `accounts` with a small fallback."""
+    try:
+        from app.services.resolver_service import get_account_names_from_sheet
+
+        names = get_account_names_from_sheet()
+    except Exception:
+        names = ACCOUNTS
+
+    clean_names = []
+    for name in names or []:
+        clean = str(name or "").strip()
+        if clean and clean not in clean_names:
+            clean_names.append(clean)
+    return clean_names or list(ACCOUNTS)
+
+
 def account_keyboard(prefix: str = "acc", include_skip: bool = True) -> InlineKeyboardMarkup:
-    """Build the rekening picker keyboard.
+    """Build a dynamic rekening picker keyboard from sheet `accounts`.
 
     Args:
         prefix: Callback prefix used to route the selected account. Examples are
@@ -21,12 +39,13 @@ def account_keyboard(prefix: str = "acc", include_skip: bool = True) -> InlineKe
         include_skip: Whether to include the historical transaction option.
 
     Returns:
-        Inline keyboard containing account choices and, when allowed, the
-        `Sudah berlalu` option.
+        Inline keyboard containing account choices, optional historical skip,
+        and a cancel button.
     """
+    account_names = _get_runtime_account_names()
     buttons = [
         InlineKeyboardButton(acc, callback_data=f"{prefix}:{acc}")
-        for acc in ACCOUNTS
+        for acc in account_names
     ]
     keyboard = [buttons[i:i+3] for i in range(0, len(buttons), 3)]
 
@@ -37,6 +56,8 @@ def account_keyboard(prefix: str = "acc", include_skip: bool = True) -> InlineKe
                 callback_data=f"{prefix}:{SKIP_ACCOUNT_CALLBACK_VALUE}",
             )
         ])
+
+    keyboard.append([InlineKeyboardButton("🚫 Batal", callback_data=f"cancel:{prefix}")])
 
     return InlineKeyboardMarkup(keyboard)
 

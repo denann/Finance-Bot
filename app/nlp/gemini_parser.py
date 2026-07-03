@@ -7,6 +7,12 @@ import os
 from datetime import datetime
 from app.config import GEMINI_API_KEY
 from app.nlp.gemini_langchain_client import generate_text_with_gemini
+from app.services.resolver_service import (
+    ensure_category_for_transaction,
+    get_account_names_from_sheet,
+    get_category_names_from_sheet,
+    resolve_account_for_parser,
+)
 
 
 GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"))
@@ -24,14 +30,31 @@ VALID_ACCOUNTS = ["Cash", "BRI", "BSI", "DANA", "GoPay"]
 VALID_SPENDING_TYPES = ["Bulanan", "Harian", "Darurat", "Keinginan"]
 
 
+def get_valid_categories(transaction_type: str | None = None) -> list[str]:
+    """Get valid categories from sheet with static fallback."""
+    try:
+        names = get_category_names_from_sheet(transaction_type)
+    except Exception:
+        names = []
+    return names or list(VALID_CATEGORIES)
+
+
+def get_valid_accounts() -> list[str]:
+    """Get valid accounts from sheet with static fallback."""
+    try:
+        names = get_account_names_from_sheet()
+    except Exception:
+        names = []
+    return names or list(VALID_ACCOUNTS)
+
+
 def build_prompt(user_input: str) -> str:
     """Build the data structure or message text for prompt."""
     today = datetime.now().strftime("%Y-%m-%d")
 
-    expense_categories = [
-        c for c in VALID_CATEGORIES
-        if c not in ["Salary", "Freelance", "Investment Return", "Other Income"]
-    ]
+    expense_categories = get_valid_categories("expense")
+    income_categories = get_valid_categories("income")
+    valid_accounts = get_valid_accounts()
 
     return f"""
 Kamu adalah parser transaksi keuangan pribadi berbahasa Indonesia.
@@ -47,10 +70,10 @@ Kategori pengeluaran valid:
 {", ".join(expense_categories)}
 
 Kategori pemasukan valid:
-Salary, Freelance, Investment Return, Other Income
+{", ".join(income_categories)}
 
 Rekening valid:
-{", ".join(VALID_ACCOUNTS)}
+{", ".join(valid_accounts)}
 
 Tipe pengeluaran valid:
 Bulanan, Harian, Darurat, Keinginan
@@ -66,7 +89,7 @@ Aturan parsing:
 2. amount harus integer dalam Rupiah, bukan string.
 3. Jika ada pola split tanpa nama teman, misalnya "dibagi 2", "bagi 2", "split 2", amount boleh dibagi sesuai angka tersebut karena itu dianggap bagian user.
 4. Jika ada pola split bill dengan nama teman, misalnya "22k dibagi 2 sama Raka", "22k bagi 2 sama Fajar Bagas Raka", amount harus tetap total tagihan asli, bukan dibagi. Status sudah dibayar/belum dibayar akan ditangani sistem setelah parsing.
-5. category harus dari daftar kategori valid.
+5. category sebaiknya memakai kategori valid di atas. Jika benar-benar tidak cocok, boleh buat kategori baru yang singkat dan tidak redundan.
 6. account adalah rekening asal, null jika tidak disebutkan.
 7. to_account hanya diisi jika type = "transfer", null jika bukan transfer.
 8. subject adalah pihak/tempat/objek utama transaksi.
@@ -156,18 +179,14 @@ def parse_with_gemini(user_input: str) -> dict | None:
 
         if parsed["type"] == "transfer":
             parsed["category"] = None
-        elif parsed.get("category") not in VALID_CATEGORIES:
-            parsed["category"] = (
-                "Other Income"
-                if parsed["type"] == "income"
-                else "Other Expense"
+        else:
+            parsed["category"] = ensure_category_for_transaction(
+                parsed.get("category"),
+                parsed.get("type"),
             )
 
-        if parsed.get("account") not in VALID_ACCOUNTS:
-            parsed["account"] = None
-
-        if parsed.get("to_account") not in VALID_ACCOUNTS:
-            parsed["to_account"] = None
+        parsed["account"] = resolve_account_for_parser(parsed.get("account"))
+        parsed["to_account"] = resolve_account_for_parser(parsed.get("to_account"))
 
         if parsed["type"] != "expense":
             parsed["tipe_pengeluaran"] = ""

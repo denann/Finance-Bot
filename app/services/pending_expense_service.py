@@ -20,6 +20,7 @@ from app.nlp.regex_parser import (
 )
 from app.sheets.client import append_row_raw, get_all_records, update_cell
 from app.services.transaction_service import save_transaction
+from app.services.resolver_service import get_account_names_from_sheet, resolve_account_for_parser
 
 
 PENDING_EXPENSE_COLUMNS = [
@@ -423,11 +424,23 @@ def infer_category(text: str, parsed: dict | None = None) -> str:
 
 
 def infer_account(text: str, parsed: dict | None = None) -> str:
-    """Helper for infer account in the finance service layer."""
+    """Infer account from parsed data or sheet-backed account names."""
     if parsed and parsed.get("account"):
-        return str(parsed.get("account")).strip()
+        resolved = resolve_account_for_parser(parsed.get("account"))
+        return resolved or str(parsed.get("account")).strip()
 
     clean = str(text or "").lower()
+
+    try:
+        runtime_accounts = get_account_names_from_sheet()
+    except Exception:
+        runtime_accounts = []
+
+    for account_name in sorted(runtime_accounts or [], key=len, reverse=True):
+        account_pattern = re.escape(str(account_name).strip().lower()).replace(r"\ ", r"\s+")
+        if account_pattern and re.search(rf"\b{account_pattern}\b", clean, flags=re.IGNORECASE):
+            return str(account_name).strip()
+
     found = []
     for account in sorted(ACCOUNT_NAMES, key=len, reverse=True):
         if re.search(rf"\b{re.escape(account)}\b", clean):

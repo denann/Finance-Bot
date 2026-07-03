@@ -54,11 +54,72 @@ def display_account_name(account: str) -> str:
     """Helper for display account name in the NLP and parser layer."""
     return ACCOUNT_DISPLAY_NAMES.get(account, account.upper() if account != "cash" else "Cash")
 
+
+def get_runtime_account_names() -> list[str]:
+    """Return account names from sheet `accounts` with hard-coded fallback."""
+    try:
+        from app.services.resolver_service import get_account_names_from_sheet
+
+        names = get_account_names_from_sheet()
+    except Exception:
+        names = []
+
+    clean_names = []
+    for name in names or []:
+        clean = str(name or "").strip()
+        if clean and clean not in clean_names:
+            clean_names.append(clean)
+
+    if clean_names:
+        return clean_names
+
+    return [ACCOUNT_DISPLAY_NAMES.get(acc, acc.title()) for acc in ACCOUNT_NAMES if acc != "sea bank"]
+
+
+def _account_pattern_from_sheet() -> str:
+    """Build an account regex pattern from sheet account names."""
+    names = list(get_runtime_account_names())
+    variants = set()
+
+    for name in names:
+        clean = normalize_text(name)
+        if clean:
+            variants.add(re.escape(clean).replace(r"\ ", r"\s+"))
+            variants.add(re.escape(clean.replace(" ", "")))
+
+    for account in ACCOUNT_NAMES:
+        variants.add(re.escape(account).replace(r"\ ", r"\s*"))
+
+    return "|".join(sorted(variants, key=len, reverse=True)) or r"cash|bri|bsi|bca|dana|gopay"
+
+
+def _display_runtime_account_name(raw: str | None) -> str | None:
+    """Resolve a regex account match into the display name from sheet accounts."""
+    if not raw:
+        return None
+
+    clean = normalize_text(raw)
+    compact = clean.replace(" ", "")
+
+    for name in get_runtime_account_names():
+        name_clean = normalize_text(name)
+        if clean == name_clean or compact == name_clean.replace(" ", ""):
+            return name
+
+    if clean == "sea bank":
+        clean = "sea bank"
+    return display_account_name(clean)
+
 CATEGORY_KEYWORDS = {
+    "Jajan": [
+        "jajan", "ngemil", "cemilan", "camilan", "snack",
+        "bakso", "donat", "donut", "cilok", "seblak", "batagor", "siomay",
+        "gorengan", "es teh", "es kopi", "jajan pasar",
+    ],
     "Food & Beverage": [
         "makan", "minum", "kopi", "coffee", "teh", "jus", "juice",
-        "nasi", "ayam", "soto", "bakso", "mie", "mi", "pizza", "burger",
-        "snack", "cemilan", "jajan", "resto", "restoran", "warung",
+        "nasi", "ayam", "soto", "mie", "mi", "pizza", "burger",
+        "resto", "restoran", "warung",
         "cafe", "kafe", "warteg", "indomaret", "alfamart", "supermarket",
         "beras", "sayur", "buah", "daging", "telur", "susu",
         "galon", "air galon",
@@ -174,6 +235,9 @@ DEBT_PAYMENT_KEYWORDS = [
 
 def parse_debt_input(text: str) -> dict | None:
     """Parse input into structured data for debt input."""
+    if str(text or "").strip().startswith("/"):
+        return None
+
     text_lower = normalize_text(text)
 
     amount = extract_amount_from_text(text_lower)
@@ -550,6 +614,25 @@ def parse_debt_input(text: str) -> dict | None:
                 "raw_input": text,
             }
 
+    short_hutang_receivable_match = re.search(
+        r"^\s*(?!saya\b|aku\b|gue\b|gw\b|gua\b)"
+        r"(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)\s+"
+        r"(?:ada\s+)?(?:hutang|utang)\b(?=.*(?:\d|rp|idr))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if short_hutang_receivable_match:
+        person = re.sub(r"\s+", " ", short_hutang_receivable_match.group("person")).strip().title()
+        if person and person.lower() not in {"saya", "aku", "gw", "gue", "gua"}:
+            return {
+                "intent": "add_receivable",
+                "person_name": person,
+                "amount": amount,
+                "description": extract_description(text, amount),
+                "date": detect_date(text),
+                "raw_input": text,
+            }
+
     # Parser rule note for an Indonesian finance input edge case.
     # Debt flow section
     # Split bill parsing note: separate the paid transaction from each person share.
@@ -686,7 +769,7 @@ def parse_debt_input(text: str) -> dict | None:
 def detect_type(text: str) -> str | None:
     """Helper for detect type in the NLP and parser layer."""
     text_lower = normalize_text(text)
-    account_pattern = r"cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank"
+    account_pattern = _account_pattern_from_sheet()
 
     # Account flow section
     # Parser rule note for an Indonesian finance input edge case.
@@ -771,11 +854,17 @@ def detect_category(text: str, transaction_type: str) -> str:
 
 
 def detect_account(text: str) -> str | None:
-    """Helper for detect account in the NLP and parser layer."""
+    """Detect an account name using the sheet-backed account resolver."""
     text_lower = normalize_text(text)
 
+    for account_name in sorted(get_runtime_account_names(), key=len, reverse=True):
+        clean_account = normalize_text(account_name)
+        pattern = re.escape(clean_account).replace(r"\ ", r"\s+")
+        if re.search(rf"\b{pattern}\b", text_lower, flags=re.IGNORECASE):
+            return account_name
+
     for acc in ACCOUNT_NAMES:
-        if acc in text_lower:
+        if re.search(rf"\b{re.escape(acc).replace(r'\ ', r'\s*')}\b", text_lower, flags=re.IGNORECASE):
             return display_account_name(acc)
 
     return None
@@ -785,16 +874,11 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
     """Helper for detect transfer accounts in the NLP and parser layer."""
     text_lower = normalize_text(text)
 
-    account_pattern = r"cash|bri|bsi|bca|dana|gopay|seabank|sea\s*bank"
+    account_pattern = _account_pattern_from_sheet()
 
     def normalize_account_name(raw: str | None) -> str | None:
         """Normalize and clean input for account name."""
-        if not raw:
-            return None
-        clean = re.sub(r"\s+", " ", str(raw).strip().lower())
-        if clean == "sea bank":
-            clean = "sea bank"
-        return display_account_name(clean)
+        return _display_runtime_account_name(raw)
 
     def iter_accounts() -> list[tuple[int, str]]:
         """Helper for iter accounts in the NLP and parser layer."""
@@ -1353,6 +1437,9 @@ def detect_spending_type(text: str, category: str, transaction_type: str) -> str
 
 def parse_with_regex(text: str) -> dict | None:
     """Parse input into structured data for with regex."""
+    if str(text or "").strip().startswith("/"):
+        return None
+
     text_without_date = strip_date_phrases(text)
     amount = extract_amount_from_text(text_without_date)
     if not amount:

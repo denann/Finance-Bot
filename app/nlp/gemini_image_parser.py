@@ -7,6 +7,12 @@ from datetime import datetime
 
 from app.config import GEMINI_API_KEY
 from app.nlp.gemini_langchain_client import generate_text_from_image_with_gemini
+from app.services.resolver_service import (
+    ensure_category_for_transaction,
+    get_account_names_from_sheet,
+    get_category_names_from_sheet,
+    resolve_account_for_parser,
+)
 
 
 # Image parsing note: receipt output still goes through preview before saving.
@@ -19,6 +25,24 @@ VALID_CATEGORIES = [
 
 VALID_ACCOUNTS = ["Cash", "BRI", "BSI", "DANA", "GoPay"]
 VALID_SPENDING_TYPES = ["Bulanan", "Harian", "Darurat", "Keinginan"]
+
+
+def get_valid_categories(transaction_type: str | None = None) -> list[str]:
+    """Get valid categories from sheet with static fallback."""
+    try:
+        names = get_category_names_from_sheet(transaction_type)
+    except Exception:
+        names = []
+    return names or list(VALID_CATEGORIES)
+
+
+def get_valid_accounts() -> list[str]:
+    """Get valid accounts from sheet with static fallback."""
+    try:
+        names = get_account_names_from_sheet()
+    except Exception:
+        names = []
+    return names or list(VALID_ACCOUNTS)
 
 
 # Split bill parsing note: separate the paid transaction from each person share.
@@ -42,10 +66,9 @@ def build_image_prompt(caption: str = "") -> str:
     """Build the data structure or message text for image prompt."""
     today = datetime.now().strftime("%Y-%m-%d")
 
-    expense_categories = [
-        c for c in VALID_CATEGORIES
-        if c not in ["Salary", "Freelance", "Investment Return", "Other Income"]
-    ]
+    expense_categories = get_valid_categories("expense")
+    income_categories = get_valid_categories("income")
+    valid_accounts = get_valid_accounts()
 
     return f"""
 Kamu adalah parser transaksi keuangan pribadi berbahasa Indonesia dari GAMBAR.
@@ -62,10 +85,10 @@ Kategori pengeluaran valid:
 {", ".join(expense_categories)}
 
 Kategori pemasukan valid:
-Salary, Freelance, Investment Return, Other Income
+{", ".join(income_categories)}
 
 Rekening valid:
-{", ".join(VALID_ACCOUNTS)}
+{", ".join(valid_accounts)}
 
 Tipe pengeluaran valid:
 Bulanan, Harian, Darurat, Keinginan
@@ -249,16 +272,11 @@ def normalize_item(item: dict) -> dict | None:
     category = item.get("category")
     if txn_type == "transfer":
         category = None
-    elif category not in VALID_CATEGORIES:
-        category = "Other Income" if txn_type == "income" else "Other Expense"
+    else:
+        category = ensure_category_for_transaction(category, txn_type)
 
-    account = item.get("account")
-    if account not in VALID_ACCOUNTS:
-        account = None
-
-    to_account = item.get("to_account")
-    if to_account not in VALID_ACCOUNTS:
-        to_account = None
+    account = resolve_account_for_parser(item.get("account"))
+    to_account = resolve_account_for_parser(item.get("to_account"))
 
     tipe_pengeluaran = item.get("tipe_pengeluaran") or ""
     if txn_type != "expense":

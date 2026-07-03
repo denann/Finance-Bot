@@ -5,6 +5,7 @@
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
 from app.bot.handler_parts.transaction_flow import build_pending_expense_confirm_preview, edit_or_continue_keyboard, preview_action_keyboard, preview_action_question
+from app.services.resolver_service import resolve_account_name
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -83,13 +84,62 @@ def _resolve_account_name_from_sheet(input_name: str, accounts: list[dict]) -> t
     if not clean:
         return None, []
 
-    exact_names = _format_account_name_list(accounts)
-    for name in exact_names:
-        if name.lower() == clean.lower():
-            return name, []
+    resolved = resolve_account_name(clean)
+    if resolved.get("status") == "exact":
+        return str(resolved.get("account_name") or "").strip(), []
 
+    if resolved.get("status") == "similar":
+        return None, list(resolved.get("suggestions") or [])[:5]
+
+    # Keep a local fallback in case resolver reads fallback accounts but caller already
+    # supplied a more specific account list.
+    exact_names = _format_account_name_list(accounts)
     suggestions = [name for name in exact_names if clean.lower() in name.lower() or name.lower() in clean.lower()]
     return None, suggestions[:5]
+
+
+def _guess_account_type(account_name: str) -> str:
+    """Guess a simple account type for a new account row."""
+    clean = str(account_name or "").strip().lower()
+    if clean == "cash":
+        return "cash"
+    if clean in {"dana", "gopay", "ovo", "shopeepay", "linkaja"} or "wallet" in clean:
+        return "ewallet"
+    return "bank"
+
+
+def _build_set_balance_preview_text(account_name: str, current_balance: float, new_balance: float, *, create_missing: bool = False) -> str:
+    """Build the preview text for setting an account balance."""
+    delta = float(new_balance or 0) - float(current_balance or 0)
+    sign = "+" if delta >= 0 else "-"
+
+    title = "⚠️ *Preview Tambah Rekening dan Set Saldo*" if create_missing else "⚠️ *Preview Set Saldo Rekening*"
+    action_note = (
+        "Aksi ini akan menambahkan rekening baru ke sheet `accounts`, lalu mengisi saldo awalnya. Tidak akan membuat row transaksi baru."
+        if create_missing
+        else "Aksi ini akan menimpa saldo rekening di sheet `accounts`. Tidak akan membuat row transaksi baru."
+    )
+    current_label = "Saldo awal" if create_missing else "Saldo sekarang"
+
+    return (
+        f"{title}\n\n"
+        f"{action_note}\n\n"
+        f"🏦 Rekening: *{md_safe(account_name)}*\n"
+        f"💰 {current_label}: *{format_rupiah(current_balance)}*\n"
+        f"🎯 Saldo baru: *{format_rupiah(new_balance)}*\n"
+        f"🔁 Selisih: *{sign}{format_rupiah(abs(delta))}*\n\n"
+        "Klik *Simpan* kalau sudah benar, atau *Batal* kalau masih mau cek lagi."
+    )
+
+
+def _set_balance_similarity_keyboard() -> InlineKeyboardMarkup:
+    """Build keyboard for possible duplicate account warning."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Pakai rekening existing", callback_data="set_balance_similar:use_existing")],
+        [InlineKeyboardButton("➕ Tetap buat rekening baru", callback_data="set_balance_similar:create_new")],
+        [InlineKeyboardButton("✍️ Tulis ulang", callback_data="cancel:set_balance_rewrite")],
+        [InlineKeyboardButton("❌ Batal", callback_data="cancel:set_balance")],
+    ])
 
 
 def _parse_set_balance_args(raw_arg: str) -> tuple[str, float | None]:
@@ -217,20 +267,38 @@ async def set_saldo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     account_name, suggestions = _resolve_account_name_from_sheet(account_arg, accounts)
+    if not account_name and suggestions:
+        suggested_name = suggestions[0]
+        context.user_data["pending_set_balance_suggestion"] = {
+            "input_account_name": account_arg,
+            "suggested_account_name": suggested_name,
+            "new_balance": float(new_balance),
+            "account_type": _guess_account_type(account_arg),
+        }
+        await update.message.reply_text(
+            "⚠️ *Kemungkinan rekening duplikat*\n\n"
+            f"Input rekening: `{md_code_text(account_arg or '-')}`\n"
+            f"Mirip dengan rekening existing: *{md_safe(suggested_name)}*\n\n"
+            "Pilih salah satu supaya saldo tidak pecah ke dua nama rekening yang maksudnya sama.",
+            parse_mode="Markdown",
+            reply_markup=_set_balance_similarity_keyboard(),
+        )
+        return
+
     if not account_name:
-        suggestion_text = ""
-        if suggestions:
-            suggestion_text = "\n\nMungkin maksudnya:\n" + "\n".join(f"• `{md_code_text(name)}`" for name in suggestions)
+        context.user_data["pending_set_balance"] = {
+            "account_name": account_arg,
+            "current_balance": 0.0,
+            "new_balance": float(new_balance),
+            "delta": float(new_balance),
+            "create_missing": True,
+            "account_type": _guess_account_type(account_arg),
+        }
 
         await update.message.reply_text(
-            "❌ Rekening tidak ditemukan di sheet `accounts`.\n\n"
-            f"Input rekening: `{md_code_text(account_arg or '-')}`\n\n"
-            "*Rekening yang tersedia:*\n"
-            f"{_format_accounts_table_for_message(accounts)}"
-            f"{suggestion_text}\n\n"
-            "Gunakan nama rekening yang sama persis. Contoh:\n"
-            "`/set_saldo DANA 500k`",
+            _build_set_balance_preview_text(account_arg, 0.0, float(new_balance), create_missing=True),
             parse_mode="Markdown",
+            reply_markup=confirm_keyboard("set_balance"),
         )
         return
 
@@ -252,15 +320,7 @@ async def set_saldo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "delta": float(delta),
     }
 
-    text = (
-        "⚠️ *Preview Set Saldo Rekening*\n\n"
-        "Aksi ini akan menimpa saldo rekening di sheet `accounts`. Tidak akan membuat row transaksi baru.\n\n"
-        f"🏦 Rekening: *{md_safe(account_name)}*\n"
-        f"💰 Saldo sekarang: *{format_rupiah(current_balance)}*\n"
-        f"🎯 Saldo baru: *{format_rupiah(new_balance)}*\n"
-        f"🔁 Selisih: *{sign}{format_rupiah(abs(delta))}*\n\n"
-        "Klik *Simpan* kalau sudah benar, atau *Batal* kalau masih mau cek lagi."
-    )
+    text = _build_set_balance_preview_text(account_name, current_balance, float(new_balance), create_missing=False)
 
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=confirm_keyboard("set_balance"))
 

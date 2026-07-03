@@ -6,15 +6,19 @@
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
 from app.bot.handler_parts.networth_assets import build_asset_confirm_preview
+from app.services.resolver_service import resolve_parsed_transaction
 
 
 def parse_input(text: str) -> dict:
-    """Parse input into structured data for input."""
+    """Parse input and normalize accounts/categories through resolvers."""
     result = parse_with_regex(text)
-    if result is not None:
-        return result
+    if result is None:
+        result = parse_with_pending_fallback(text)
 
-    return parse_with_pending_fallback(text)
+    if isinstance(result, dict) and result.get("type") in {"expense", "income", "transfer"}:
+        return resolve_parsed_transaction(result, text)
+
+    return result
 
 
 def build_progress_bar(pct: float, length: int = 10) -> str:

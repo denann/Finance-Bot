@@ -5,6 +5,7 @@
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
+from app.services.resolver_service import create_account
 
 from app.bot.handler_parts.networth_assets import build_asset_added_text
 from app.bot.handler_parts.command_router import short_txn_id
@@ -478,6 +479,70 @@ def build_clarified_fronting(raw: str, parsed: dict | None = None) -> dict | Non
 # Implementation section
 # callback_data routes the user back to the correct flow without saving before confirmation.
 
+def _build_set_balance_callback_preview(account_name: str, current_balance: float, new_balance: float, *, create_missing: bool = False) -> str:
+    """Build set balance preview text from callback state."""
+    delta = float(new_balance or 0) - float(current_balance or 0)
+    sign = "+" if delta >= 0 else "-"
+    title = "⚠️ *Preview Tambah Rekening dan Set Saldo*" if create_missing else "⚠️ *Preview Set Saldo Rekening*"
+    action_note = (
+        "Aksi ini akan menambahkan rekening baru ke sheet `accounts`, lalu mengisi saldo awalnya. Tidak akan membuat row transaksi baru."
+        if create_missing
+        else "Aksi ini akan menimpa saldo rekening di sheet `accounts`. Tidak akan membuat row transaksi baru."
+    )
+    current_label = "Saldo awal" if create_missing else "Saldo sekarang"
+    return (
+        f"{title}\n\n"
+        f"{action_note}\n\n"
+        f"🏦 Rekening: *{md_safe(account_name)}*\n"
+        f"💰 {current_label}: *{format_rupiah(current_balance)}*\n"
+        f"🎯 Saldo baru: *{format_rupiah(new_balance)}*\n"
+        f"🔁 Selisih: *{sign}{format_rupiah(abs(delta))}*\n\n"
+        "Klik *Simpan* kalau sudah benar, atau *Batal* kalau masih mau cek lagi."
+    )
+
+
+def _build_saved_account_balance_info(parsed: dict, result: dict) -> str:
+    """Build saved account balance details, including both sides of transfer."""
+    new_balances = result.get("new_balances") or {}
+    deltas = calculate_account_deltas([{"parsed": parsed or {}}])
+
+    if deltas and new_balances:
+        lines = ["\n💳 *Ringkasan per rekening:*"]
+        for account_name, delta in deltas.items():
+            balance = None
+            display_name = account_name
+            for saved_name, saved_balance in new_balances.items():
+                if str(saved_name).strip().lower() == str(account_name).strip().lower():
+                    display_name = saved_name
+                    balance = saved_balance
+                    break
+
+            sign = "+" if float(delta or 0) >= 0 else "-"
+            if balance is not None:
+                lines.append(
+                    f"• {md_safe(display_name)}: {sign}{format_rupiah(abs(float(delta or 0)))} → saldo *{format_rupiah(balance)}*"
+                )
+            else:
+                lines.append(
+                    f"• {md_safe(display_name)}: {sign}{format_rupiah(abs(float(delta or 0)))}"
+                )
+        return "\n" + "\n".join(lines)
+
+    if result.get("new_balance") is not None:
+        balance_account = (
+            result.get("new_balance_account")
+            or (parsed or {}).get("to_account")
+            or (parsed or {}).get("account")
+            or "-"
+        )
+        return (
+            f"\n💳 Saldo {md_safe(balance_account)}: "
+            f"*{format_rupiah(result['new_balance'])}*"
+        )
+
+    return ""
+
+
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Route Telegram inline button callbacks to the right pending flow.
 
@@ -498,6 +563,71 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data or ""
     await show_callback_loading(query)
+
+    if data.startswith("set_balance_similar:"):
+        action = data.split(":", 1)[1]
+        pending = context.user_data.get("pending_set_balance_suggestion") or {}
+
+        if not pending:
+            await safe_edit_message(
+                query,
+                "❌ Sesi set saldo expired. Jalankan `/set_saldo` lagi.",
+                parse_mode="Markdown",
+            )
+            return
+
+        new_balance = float(pending.get("new_balance", 0) or 0)
+
+        if action == "use_existing":
+            account_name = str(pending.get("suggested_account_name") or "").strip()
+            current_balance = get_account_balance(account_name)
+            if current_balance is None:
+                await safe_edit_message(
+                    query,
+                    f"❌ Saldo rekening `{md_code_text(account_name)}` belum bisa dibaca dari sheet `accounts`.",
+                    parse_mode="Markdown",
+                )
+                return
+
+            context.user_data["pending_set_balance"] = {
+                "account_name": account_name,
+                "current_balance": float(current_balance),
+                "new_balance": new_balance,
+                "delta": new_balance - float(current_balance),
+                "create_missing": False,
+            }
+            context.user_data.pop("pending_set_balance_suggestion", None)
+
+            await safe_edit_message(
+                query,
+                _build_set_balance_callback_preview(account_name, float(current_balance), new_balance, create_missing=False),
+                parse_mode="Markdown",
+                reply_markup=confirm_keyboard("set_balance"),
+            )
+            return
+
+        if action == "create_new":
+            account_name = str(pending.get("input_account_name") or "").strip()
+            context.user_data["pending_set_balance"] = {
+                "account_name": account_name,
+                "current_balance": 0.0,
+                "new_balance": new_balance,
+                "delta": new_balance,
+                "create_missing": True,
+                "account_type": pending.get("account_type") or "bank",
+            }
+            context.user_data.pop("pending_set_balance_suggestion", None)
+
+            await safe_edit_message(
+                query,
+                _build_set_balance_callback_preview(account_name, 0.0, new_balance, create_missing=True),
+                parse_mode="Markdown",
+                reply_markup=confirm_keyboard("set_balance"),
+            )
+            return
+
+        await safe_edit_message(query, "❌ Pilihan set saldo tidak valid.")
+        return
 
     if data == "receipt:all":
         pending_receipt = context.user_data.get("pending_receipt") or {}
@@ -1430,8 +1560,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             delta = new_balance - old_balance
             sign = "+" if delta >= 0 else "-"
 
+            create_missing = bool(pending_balance.get("create_missing"))
+
             try:
-                success = update_account_balance(account_name, new_balance)
+                if create_missing:
+                    create_result = create_account(
+                        account_name,
+                        initial_balance=new_balance,
+                        account_type=str(pending_balance.get("account_type") or "bank"),
+                    )
+                    success = bool(create_result.get("success"))
+                    if not success:
+                        raise RuntimeError(create_result.get("message") or "Gagal membuat rekening baru.")
+                else:
+                    success = update_account_balance(account_name, new_balance)
             except Exception as e:
                 await safe_edit_message(
                     query,
@@ -1450,12 +1592,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             context.user_data.pop("pending_set_balance", None)
+            context.user_data.pop("pending_set_balance_suggestion", None)
+
+            success_title = "✅ *Rekening baru berhasil dibuat dan saldo diset!*" if create_missing else "✅ *Saldo rekening berhasil diupdate!*"
 
             await safe_edit_message(
                 query,
-                "✅ *Saldo rekening berhasil diupdate!*\n\n"
+                f"{success_title}\n\n"
                 f"🏦 Rekening: *{md_safe(account_name)}*\n"
-                f"💰 Saldo lama: *{format_rupiah(old_balance)}*\n"
+                f"💰 {'Saldo awal' if create_missing else 'Saldo lama'}: *{format_rupiah(old_balance)}*\n"
                 f"🎯 Saldo baru: *{format_rupiah(new_balance)}*\n"
                 f"🔁 Selisih: *{sign}{format_rupiah(abs(delta))}*\n\n"
                 "Catatan: ini hanya mengubah saldo di sheet `accounts`, tidak membuat row transaksi baru.",
@@ -2827,18 +2972,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = save_transaction(parsed, raw_input=raw)
 
         if result["success"]:
-            balance_info = ""
-            if result.get("new_balance") is not None:
-                balance_account = (
-                    result.get("new_balance_account")
-                    or parsed.get("to_account")
-                    or parsed.get("account")
-                    or "-"
-                )
-                balance_info = (
-                    f"\n💳 Saldo {md_safe(balance_account)}: "
-                    f"*{format_rupiah(result['new_balance'])}*"
-                )
+            balance_info = _build_saved_account_balance_info(parsed, result)
 
             split_info = ""
             split_debt = create_split_bill_debt(parsed, raw, source_transaction_id=result.get("transaction_id", ""))
@@ -2918,6 +3052,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pending_asset_confirm", None)
         context.user_data.pop("pending_asset_add_flow", None)
         context.user_data.pop("pending_expense_confirm", None)
+        context.user_data.pop("pending_set_balance", None)
+        context.user_data.pop("pending_set_balance_suggestion", None)
         context.user_data.pop("pending_preview_edit", None)
         context.user_data.pop("pending_missing_amount", None)
         context.user_data.pop("pending_parse_clarification", None)
