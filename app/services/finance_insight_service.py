@@ -12,6 +12,7 @@ from app.config import (
     SHEET_ACCOUNTS,
     SHEET_ASSETS,
     SHEET_BUDGETS,
+    SHEET_CATEGORIES,
     SHEET_DEBTS,
     SHEET_TRANSACTIONS,
 )
@@ -236,9 +237,63 @@ def normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+
+
+def normalize_sheet_date_value(value) -> str:
+    """Normalize Google Sheets date values before filtering or auditing."""
+    if value is None:
+        return ""
+    raw = str(value).strip()
+    if not raw or raw.lower() in {"-", "none", "nan"}:
+        return ""
+
+    match = re.search(r"(20\d{2})[-/](\d{1,2})[-/](\d{1,2})", raw)
+    if match:
+        try:
+            return f"{int(match.group(1)):04d}-{int(match.group(2)):02d}-{int(match.group(3)):02d}"
+        except Exception:
+            return match.group(0).replace("/", "-")
+
+    if re.fullmatch(r"\d+(?:\.0+)?", raw):
+        try:
+            serial = int(float(raw))
+            if 20000 <= serial <= 80000:
+                dt = datetime(1899, 12, 30) + timedelta(days=serial)
+                return dt.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+    return raw
+
+
+def is_valid_id_text(value: str, prefixes: tuple[str, ...]) -> bool:
+    """Check whether an ID field still looks like bot-generated plain text."""
+    raw = str(value or "").strip()
+    return bool(raw) and raw.startswith(prefixes) and "e+" not in raw.lower()
+
+
+def get_existing_category_names() -> set[str]:
+    """Read category names from sheet categories for audit checks."""
+    names = set()
+    for row in get_all_records(SHEET_CATEGORIES):
+        name = str(row.get("category_name") or row.get("name") or "").strip()
+        if name:
+            names.add(name)
+    return names
+
+
+def get_existing_account_names() -> set[str]:
+    """Read account names from sheet accounts for audit checks."""
+    names = set()
+    for row in get_all_records(SHEET_ACCOUNTS):
+        name = str(row.get("account_name") or row.get("name") or "").strip()
+        if name:
+            names.add(name)
+    return names
+
 def is_date_between(date_value: str, date_from: str | None, date_to: str | None) -> bool:
     """Check whether a condition is true for date between."""
-    date_value = str(date_value or "").strip()
+    date_value = normalize_sheet_date_value(date_value)
     if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", date_value):
         return False
     if date_from and date_value < date_from:
@@ -371,7 +426,7 @@ def compact_transaction(r: dict) -> dict:
     """Helper for compact transaction in the finance service layer."""
     amount = get_effective_expense_amount(r)
     item = {
-        "date": r.get("date", ""),
+        "date": normalize_sheet_date_value(r.get("date", "")),
         "type": r.get("type", ""),
         "amount": amount,
         "amount_display": format_rupiah(amount),
@@ -565,7 +620,7 @@ def detect_anomalies(records: list[dict], month_summary: dict | None = None) -> 
     bucket = defaultdict(list)
     for r in records:
         key = (
-            str(r.get("date", "")),
+            normalize_sheet_date_value(r.get("date", "")),
             str(r.get("type", "")),
             int(get_effective_expense_amount(r) if str(r.get("type", "")).strip().lower() == "expense" else safe_float(r.get("amount"))),
             normalize_text(str(r.get("description", "")))[:40],
@@ -602,49 +657,103 @@ def detect_anomalies(records: list[dict], month_summary: dict | None = None) -> 
 
 
 def detect_data_quality_issues(records: list[dict]) -> list[dict]:
-    """Helper for detect data quality issues in the finance service layer."""
+    """Detect transaction data quality issues against sheet accounts/categories."""
     issues = []
     counters = Counter()
     examples = defaultdict(list)
 
+    category_names = get_existing_category_names()
+    category_lookup = {normalize_text(name): name for name in category_names}
+    account_names = get_existing_account_names()
+    account_lookup = {normalize_text(name): name for name in account_names}
+
+    def find_similar_name(name: str, lookup: dict[str, str]) -> str | None:
+        clean = normalize_text(name)
+        if not clean:
+            return None
+        if clean in lookup:
+            return lookup[clean]
+        for key, original in lookup.items():
+            if clean in key or key in clean:
+                return original
+        return None
+
     for r in records:
         txn_type = str(r.get("type", "")).strip().lower()
         amount = safe_float(r.get("amount"))
-        date = str(r.get("date", "")).strip()
+        raw_date = str(r.get("date", "")).strip()
+        normalized_date = normalize_sheet_date_value(raw_date)
         account = str(r.get("account") or "").strip()
         to_account = str(r.get("to_account") or "").strip()
         category = str(r.get("category") or "").strip()
+        txn_id = str(r.get("id") or "").strip()
+        raw_input = str(r.get("raw_input") or "").strip()
+        subject = str(r.get("subject") or "").strip()
+        description = str(r.get("description") or "").strip()
 
-        def add_issue(key: str):
-            """Helper for add issue in the finance service layer."""
+        def add_issue(key: str, extra: dict | None = None):
+            """Register one audit issue with examples."""
             counters[key] += 1
             if len(examples[key]) < 5:
-                examples[key].append(compact_transaction(r))
+                example = compact_transaction({**r, "date": normalized_date})
+                if extra:
+                    example.update(extra)
+                examples[key].append(example)
 
-        if txn_type not in {"expense", "income", "transfer"}:
+        if txn_type not in {"expense", "income", "transfer", "debt_offset", "debt_only"}:
             add_issue("type tidak valid/kosong")
         if amount <= 0:
             add_issue("amount kosong/0")
-        if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", date):
+        if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", normalized_date):
             add_issue("tanggal invalid/kosong")
+        elif raw_date != normalized_date:
+            add_issue("tanggal tersimpan sebagai serial/format non-standar", {"normalized_date": normalized_date, "raw_date": raw_date})
+
+        if txn_id and not is_valid_id_text(txn_id, ("txn_",)):
+            add_issue("transaction_id berubah format")
+        if re.fullmatch(r"\d+(?:\.0+)?", raw_input):
+            add_issue("raw_input terlihat berubah jadi angka")
+        if subject and re.fullmatch(r"\d+(?:\.0+)?", subject):
+            add_issue("subject terlihat berubah jadi angka")
+        if description and re.fullmatch(r"\d+(?:\.0+)?", description):
+            add_issue("description terlihat berubah jadi angka")
+
         if txn_type in {"expense", "income", "transfer"} and not account:
             add_issue("account kosong")
-        if txn_type == "transfer" and not to_account:
-            add_issue("transfer tanpa to_account")
+        elif account and normalize_text(account) not in account_lookup:
+            if str(account).lower() not in {"sudah berlalu", "tanpa rekening", "debt only", "debt offset"}:
+                similar = find_similar_name(account, account_lookup)
+                issue_name = "account mirip tapi tidak persis dengan sheet accounts" if similar else "account tidak ada di sheet accounts"
+                add_issue(issue_name, {"account_input": account, "suggestion": similar or ""})
+
+        if txn_type == "transfer":
+            if not to_account:
+                add_issue("transfer tanpa to_account")
+            elif normalize_text(to_account) not in account_lookup:
+                similar = find_similar_name(to_account, account_lookup)
+                issue_name = "to_account mirip tapi tidak persis dengan sheet accounts" if similar else "to_account tidak ada di sheet accounts"
+                add_issue(issue_name, {"to_account_input": to_account, "suggestion": similar or ""})
+
         if txn_type in {"expense", "income"} and to_account:
             add_issue("income/expense punya to_account")
+
         if txn_type == "expense" and not category:
             add_issue("expense tanpa category")
-        if txn_type == "expense" and category == "Other Expense":
-            add_issue("expense masih Other Expense")
-        if txn_type == "expense" and category == "Utang Tanpa Cashflow":
-            add_issue("expense kategori Utang Tanpa Cashflow")
-            
+        elif txn_type == "expense":
+            category_key = normalize_text(category)
+            if category_key not in category_lookup:
+                similar = find_similar_name(category, category_lookup)
+                issue_name = "kategori mirip tapi tidak persis dengan sheet categories" if similar else "kategori tidak ada di sheet categories"
+                add_issue(issue_name, {"category_input": category, "suggestion": similar or ""})
+            if category == "Other Expense":
+                add_issue("expense masih Other Expense")
+            if category == "Utang Tanpa Cashflow":
+                add_issue("expense kategori Utang Tanpa Cashflow")
+
     for key, count in counters.most_common():
         issues.append({"issue": key, "count": count, "examples": examples[key]})
 
     return issues
-
 
 def compare_summaries(current: dict, previous: dict) -> dict:
     """Helper for compare summaries in the finance service layer."""
@@ -809,12 +918,17 @@ def build_audit_context(month: str | None = None) -> dict:
     month = normalize_month_arg(month)
     records = get_month_transactions(month)
     summary = summarize_transactions(records)
+    category_names = sorted(get_existing_category_names())
+    account_names = sorted(get_existing_account_names())
     return {
         "period": {"type": "month", "month": month},
         "summary": summary,
         "anomalies": detect_anomalies(records, summary),
         "data_quality_issues": detect_data_quality_issues(records),
         "top_expenses": get_top_transactions(records, "expense", 8),
+        "known_categories": category_names,
+        "known_accounts": account_names,
+        "audit_scope": "kategori transaksi vs sheet categories, rekening transaksi vs sheet accounts, date/ID/plain-text fields",
     }
 
 
@@ -889,12 +1003,25 @@ def deterministic_audit_text(context: dict) -> str:
     anomalies = context.get("anomalies", [])
 
     if not issues and not anomalies:
-        return "✅ Tidak ada masalah data/anomali besar yang terlihat untuk periode ini."
+        return (
+            "✅ Tidak ada anomali bulan ini.\n"
+            "Data transaksi, kategori, rekening, dan format utama terlihat aman."
+        )
 
     if issues:
         lines.append("\nMasalah kualitas data:")
         for item in issues[:8]:
             lines.append(f"• {item.get('issue')}: {item.get('count')} transaksi")
+            examples = item.get("examples") or []
+            if examples:
+                example = examples[0]
+                extra = ""
+                if example.get("suggestion"):
+                    extra = f" → kemungkinan maksudnya {example.get('suggestion')}"
+                lines.append(
+                    f"  Contoh: {example.get('date') or '-'} — {example.get('description') or example.get('subject') or '-'} "
+                    f"({example.get('amount_display') or '-'}){extra}"
+                )
 
     if anomalies:
         lines.append("\nAnomali yang perlu dicek:")

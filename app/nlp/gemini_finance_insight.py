@@ -36,11 +36,11 @@ def build_finance_insight_prompt(mode: str, context: dict, question: str = "") -
     if mode == "monthly_auto":
         length_rule = "Jawab sangat ringkas: maksimal 5 bullet. Fokus ke driver utama, budget risk, dan 1 saran."
     elif mode == "audit":
-        length_rule = "Jawab ringkas namun actionable. Kelompokkan masalah data, anomali, dan prioritas perbaikan."
+        length_rule = "Jawab ringkas, natural, dan actionable. Jika tidak ada issues/anomalies, jawab tenang seperti: ✅ Tidak ada anomali bulan ini. Data transaksi bulan ini terlihat cukup aman."
     elif mode == "coach":
         length_rule = "Jawab sebagai financial coach ringan: realistis, berbasis angka, tanpa menghakimi. Beri 3-5 aksi konkret."
     else:
-        length_rule = "Jawab jelas dan padat. Boleh pakai bullet, jangan terlalu panjang."
+        length_rule = "Jawab natural seperti financial assistant pribadi: mulai dari temuan utama, sebut angka paling penting, jelaskan kemungkinan penyebab, lalu beri 2-3 saran praktis. Tetap ringkas."
 
     return f"""
 Kamu adalah analis personal finance berbahasa Indonesia.
@@ -65,6 +65,9 @@ Aturan wajib:
 15. Hanya sebut "anomali" jika item tersebut muncul di field `anomalies`.
 16. Hanya sebut "masalah data quality" jika item tersebut muncul di field `data_quality_issues`.
 17. Jangan membuat kalimat pembuka generik seperti "Halo! Saya analis..." kalau tidak perlu.
+18. Gunakan bahasa Indonesia yang natural, tidak terlalu kaku, dan jangan terlalu template.
+19. Untuk pertanyaan seperti "bulan ini boros di mana?", fokus ke kategori penyumbang terbesar, transaksi yang perlu dicek, dan saran kecil yang bisa langsung dilakukan.
+20. Kalau kategori `Other Expense` cukup besar atau muncul di data_quality_issues, jelaskan bahwa insight akan lebih rapi kalau kategorinya diperbaiki.
 
 Konteks JSON:
 {_json_dumps(context)}
@@ -73,6 +76,9 @@ Konteks JSON:
 
 def generate_finance_insight(mode: str, context: dict, question: str = "") -> str:
     """Helper for generate finance insight in the NLP and parser layer."""
+    if mode == "audit" and not context.get("data_quality_issues") and not context.get("anomalies"):
+        return deterministic_audit_text(context)
+
     if not GEMINI_API_KEY:
         if mode == "audit":
             return deterministic_audit_text(context)
@@ -86,7 +92,7 @@ def generate_finance_insight(mode: str, context: dict, question: str = "") -> st
         text = generate_text_with_gemini(
             prompt,
             model_name=GEMINI_INSIGHT_MODEL,
-            temperature=0.0,
+            temperature=0.25,
         ).strip()
         if text:
             return text

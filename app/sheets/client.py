@@ -619,7 +619,7 @@ def get_sheet(sheet_name: str):
 def append_row(sheet_name: str, row: list):
     """Append data to row."""
     sheet = get_sheet(sheet_name)
-    response = _execute_write(lambda: sheet.append_row(row, value_input_option="USER_ENTERED"))
+    response = _execute_write(lambda: sheet.append_row(row, value_input_option="RAW"))
 
     tx = _current_transaction.get()
     row_index = _extract_updated_row_index(response)
@@ -654,7 +654,7 @@ def append_rows(sheet_name: str, rows: list[list]):
         return None
 
     sheet = get_sheet(sheet_name)
-    response = _execute_write(lambda: sheet.append_rows(rows, value_input_option="USER_ENTERED"))
+    response = _execute_write(lambda: sheet.append_rows(rows, value_input_option="RAW"))
 
     tx = _current_transaction.get()
     row_range = _extract_updated_row_range(response)
@@ -691,13 +691,14 @@ def update_cell(sheet_name: str, row: int, col: int, value):
     if tx is not None:
         old_value = _execute_read(lambda: sheet.cell(row, col).value)
 
-    response = _execute_write(lambda: sheet.update_cell(row, col, value))
+    cell_range = f"{_get_column_letter(col)}{row}"
+    response = _execute_write(lambda: sheet.update(cell_range, [[value]], value_input_option="RAW"))
 
     if tx is not None:
         tx.add_rollback(
-            f"restore cell {sheet_name}!{_get_column_letter(col)}{row}",
-            lambda sheet=sheet, row=row, col=col, old_value=old_value: _call_with_retry(
-                lambda: sheet.update_cell(row, col, old_value)
+            f"restore cell {sheet_name}!{cell_range}",
+            lambda sheet=sheet, cell_range=cell_range, old_value=old_value: _call_with_retry(
+                lambda: sheet.update(cell_range, [[old_value]], value_input_option="RAW")
             ),
         )
 
@@ -742,7 +743,7 @@ def delete_rows(sheet_name: str, row_indices: list[int]):
             tx.add_rollback(
                 f"restore deleted row {sheet_name}!{row_index}",
                 lambda sheet=sheet, row_index=row_index, old_row=old_row: _call_with_retry(
-                    lambda: sheet.insert_row(old_row or [], index=row_index, value_input_option="USER_ENTERED")
+                    lambda: sheet.insert_row(old_row or [], index=row_index, value_input_option="RAW")
                 ),
             )
 
@@ -762,13 +763,13 @@ def update_row(sheet_name: str, row_index: int, row_values: list):
     end_col = _get_column_letter(width)
     cell_range = f"A{row_index}:{end_col}{row_index}"
 
-    response = _execute_write(lambda: sheet.update(cell_range, [row_values]))
+    response = _execute_write(lambda: sheet.update(cell_range, [row_values], value_input_option="RAW"))
 
     if tx is not None:
         tx.add_rollback(
             f"restore row {sheet_name}!{row_index}",
             lambda sheet=sheet, cell_range=cell_range, old_row=old_row: _call_with_retry(
-                lambda: sheet.update(cell_range, [old_row or []])
+                lambda: sheet.update(cell_range, [old_row or []], value_input_option="RAW")
             ),
         )
 
@@ -784,13 +785,13 @@ def update_range(sheet_name: str, cell_range: str, values: list[list]):
     if tx is not None:
         old_values = _execute_read(lambda: sheet.get(cell_range))
 
-    response = _execute_write(lambda: sheet.update(cell_range, values))
+    response = _execute_write(lambda: sheet.update(cell_range, values, value_input_option="RAW"))
 
     if tx is not None:
         tx.add_rollback(
             f"restore range {sheet_name}!{cell_range}",
             lambda sheet=sheet, cell_range=cell_range, old_values=old_values: _call_with_retry(
-                lambda: sheet.update(cell_range, old_values or [])
+                lambda: sheet.update(cell_range, old_values or [], value_input_option="RAW")
             ),
         )
 

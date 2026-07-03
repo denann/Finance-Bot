@@ -934,7 +934,10 @@ def detect_account(text: str) -> str | None:
             return account_name
 
     for acc in ACCOUNT_NAMES:
-        if re.search(rf"\b{re.escape(acc).replace(r'\ ', r'\s*')}\b", text_lower, flags=re.IGNORECASE):
+        escaped_acc = re.escape(acc).replace(r"\ ", r"\s*")
+        account_pattern = rf"\b{escaped_acc}\b"
+
+        if re.search(account_pattern, text_lower, flags=re.IGNORECASE):
             return display_account_name(acc)
 
     return None

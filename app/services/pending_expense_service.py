@@ -661,6 +661,11 @@ def mark_pending_paid(ref: str, account: str | None = None, paid_date: str | Non
         "success": True,
         "item": item,
         "transaction_id": txn_id,
+        "pending_id": item.get("id") or ref,
+        "account": txn_account,
+        "amount": parsed.get("amount"),
         "new_balance": result.get("new_balance"),
+        "new_balance_account": result.get("new_balance_account") or txn_account,
+        "new_balances": result.get("new_balances", {}),
         "message": "ok",
     }

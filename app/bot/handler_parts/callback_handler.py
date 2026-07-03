@@ -1116,12 +1116,47 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if result.get("success"):
             rule = result.get("rule") or {}
+            balance_lines = []
+            txn_type = str(result.get("type") or rule.get("type") or "").strip().lower()
+            amount = float(result.get("amount") or rule.get("amount") or 0)
+            account = result.get("account") or rule.get("account") or "-"
+            to_account = result.get("to_account") or rule.get("to_account") or ""
+            new_balances = result.get("new_balances") or {}
+
+            if new_balances:
+                balance_lines.append("\n💳 *Ringkasan per rekening:*")
+                if txn_type == "transfer":
+                    balance_deltas = {account: -amount, to_account: amount}
+                elif txn_type == "income":
+                    balance_deltas = {account: amount}
+                else:
+                    balance_deltas = {account: -amount}
+
+                for balance_account, delta in balance_deltas.items():
+                    if not str(balance_account or "").strip():
+                        continue
+                    saved_balance = None
+                    display_account = balance_account
+                    for saved_account, balance in new_balances.items():
+                        if str(saved_account).strip().lower() == str(balance_account).strip().lower():
+                            display_account = saved_account
+                            saved_balance = balance
+                            break
+                    sign = "+" if delta >= 0 else "-"
+                    if saved_balance is not None:
+                        balance_lines.append(
+                            f"• {md_safe(display_account)}: {sign}{format_rupiah(abs(delta))} → saldo *{format_rupiah(saved_balance)}*"
+                        )
+                    else:
+                        balance_lines.append(f"• {md_safe(display_account)}: {sign}{format_rupiah(abs(delta))}")
+
             await safe_edit_message(
                 query,
                 "✅ *Recurring ditandai sudah bayar.*\n\n"
                 f"📌 {md_safe(rule.get('name') or '-')}\n"
                 f"📝 Transaksi tersimpan: `{result.get('transaction_id')}`\n"
-                f"🔕 Notifikasi berikutnya: `{result.get('next_run_date')}`",
+                f"🔕 Notifikasi berikutnya: `{result.get('next_run_date')}`"
+                f"{''.join(balance_lines)}",
                 parse_mode="Markdown",
             )
         else:

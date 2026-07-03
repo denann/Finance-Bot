@@ -212,9 +212,43 @@ def short_txn_id(txn_id: str) -> str:
 
 
 
+
+def normalize_sheet_date_for_display(value) -> str:
+    """Normalize Google Sheets date values before showing them to users.
+
+    Google Sheets can return dates as serial numbers when old rows were written
+    with USER_ENTERED. This keeps `/hutang`, reports, and audit output readable
+    without changing stored historical data.
+    """
+    if value is None:
+        return ""
+
+    raw = str(value).strip()
+    if not raw or raw.lower() in {"-", "none", "nan"}:
+        return ""
+
+    match = re.search(r"(20\d{2})[-/](\d{1,2})[-/](\d{1,2})", raw)
+    if match:
+        try:
+            return f"{int(match.group(1)):04d}-{int(match.group(2)):02d}-{int(match.group(3)):02d}"
+        except Exception:
+            return match.group(0).replace("/", "-")
+
+    if re.fullmatch(r"\d+(?:\.0+)?", raw):
+        try:
+            serial = int(float(raw))
+            if 20000 <= serial <= 80000:
+                from datetime import timedelta
+                dt = datetime(1899, 12, 30) + timedelta(days=serial)
+                return dt.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+    return raw
+
 def format_indonesian_date_group_label(date_value) -> str:
     """Format data into a readable display for indonesian date group label."""
-    raw = str(date_value or "").strip()
+    raw = normalize_sheet_date_for_display(date_value)
     if not raw or raw.lower() in {"-", "none", "nan", "tanpa tanggal"}:
         return "🗓️ Tanpa tanggal:"
 

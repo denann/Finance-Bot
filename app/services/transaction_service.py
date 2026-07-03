@@ -623,6 +623,7 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
         "new_balance": new_balance,
         "new_balance_account": new_balance_account,
         "new_balances": balance_result.get("new_balances", {}) if "balance_result" in locals() else {},
+        "account_deltas": deltas,
     }
 
 
@@ -728,6 +729,7 @@ def save_transactions_batch(parsed_items: list[dict]) -> dict:
             "failed_items": failed_items,
             "saved_ids": saved_ids,
             "new_balances": balance_result.get("new_balances", {}),
+            "account_deltas": deltas,
         }
 
     except Exception as e:

@@ -1686,12 +1686,30 @@ async def pending_paid_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
+    item = result.get("item") or {}
+    pending_id_display = result.get("pending_id") or item.get("id") or pending_id
+    account_display = result.get("account") or account or item.get("account") or "-"
+    amount = float(result.get("amount") or item.get("amount") or 0)
+    new_balance = result.get("new_balance")
+    new_balances = result.get("new_balances") or {}
+
+    if new_balance is None and account_display:
+        for saved_account, saved_balance in new_balances.items():
+            if str(saved_account).strip().lower() == str(account_display).strip().lower():
+                new_balance = saved_balance
+                account_display = saved_account
+                break
+
     lines = [
         "✅ *Pending expense sudah dicatat sebagai transaksi aktual.*",
+        "",
+        f"🔖 Pending ID: `{md_code_text(pending_id_display)}`",
         f"🔖 Transaction ID: `{md_code_text(result.get('transaction_id'))}`",
+        f"💳 Rekening: *{md_safe(account_display)}*",
+        f"💰 Nominal keluar: *-{format_rupiah(amount)}*",
     ]
-    if result.get("new_balance") is not None:
-        lines.append(f"💰 Saldo baru: *{format_rupiah(result.get('new_balance'))}*")
+    if new_balance is not None:
+        lines.append(f"🏦 Saldo {md_safe(account_display)} sekarang: *{format_rupiah(new_balance)}*")
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
@@ -2259,21 +2277,9 @@ async def debt_edit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def format_debt_created_date_for_display(debt: dict) -> str:
-    """Format data into a readable display for debt created date for display."""
-    raw = str((debt or {}).get("created_at", "") or "").strip()
-    if not raw:
-        return "Tanpa tanggal"
-
-    match = re.search(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", raw)
-    if match:
-        parts = match.group(0).replace("/", "-").split("-")
-        try:
-            return f"{int(parts[0]):04d}-{int(parts[1]):02d}-{int(parts[2]):02d}"
-        except Exception:
-            return match.group(0).replace("/", "-")
-
-    # Implementation note for this project-specific finance flow.
-    return raw
+    """Format debt created_at safely, including Google Sheets date serials."""
+    raw = normalize_sheet_date_for_display((debt or {}).get("created_at", ""))
+    return raw or "Tanpa tanggal"
 
 
 def debt_detail_sort_key_for_display(debt: dict) -> tuple[str, str, int]:

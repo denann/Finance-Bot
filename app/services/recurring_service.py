@@ -593,6 +593,13 @@ def mark_recurring_rule_paid(rule_id: str, run_date: date | None = None) -> dict
             "transaction_id": transaction_id,
             "next_run_date": next_run_date,
             "rule": rule,
+            "new_balance": transaction_result.get("new_balance"),
+            "new_balance_account": transaction_result.get("new_balance_account"),
+            "new_balances": transaction_result.get("new_balances", {}),
+            "amount": parsed_txn.get("amount"),
+            "account": parsed_txn.get("account"),
+            "to_account": parsed_txn.get("to_account"),
+            "type": parsed_txn.get("type"),
         }
     except Exception as e:
         rollback_current_sheets_transaction()
