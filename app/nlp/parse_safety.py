@@ -78,6 +78,29 @@ PAST_OR_ACTUAL_KEYWORDS = {
 }
 
 
+def _contains_phrase_or_word(clean: str, keyword: str) -> bool:
+    """Return True only when a keyword appears as a full word or phrase.
+
+    This prevents short month aliases such as `jan` from matching inside words
+    like `jajan`.
+    """
+    key = re.escape(str(keyword or "").strip().lower())
+    if not key:
+        return False
+    key = key.replace(r"\ ", r"\s+")
+    return bool(re.search(rf"(?<![a-zA-ZÀ-ÿ]){key}(?![a-zA-ZÀ-ÿ])", clean, flags=re.IGNORECASE))
+
+
+def _has_future_or_billing_period(clean: str) -> bool:
+    """Detect future/billing period keywords without substring false positives."""
+    return any(_contains_phrase_or_word(clean, keyword) for keyword in FUTURE_OR_BILLING_PERIOD_KEYWORDS)
+
+
+def _has_past_or_actual_keyword(clean: str) -> bool:
+    """Detect paid/past keywords as words or phrases."""
+    return any(_contains_phrase_or_word(clean, keyword) for keyword in PAST_OR_ACTUAL_KEYWORDS)
+
+
 def _has_amount(clean: str) -> bool:
     """Check whether data has amount."""
     return bool(extract_amount_from_text(clean))
@@ -224,9 +247,10 @@ def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str
         )
 
     # Pending expense section
-    has_future_period = any(keyword in clean for keyword in FUTURE_OR_BILLING_PERIOD_KEYWORDS)
-    has_explicit_pending = any(keyword in clean.split()[:3] for keyword in PENDING_EXPLICIT_KEYWORDS)
-    has_past_or_actual = any(keyword in clean for keyword in PAST_OR_ACTUAL_KEYWORDS)
+    has_future_period = _has_future_or_billing_period(clean)
+    first_tokens = " ".join(clean.split()[:3])
+    has_explicit_pending = any(_contains_phrase_or_word(first_tokens, keyword) for keyword in PENDING_EXPLICIT_KEYWORDS)
+    has_past_or_actual = _has_past_or_actual_keyword(clean)
     if has_future_period and not has_explicit_pending and not has_past_or_actual:
         # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
         _append_unique(flags, "possible_pending_expense")

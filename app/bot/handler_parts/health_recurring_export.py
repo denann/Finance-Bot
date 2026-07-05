@@ -5,6 +5,7 @@
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
+import shlex
 from app.services.resolver_service import resolve_account_name
 
 def health_status_icon(ok: bool) -> str:
@@ -576,105 +577,192 @@ async def handle_recurring_add_skip_callback(query, context: ContextTypes.DEFAUL
     return True
 
 
+
+
+RECURRING_ADD_USAGE_TEXT = (
+    "Format key=value:\n"
+    "`/recurring_add name=Netflix type=expense amount=65000 category=Entertainment account=DANA frequency=monthly day=5 description=\"Langganan Netflix\"`"
+)
+
+RECURRING_EDIT_USAGE_TEXT = (
+    "Contoh:\n"
+    "`/recurring_edit rec_xxx amount=75000 day=10`\n"
+    "`/recurring_edit rec_xxx day=10 account=BRI`\n"
+    "`/recurring_edit rec_xxx name=\"Netflix Premium\" amount=75000 day=5`\n"
+    "`/recurring_edit rec_xxx next_run_date=2026-06-11`"
+)
+
+
+def _parse_key_value_tokens(tokens: list[str]) -> dict:
+    """Parse key=value tokens and allow unquoted continuation words until the next key=value."""
+    updates = {}
+    i = 0
+    while i < len(tokens):
+        token = str(tokens[i] or "").strip()
+        if not token:
+            i += 1
+            continue
+        if "=" not in token:
+            raise ValueError(f"Format `{token}` belum valid. Gunakan `field=value`.")
+
+        field, value = token.split("=", 1)
+        field = field.strip().lower()
+        value_parts = [value.strip()] if value.strip() else []
+        i += 1
+
+        while i < len(tokens) and "=" not in str(tokens[i] or ""):
+            continuation = str(tokens[i] or "").strip()
+            if continuation:
+                value_parts.append(continuation)
+            i += 1
+
+        value = " ".join(value_parts).strip()
+        if not field or not value:
+            raise ValueError(f"Format `{token}` belum valid. Field dan value wajib diisi.")
+        updates[field] = value
+
+    return updates
+
+
+def _tokenize_command_args(raw: str) -> list[str]:
+    """Tokenize command args while preserving quoted values."""
+    try:
+        return shlex.split(str(raw or "").replace("|", " "))
+    except Exception:
+        return str(raw or "").replace("|", " ").split()
+
+
+def _normalize_recurring_key_values(values: dict) -> dict:
+    """Normalize recurring key=value fields into recurring service keys."""
+    aliases = {
+        "type": "txn_type",
+        "txn_type": "txn_type",
+        "jenis": "txn_type",
+        "nominal": "amount",
+        "harga": "amount",
+        "category": "category",
+        "kategori": "category",
+        "account": "account",
+        "rekening": "account",
+        "frequency": "frequency",
+        "freq": "frequency",
+        "jadwal": "frequency",
+        "day": "day_of_month",
+        "tanggal": "day_of_month",
+        "day_of_month": "day_of_month",
+        "description": "description",
+        "desc": "description",
+        "deskripsi": "description",
+        "name": "name",
+        "nama": "name",
+    }
+    normalized = {}
+    for field, value in (values or {}).items():
+        key = aliases.get(str(field or "").strip().lower())
+        if key:
+            normalized[key] = value
+    return normalized
+
+
+def _coerce_recurring_data(data: dict) -> dict:
+    """Validate and coerce recurring command data."""
+    coerced = dict(data or {})
+    if coerced.get("txn_type"):
+        txn_type = _normalize_recurring_txn_type(coerced.get("txn_type"))
+        if not txn_type:
+            raise ValueError("Tipe belum valid. Isi `type=expense` atau `type=income`.")
+        coerced["txn_type"] = txn_type
+
+    if coerced.get("amount") not in [None, ""]:
+        amount = parse_human_amount(str(coerced.get("amount")))
+        if amount <= 0:
+            raise ValueError("Nominal belum valid. Contoh: `amount=65000`, `amount=65k`, atau `amount=1.5 juta`.")
+        coerced["amount"] = amount
+
+    if coerced.get("frequency"):
+        frequency = _normalize_recurring_frequency_text(coerced.get("frequency"))
+        if not frequency:
+            raise ValueError("Frekuensi belum valid. Saat ini gunakan `frequency=monthly` atau `frequency=bulanan`.")
+        coerced["frequency"] = frequency
+
+    if coerced.get("account"):
+        coerced["account"] = _resolve_recurring_account(coerced.get("account"))
+
+    if coerced.get("day_of_month") not in [None, ""]:
+        day_raw = str(coerced.get("day_of_month"))
+        try:
+            day_int = int(re.sub(r"[^0-9]", "", day_raw))
+            if day_int < 1 or day_int > 31:
+                raise ValueError
+        except Exception:
+            raise ValueError("Tanggal recurring harus angka 1 sampai 31. Contoh: `day=5`.")
+        coerced["day_of_month"] = day_int
+
+    if not coerced.get("description") and coerced.get("name"):
+        coerced["description"] = coerced.get("name")
+
+    return coerced
+
 def parse_recurring_add_args(args: list[str]) -> dict:
-    """Parse input into structured data for recurring add args."""
+    """Parse /recurring_add args in key=value format, while keeping old pipe input readable."""
     raw = " ".join(args).strip()
 
     if not raw:
+        raise ValueError("Format kosong.\n\n" + RECURRING_ADD_USAGE_TEXT)
+
+    if "=" in raw:
+        tokens = _tokenize_command_args(raw)
+        key_values = _parse_key_value_tokens(tokens)
+        data = _normalize_recurring_key_values(key_values)
+        data = _coerce_recurring_data(data)
+    else:
+        parts = [p.strip() for p in raw.split("|")]
+        if len(parts) < 7:
+            raise ValueError("Format recurring belum lengkap.\n\n" + RECURRING_ADD_USAGE_TEXT)
+
+        data = _coerce_recurring_data({
+            "name": parts[0],
+            "txn_type": parts[1],
+            "amount": parts[2],
+            "category": parts[3],
+            "account": parts[4],
+            "frequency": parts[5],
+            "day_of_month": parts[6],
+            "description": parts[7] if len(parts) >= 8 else parts[0],
+        })
+
+    required = ["name", "txn_type", "amount", "category", "account", "frequency", "day_of_month"]
+    missing = [field for field in required if data.get(field) in [None, ""]]
+    if missing:
         raise ValueError(
-            "Format kosong.\n\n"
-            "Contoh:\n"
-            "`/recurring_add Netflix | expense | 65000 | Entertainment | DANA | monthly | 5 | Langganan Netflix`"
+            "Field recurring belum lengkap: " + ", ".join(missing) + ".\n\n" + RECURRING_ADD_USAGE_TEXT
         )
 
-    parts = [p.strip() for p in raw.split("|")]
+    return data
 
-    if len(parts) < 7:
-        raise ValueError(
-            "Format recurring belum lengkap.\n\n"
-            "Format:\n"
-            "`/recurring_add Nama | type | amount | category | account | monthly | tanggal | deskripsi`\n\n"
-            "Contoh:\n"
-            "`/recurring_add Netflix | expense | 65000 | Entertainment | DANA | monthly | 5 | Langganan Netflix`"
-        )
-
-    name = parts[0]
-    txn_type = parts[1].lower()
-    amount_raw = parts[2]
-    category = parts[3]
-    account = parts[4]
-    frequency = parts[5]
-    day_of_month = parts[6]
-    description = parts[7] if len(parts) >= 8 else name
-
-    try:
-        amount = float(str(amount_raw).replace(".", "").replace(",", ""))
-    except Exception:
-        raise ValueError("Amount harus angka. Contoh: `65000`, bukan `65rb` untuk command ini.")
-
-    return {
-        "name": name,
-        "txn_type": txn_type,
-        "amount": amount,
-        "category": category,
-        "account": account,
-        "frequency": frequency,
-        "day_of_month": day_of_month,
-        "description": description,
-    }
 
 def parse_recurring_edit_args(args: list[str]) -> tuple[str, dict]:
-    """Parse input into structured data for recurring edit args."""
+    """Parse /recurring_edit args using key=value format; old pipe input is still accepted."""
     raw = " ".join(args).strip()
 
     if not raw:
-        raise ValueError(
-            "Format kosong.\n\n"
-            "Contoh:\n"
-            "/recurring_edit rec_xxx | amount=75000 | day=10"
-        )
+        raise ValueError("Format kosong.\n\n" + RECURRING_EDIT_USAGE_TEXT)
 
-    parts = [p.strip() for p in raw.split("|") if p.strip()]
+    tokens = _tokenize_command_args(raw)
+    if not tokens:
+        raise ValueError("Format belum valid.\n\n" + RECURRING_EDIT_USAGE_TEXT)
 
-    if not parts:
-        raise ValueError(
-            "Format belum valid.\n\n"
-            "Contoh:\n"
-            "/recurring_edit rec_xxx | amount=75000 | day=10"
-        )
-
-    rule_id = parts[0].strip()
-
+    rule_id = tokens[0].strip()
     if not rule_id:
         raise ValueError("Recurring rule ID wajib diisi.")
 
-    update_parts = parts[1:]
+    if len(tokens) < 2:
+        raise ValueError("Field edit belum diisi.\n\n" + RECURRING_EDIT_USAGE_TEXT)
 
-    if not update_parts:
-        raise ValueError(
-            "Field edit belum diisi.\n\n"
-            "Contoh:\n"
-            "/recurring_edit rec_xxx | amount=75000 | day=10"
-        )
+    updates = _parse_key_value_tokens(tokens[1:])
 
-    updates = {}
-
-    for part in update_parts:
-        if "=" not in part:
-            raise ValueError(
-                f"Format field `{part}` belum valid. Gunakan format field=value."
-            )
-
-        field, value = part.split("=", 1)
-        field = field.strip()
-        value = value.strip()
-
-        if not field or not value:
-            raise ValueError(
-                f"Format field `{part}` belum valid. Field dan value wajib diisi."
-            )
-
-        updates[field] = value
+    if not updates:
+        raise ValueError("Field edit belum diisi.\n\n" + RECURRING_EDIT_USAGE_TEXT)
 
     return rule_id, updates
 
@@ -733,11 +821,7 @@ async def recurring_edit_handler(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(
             "❌ Gagal edit recurring rule.\n\n"
             f"{str(e)}\n\n"
-            "Contoh:\n"
-            "/recurring_edit rec_xxx | amount=75000\n"
-            "/recurring_edit rec_xxx | day=10 | account=BRI\n"
-            "/recurring_edit rec_xxx | name=Netflix Premium | amount=75000 | day=5\n"
-            "/recurring_edit rec_xxx | next_run_date=2026-06-11"
+            + RECURRING_EDIT_USAGE_TEXT
         )
 
 def short_rule_id(rule_id: str) -> str:
@@ -754,7 +838,7 @@ def build_recurring_rules_text(rules: list[dict]) -> str:
         return (
             "📭 Belum ada recurring transaction.\n\n"
             "Tambah dengan format:\n"
-            "`/recurring_add Netflix | expense | 65000 | Entertainment | DANA | monthly | 5 | Langganan Netflix`"
+            "`/recurring_add name=Netflix type=expense amount=65000 category=Entertainment account=DANA frequency=monthly day=5 description=\"Langganan Netflix\"`"
         )
 
     lines = ["🔁 *Recurring Transaction*\n"]
@@ -848,6 +932,19 @@ async def recurring_add_handler(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
         raw_arg = " ".join(context.args).strip()
+
+        if "=" in raw_arg:
+            data = parse_recurring_add_args(context.args)
+            data["account"] = _resolve_recurring_account(data.get("account"))
+            context.user_data["pending_recurring_confirm"] = data
+            context.user_data.pop(RECURRING_ADD_FLOW_KEY, None)
+
+            await update.message.reply_text(
+                build_recurring_confirm_preview(data),
+                parse_mode="Markdown",
+                reply_markup=confirm_keyboard("recurring"),
+            )
+            return
 
         if "|" not in raw_arg:
             start_recurring_add_flow(context, {"name": raw_arg}, step="txn_type")

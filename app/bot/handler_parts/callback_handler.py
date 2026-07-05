@@ -64,6 +64,7 @@ from app.bot.handler_parts.transaction_flow import (
     split_bill_keyboard,
     split_bill_needs_decision,
     build_debt_only_confirm_preview,
+    build_pending_expense_confirm_preview,
     build_meal_split_allocation_prompt,
     build_meal_split_detail_preview,
     build_meal_split_final_payload,
@@ -736,6 +737,32 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+        if choice == "pending_expense":
+            try:
+                item = build_pending_expense_from_text(raw)
+            except Exception as e:
+                clear_parse_clarification_state(context)
+                await safe_edit_message(
+                    query,
+                    f"❌ Pending expense belum kebaca: {md_safe(str(e))}\n\nSilakan tulis ulang dengan format yang lebih jelas, misalnya `pending wifi bulan depan 285k`.",
+                    parse_mode="Markdown",
+                )
+                return
+
+            context.user_data["pending_expense_confirm"] = item
+            context.user_data.pop("pending_parsed", None)
+            context.user_data.pop("pending_debt", None)
+            context.user_data.pop("pending_debt_batch", None)
+            context.user_data.pop("pending_batch", None)
+            context.user_data.pop("pending_mixed", None)
+            clear_parse_clarification_state(context)
+            await safe_edit_message(
+                query,
+                f"{build_pending_expense_confirm_preview(item, include_question=False)}\n\n{preview_action_question(True)}",
+                parse_mode="Markdown",
+                reply_markup=preview_action_keyboard("pending_expense", True),
+            )
+            return
 
         if choice == "payable":
             amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
@@ -753,11 +780,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "intent": "add_payable",
                 "person_name": person,
                 "amount": amount,
-                "description": f"Utang ke {person}",
+                "description": f"Uang titipan/pinjaman dari {person}",
                 "date": detect_date(raw),
                 "raw_input": raw,
-                "cashflow_mode": "debt_only",
-                "fronting_mode": "clarified_payable",
+                "cashflow_mode": "cashflow",
+                "fronting_mode": "clarified_payable_cash_in",
             }
             context.user_data["pending_debt"] = debt_parsed
             context.user_data.pop("pending_parsed", None)
@@ -767,9 +794,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             clear_parse_clarification_state(context)
             await safe_edit_message(
                 query,
-                f"{build_debt_only_confirm_preview(debt_parsed)}\n\n{preview_action_question(True)}",
+                build_debt_account_prompt(debt_parsed),
                 parse_mode="Markdown",
-                reply_markup=preview_action_keyboard("debt", True),
+                reply_markup=account_keyboard("debt_acc"),
             )
             return
 
@@ -2735,8 +2762,26 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             if not debt_result or not debt_result.get("success"):
+                if (
+                    intent == "add_payment"
+                    and debt_result
+                    and float(debt_result.get("overpayment", 0) or 0) > 0
+                    and not debt_parsed.get("overpayment_policy")
+                ):
+                    debt_parsed["overpayment_outcome"] = debt_result
+                    debt_parsed["debt_type_for_payment"] = debt_result.get("type") or debt_type_for_payment or debt_parsed.get("target_debt_type")
+                    debt_parsed["target_debt_type"] = debt_parsed["debt_type_for_payment"]
+                    context.user_data["pending_debt"] = debt_parsed
+                    await safe_edit_message(
+                        query,
+                        build_overpayment_decision_text(debt_parsed, debt_result),
+                        parse_mode="Markdown",
+                        reply_markup=overpayment_decision_keyboard(),
+                    )
+                    return
+
                 message = debt_result.get("message") if debt_result else "Unknown error"
-                await safe_edit_message(query, f"❌ Gagal menyimpan debt: {message}")
+                await safe_edit_message(query, f"❌ Gagal menyimpan debt: {md_safe(message)}", parse_mode="Markdown")
                 context.user_data.pop("pending_debt", None)
                 return
 
@@ -2786,8 +2831,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     lines.append(f"📌 Debt *{person}* impas/lunas")
                 else:
                     direction = "🔴 Utang Anda" if debt_result.get("type") == "payable" else "🟢 Piutang Anda"
-                    lines.append(f"{direction} dengan *{debt_result.get('person_name', person)}*")
-                    lines.append(f"💰 Saldo: *{format_rupiah(debt_result.get('remaining', 0))}*")
+                    remaining_amount = float(debt_result.get("remaining", 0) or 0)
+                    fronted_receivable_total = sum(
+                        float(x.get("amount", 0) or 0)
+                        for x in (fronted_split_result or {}).get("created", []) or []
+                    )
+                    lines.append(f"{direction} dengan *{md_safe(debt_result.get('person_name', person))}*")
+                    if fronted_receivable_total > 0 and debt_result.get("type") == "payable":
+                        net_amount = remaining_amount - fronted_receivable_total
+                        lines.append(
+                            f"💰 Net: *{format_rupiah(net_amount)}* "
+                            f"(utang {format_rupiah(remaining_amount)} - piutang PTPT {format_rupiah(fronted_receivable_total)})"
+                        )
+                    else:
+                        lines.append(f"💰 Net: *{format_rupiah(remaining_amount)}*")
                 append_fronted_split_result_lines(lines, fronted_split_result)
 
             elif intent == "add_payment":
@@ -2823,9 +2880,23 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     lines.append("\n📝 Cashflow tersimpan di transactions.")
                     if transaction_result.get("transaction_id"):
                         lines.append(f"🔖 ID: `{transaction_result['transaction_id']}`")
-                    if transaction_result.get("new_balance") is not None:
+                    account_deltas = transaction_result.get("account_deltas") or {}
+                    new_balances = transaction_result.get("new_balances") or {}
+                    if account_deltas:
+                        lines.append("💳 Ringkasan per rekening:")
+                        for balance_account, delta in account_deltas.items():
+                            sign = "+" if float(delta or 0) >= 0 else "-"
+                            if balance_account in new_balances:
+                                lines.append(
+                                    f"• {md_safe(balance_account)}: {sign}{format_rupiah(abs(float(delta or 0)))} → saldo {format_rupiah(new_balances[balance_account])}"
+                                )
+                            else:
+                                lines.append(
+                                    f"• {md_safe(balance_account)}: {sign}{format_rupiah(abs(float(delta or 0)))}"
+                                )
+                    elif transaction_result.get("new_balance") is not None:
                         balance_account = transaction_result.get("new_balance_account") or account or debt_parsed.get("to_account") or "-"
-                        lines.append(f"💳 Saldo {md_safe(balance_account)}: *{format_rupiah(transaction_result['new_balance'])}*")
+                        lines.append(f"💳 {md_safe(balance_account)}: saldo {format_rupiah(transaction_result['new_balance'])}")
                 else:
                     lines.append(f"\n⚠️ Debt tersimpan, tapi cashflow gagal: {md_safe(transaction_result.get('message'))}")
             elif not debt_uses_cashflow(debt_parsed):

@@ -382,7 +382,7 @@ def parse_pipe_update_args(args: list[str], command_name: str) -> tuple[str, dic
         raise ValueError(
             f"Format kosong.\n\n"
             f"Contoh baru: `/{command_name} id_xxx amount=9000000`\n"
-            f"Format lama tetap bisa: `/{command_name} id_xxx | value=9000000`"
+            f"Format lama tetap diterima, tapi format utama: `/{command_name} id_xxx amount=9000000`"
         )
 
     if "|" in raw:
@@ -390,7 +390,7 @@ def parse_pipe_update_args(args: list[str], command_name: str) -> tuple[str, dic
         if len(parts) < 2:
             raise ValueError(
                 f"Format belum lengkap.\n\n"
-                f"Contoh: `/{command_name} id_xxx | value=9000000`"
+                f"Contoh: `/{command_name} id_xxx amount=9000000`"
             )
         record_id = parts[0]
         update_tokens = parts[1:]
@@ -408,15 +408,27 @@ def parse_pipe_update_args(args: list[str], command_name: str) -> tuple[str, dic
         update_tokens = tokens[1:]
 
     updates = {}
-
-    for token in update_tokens:
+    i = 0
+    while i < len(update_tokens):
+        token = str(update_tokens[i] or "").strip()
+        if not token:
+            i += 1
+            continue
         if "=" not in token:
             raise ValueError(f"Format `{token}` salah. Gunakan field=value.")
 
         field, value = token.split("=", 1)
         field = field.strip().lower()
-        value = value.strip()
+        value_parts = [value.strip()] if value.strip() else []
+        i += 1
 
+        while i < len(update_tokens) and "=" not in str(update_tokens[i] or ""):
+            continuation = str(update_tokens[i] or "").strip()
+            if continuation:
+                value_parts.append(continuation)
+            i += 1
+
+        value = " ".join(value_parts).strip()
         if not field or not value:
             raise ValueError(f"Format `{token}` salah. Field dan value wajib diisi.")
 
@@ -493,8 +505,8 @@ def build_networth_text(summary: dict) -> str:
 
     lines.append(
         "\nCommand:\n"
-        "`/asset_add Nama | nominal | kategori | deskripsi`\n"
-        "`/asset_update asset_id | value=nominal`\n"
+        "`/asset_add Laptop`\n"
+        "`/asset_update asset_id amount=nominal`\n"
         "`/asset_off asset_id`\n"
         "`/networth_snapshot`"
     )
@@ -508,8 +520,8 @@ def build_assets_text(assets: list[dict]) -> str:
         return (
             "📭 Belum ada aset aktif.\n\n"
             "Tambah aset:\n"
-            "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja`\n"
-            "`/asset_add Emas Antam | 999 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
+            "`/asset_add Laptop`\n"
+            "`catet aset hp 10 juta`\n"
             "atau natural: `add emas 999 gram`"
         )
 
@@ -557,8 +569,8 @@ def build_assets_text(assets: list[dict]) -> str:
 
     lines.append(
         "\nEdit harga / harga beli:\n"
-        "`/asset_update asset_id | unit_price=2420000`\n"
-        "`/asset_update asset_id | harga_beli=2559000 | tanggal_beli=2026-06-10`"
+        "`/asset_update asset_id unit_price=2420000`\n"
+        "`/asset_update asset_id harga_beli=2559000 tanggal_beli=2026-06-10`"
     )
 
     return "\n".join(lines)
@@ -1193,9 +1205,9 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{str(e)}\n\n"
             "Contoh:\n"
             "`/asset_add Laptop`\n"
-            "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja`\n"
-            "`/asset_add Emas Antam | 999 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
-            "`/asset_add Laptop | 1 buah | Electronics | Laptop kerja`",
+            "`/asset_add Laptop`\n"
+            "`catet aset hp 10 juta`\n"
+            "`tambah aset laptop 8 juta`",
             parse_mode="Markdown",
         )
 
@@ -1264,10 +1276,10 @@ async def asset_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             "❌ Gagal update aset.\n\n"
             f"{str(e)}\n\n"
             "Contoh:\n"
-            "`/asset_update asset_xxx | value=9000000`\n"
-            "`/asset_update asset_xxx | unit_price=2420000`\n"
-            "`/asset_update asset_xxx | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
-            "`/asset_update asset_xxx | name=Laptop Baru | category=Electronics`",
+            "`/asset_update asset_xxx amount=9000000`\n"
+            "`/asset_update asset_xxx unit_price=2420000`\n"
+            "`/asset_update asset_xxx harga_beli=2559000 tanggal_beli=2026-06-10`\n"
+            "`/asset_update asset_xxx name=\"Laptop Baru\" category=Electronics`",
             parse_mode="Markdown",
         )
 

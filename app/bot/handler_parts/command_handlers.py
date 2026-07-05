@@ -526,7 +526,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*15. Export, Recurring, Health*\n"
         "`/download_data`, `/download_data today`, `/download_data week`, `/download_data 2026-06`\n"
         "`/recurring` — lihat transaksi rutin\n"
-        "`/recurring_add Netflix | expense | 65000 | Entertainment | DANA | monthly | 5 | Langganan Netflix`\n"
+        "`/recurring_add name=Netflix type=expense amount=65000 category=Entertainment account=DANA frequency=monthly day=5 description=\"Langganan Netflix\"`\n"
         "`/recurring_run`, `/recurring_edit ...`, `/recurring_off ...`\n"
         "Recurring otomatis muncul sebagai reminder dengan tombol `Sudah bayar`. Klik tombol itu untuk mencatat transaksi dan menghentikan notifikasi sampai periode berikutnya.\n"
         "`/health` — cek status bot, env, Google Sheets, dan sheet utama\n\n"
@@ -540,15 +540,16 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*17. Aset*\n"
         "`/assets` — lihat daftar aset aktif\n"
         "`/asset_add` — tambah aset mode tanya-jawab/guided input\n"
-        "Format lama tetap bisa dipakai:\n"
-        "`/asset_add Laptop | 8000000 | Electronics | Laptop kerja`\n"
-        "`/asset_add Emas Antam | 999 gram | Gold | Tabungan emas | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
+        "Format utama:\n"
+        "`/asset_add Laptop`\n"
+        "`catet aset hp 10 juta`\n"
+        "`tambah aset laptop 8 juta`\n"
         "Dalam mode guided, bot akan tanya nama aset, jumlah/unit, harga beli, tanggal beli, harga saat ini, kategori, dan deskripsi.\n"
         "Tanggal beli boleh dikosongkan dengan mengetik `lewati`, `kosong`, atau `-`.\n"
         "Setiap step punya tombol `Batal`.\n"
-        "`/asset_update asset_id | unit_price=2420000`\n"
-        "`/asset_update asset_id | harga_beli=2559000 | tanggal_beli=2026-06-10`\n"
-        "`/asset_update asset_id | value=9000000`\n"
+        "`/asset_update asset_id unit_price=2420000`\n"
+        "`/asset_update asset_id harga_beli=2559000 tanggal_beli=2026-06-10`\n"
+        "`/asset_update asset_id amount=9000000`\n"
         "`/asset_off asset_id`\n\n"
 
         "*E. Input Gambar & Analisis Gemini/RAG*\n\n"
@@ -623,6 +624,47 @@ def attach_session_history(context: ContextTypes.DEFAULT_TYPE, context_data: dic
     return data
 
 
+def normalize_ai_insight_for_telegram(text: str) -> str:
+    """Clean Gemini Markdown into Telegram-friendly Markdown."""
+    clean = str(text or "").strip()
+    if not clean:
+        return "Data belum cukup untuk membuat insight."
+
+    # Telegram Markdown uses single asterisks for bold. Gemini often returns GitHub-style **bold**.
+    clean = re.sub(r"\*\*(.+?)\*\*", r"*\1*", clean, flags=re.DOTALL)
+    clean = re.sub(r"(?m)^\s*#{1,6}\s*(.+?)\s*$", r"*\1*", clean)
+
+    # Convert Markdown list markers into a readable Telegram bullet.
+    clean = re.sub(r"(?m)^\s*[-*]\s+", "• ", clean)
+    clean = re.sub(r"(?m)^\s{2,}([•0-9])", r"\1", clean)
+    clean = re.sub(r"(?m)^•\s+", "• ", clean)
+
+    # Avoid raw JSON/key names leaking to user-facing text.
+    key_labels = {
+        "total_payable": "total utang",
+        "total_receivable": "total piutang",
+        "data_quality_issues": "masalah data quality",
+        "top_expenses": "transaksi terbesar",
+        "expense_by_category": "kategori pengeluaran",
+        "monthly_context": "data bulanan",
+        "relevant_transactions": "transaksi relevan",
+    }
+    for raw_key, label in key_labels.items():
+        clean = clean.replace(raw_key, label)
+
+    # Humanize any remaining snake_case key that slipped through.
+    clean = re.sub(
+        r"\b([A-Za-z]+(?:_[A-Za-z0-9]+)+)\b",
+        lambda match: match.group(1).replace("_", " "),
+        clean,
+    )
+
+    # Reduce over-nested spacing from Gemini.
+    clean = re.sub(r"\n{3,}", "\n\n", clean)
+    clean = re.sub(r"(?m)^•\s+\*([^*]+)\*:\s*", r"• *\1:* ", clean)
+    return clean.strip()
+
+
 async def send_finance_insight_reply(
     update: Update,
     mode: str,
@@ -640,7 +682,12 @@ async def send_finance_insight_reply(
         add_session_chat_history(context, "user", question)
         add_session_chat_history(context, "assistant", answer)
 
-    await update.message.reply_text(f"{prefix}\n\n{answer}")
+    text = f"{prefix}\n\n{normalize_ai_insight_for_telegram(answer)}"
+    try:
+        await update.message.reply_text(text, parse_mode="Markdown")
+    except Exception:
+        # Fallback keeps the answer readable if Gemini returns malformed Markdown.
+        await update.message.reply_text(re.sub(r"[*`]", "", text))
 
 
 

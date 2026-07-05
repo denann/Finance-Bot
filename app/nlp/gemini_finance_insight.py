@@ -68,6 +68,13 @@ Aturan wajib:
 18. Gunakan bahasa Indonesia yang natural, tidak terlalu kaku, dan jangan terlalu template.
 19. Untuk pertanyaan seperti "bulan ini boros di mana?", fokus ke kategori penyumbang terbesar, transaksi yang perlu dicek, dan saran kecil yang bisa langsung dilakukan.
 20. Kalau kategori `Other Expense` cukup besar atau muncul di data_quality_issues, jelaskan bahwa insight akan lebih rapi kalau kategorinya diperbaiki.
+21. Format output wajib rapi untuk Telegram:
+    - Jangan pakai `**bold**`. Jika butuh penekanan, pakai `*bold*`.
+    - Jangan pakai nested bullet yang terlalu dalam. Maksimal 2 level.
+    - Gunakan bullet `•`, bukan `*   ` atau `-`.
+    - Jangan tampilkan nama field JSON mentah seperti `total_payable`, `data_quality_issues`, `top_expenses`, atau snake_case lain. Ubah menjadi bahasa manusia.
+    - Buat section pendek seperti `*Temuan utama*`, `*Yang perlu dicek*`, dan `*Saran praktis*` jika relevan.
+    - Jangan terlalu panjang. Prioritaskan 3-5 poin yang paling penting.
 
 Konteks JSON:
 {_json_dumps(context)}

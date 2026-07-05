@@ -342,16 +342,19 @@ def _mixed_item_detail_lines(item: dict, index: int) -> list[str]:
 def build_mixed_detail_preview(mixed_items: list[dict], receipt_context: dict | None = None) -> str:
     """Build the detailed multi-input preview shown before rekening selection."""
     receipt_context = receipt_context or {}
+
+    # Natural multi-input should use the compact preview format from the flow doc.
+    # Keep receipt/batch preview below because receipt mode still needs merchant and extra-charge details.
+    if not receipt_context:
+        return build_batch_preview(mixed_items)
+
     receipt = receipt_context.get("receipt") or {}
-    merchant = _receipt_merchant(receipt, [item.get("parsed", {}) for item in mixed_items]) if receipt_context else ""
+    merchant = _receipt_merchant(receipt, [item.get("parsed", {}) for item in mixed_items])
     totals = _mixed_transaction_totals(mixed_items)
 
-    if receipt_context:
-        mode_label = "semua struk" if receipt_context.get("mode") == "all" else "bagian struk"
-        lines = [f"🧾 *Preview detail batch dari {mode_label}*"]
-        lines.append(f"• Merchant: *{md_safe(merchant)}*")
-    else:
-        lines = ["🧾 *Preview detail multi input*"]
+    mode_label = "semua struk" if receipt_context.get("mode") == "all" else "bagian struk"
+    lines = [f"🧾 *Preview detail batch dari {mode_label}*"]
+    lines.append(f"• Merchant: *{md_safe(merchant)}*")
 
     lines.append(f"• Total item: *{len(mixed_items or [])}*")
     if totals["expense"]:
@@ -378,23 +381,22 @@ def build_mixed_detail_preview(mixed_items: list[dict], receipt_context: dict | 
         if idx != len(mixed_items or []):
             lines.append("")
 
-    if receipt_context:
-        charges = _receipt_extra_charges(receipt)
-        if charges:
-            lines.extend(["", "💳 *Rincian biaya tambahan di output:*"])
-            divisor = receipt_context.get("extra_charge_divisor")
-            for charge in charges:
-                amount = int(charge.get("amount", 0) or 0)
-                sign = "-" if charge.get("is_discount") else ""
-                if divisor and divisor > 1:
-                    share = int(round(amount / divisor))
-                    lines.append(
-                        f"• {md_safe(charge.get('label'))}: {sign}{format_rupiah(amount)} / {divisor} = {sign}{format_rupiah(share)}"
-                    )
-                else:
-                    lines.append(f"• {md_safe(charge.get('label'))}: {sign}{format_rupiah(amount)}")
-            lines.append(f"• Total biaya tambahan kamu: *{format_rupiah(receipt_context.get('extra_charge_amount', 0))}*")
-            lines.append("\nCatatan: saat disimpan, service/PPN/diskon digabung menjadi satu transaksi biaya tambahan.")
+    charges = _receipt_extra_charges(receipt)
+    if charges:
+        lines.extend(["", "💳 *Rincian biaya tambahan di output:*"])
+        divisor = receipt_context.get("extra_charge_divisor")
+        for charge in charges:
+            amount = int(charge.get("amount", 0) or 0)
+            sign = "-" if charge.get("is_discount") else ""
+            if divisor and divisor > 1:
+                share = int(round(amount / divisor))
+                lines.append(
+                    f"• {md_safe(charge.get('label'))}: {sign}{format_rupiah(amount)} / {divisor} = {sign}{format_rupiah(share)}"
+                )
+            else:
+                lines.append(f"• {md_safe(charge.get('label'))}: {sign}{format_rupiah(amount)}")
+        lines.append(f"• Total biaya tambahan kamu: *{format_rupiah(receipt_context.get('extra_charge_amount', 0))}*")
+        lines.append("\nCatatan: saat disimpan, service/PPN/diskon digabung menjadi satu transaksi biaya tambahan.")
 
     return "\n".join(lines)
 
@@ -2410,54 +2412,86 @@ def build_preview(parsed: dict) -> str:
 
 
 def build_batch_preview(parsed_items: list[dict]) -> str:
-    """Build the data structure or message text for batch preview."""
-    lines = [f"🧾 *Ditemukan {len(parsed_items)} transaksi:*\n"]
+    """Build a compact multi-transaction preview without changing save logic."""
+    total_count = len(parsed_items or [])
+    lines = [f"🧾 *Preview ({total_count} transaksi)*", ""]
 
-    total_expense = 0
-    total_income = 0
+    total_expense = 0.0
+    total_income = 0.0
+    category_summary: dict[str, dict[str, float | int]] = {}
+    grouped_by_date: dict[str, list[tuple[int, dict]]] = {}
 
-    for i, item in enumerate(parsed_items, 1):
-        parsed = item["parsed"]
-
-        type_icon = {
-            "expense": "❌",
-            "income": "✅",
-            "transfer": "🔄",
-        }.get(parsed.get("type"), "❓")
-
+    for idx, item in enumerate(parsed_items or [], 1):
+        parsed = item.get("parsed", {}) or {}
         amount = _receipt_amount(parsed.get("amount"), 0)
+        txn_type = parsed.get("type")
 
-        if parsed.get("type") == "expense":
+        if txn_type == "expense":
             total_expense += amount
-        elif parsed.get("type") == "income":
+        elif txn_type == "income":
             total_income += amount
 
-        desc = parsed.get("description") or "-"
-        category = parsed.get("category") or "-"
-        account = parsed.get("account") or "-"
-        subject = parsed.get("subject") or "-"
-        spending_type = parsed.get("tipe_pengeluaran") or "-"
+        category = str(parsed.get("category") or "-").strip() or "-"
+        cat_data = category_summary.setdefault(category, {"count": 0, "amount": 0.0})
+        cat_data["count"] = int(cat_data.get("count", 0)) + 1
+        cat_data["amount"] = float(cat_data.get("amount", 0) or 0) + amount
 
-        date = parsed.get("date") or "-"
+        date_key = str(parsed.get("date") or "-").strip() or "-"
+        grouped_by_date.setdefault(date_key, []).append((idx, parsed))
 
-        lines.append(
-            f"{i}. {type_icon} *{desc}*\n"
-            f"   💰 {format_rupiah(amount)} | {category}\n"
-            f"   📅 {date}\n"
-            f"   👤 {subject} | 🏦 {account} | 🏷️ {spending_type}"
-        )
+    lines.append(f"❌ Expense : {format_rupiah(total_expense)}")
+    lines.append(f"✅ Income  : {format_rupiah(total_income)}")
 
-        if parsed.get("catatan"):
-            lines.append(f"   🗒️ {parsed.get('catatan')}")
+    if category_summary:
+        lines.extend(["", "📊 *Kategori*"])
+        for category, data in sorted(
+            category_summary.items(),
+            key=lambda pair: float(pair[1].get("amount", 0) or 0),
+            reverse=True,
+        ):
+            lines.append(
+                f"• {md_safe(category)} ({int(data.get('count', 0))}): "
+                f"{format_rupiah(float(data.get('amount', 0) or 0))}"
+            )
 
-    lines.append("\n*Ringkasan:*")
-    lines.append(f"❌ Total Pengeluaran: *{format_rupiah(total_expense)}*")
-    lines.append(f"✅ Total Pemasukan   : *{format_rupiah(total_income)}*")
+    lines.extend(["", "──────────────────"])
 
-    account_summary = build_account_delta_summary_from_transaction_items(parsed_items)
-    if account_summary:
-        lines.append(account_summary)
+    for date_key in sorted(grouped_by_date.keys()):
+        lines.append(f"📅 {md_safe(date_key)}")
+        lines.append("")
 
+        for idx, parsed in grouped_by_date[date_key]:
+            txn_type = parsed.get("type")
+            type_icon = {
+                "expense": "❌",
+                "income": "✅",
+                "transfer": "🔄",
+            }.get(txn_type, "❓")
+            amount = _receipt_amount(parsed.get("amount"), 0)
+            subject = str(parsed.get("subject") or parsed.get("description") or "-").strip() or "-"
+            description = str(parsed.get("description") or "").strip()
+            category = str(parsed.get("category") or "-").strip() or "-"
+            account = str(parsed.get("account") or "-").strip() or "-"
+            spending_type = str(parsed.get("tipe_pengeluaran") or "-").strip() or "-"
+
+            lines.append(f"{idx}. {type_icon} *{md_safe(subject)}* • {format_rupiah(amount)}")
+            lines.append(
+                f"   📁 {md_safe(category)} • 🏦 {md_safe(account)} • 🏷️ {md_safe(spending_type)}"
+            )
+
+            if description and description.lower() != subject.lower():
+                lines.append(f"   📝 {md_safe(description)}")
+
+            if parsed.get("catatan"):
+                lines.append(f"   🗒️ {md_safe(parsed.get('catatan'))}")
+
+            lines.append("")
+
+    if lines and lines[-1] == "":
+        lines.pop()
+    lines.append("──────────────────")
+
+    lines.extend(["", "Lanjut ke rekening/simpan?"])
     return "\n".join(lines)
 
 
