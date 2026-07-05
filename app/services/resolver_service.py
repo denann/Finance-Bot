@@ -8,7 +8,7 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from app.config import SHEET_ACCOUNTS, SHEET_CATEGORIES
-from app.sheets.client import append_row_raw, get_all_records
+from app.sheets.client import append_row_raw, get_all_records, update_cell
 
 DEFAULT_ACCOUNT_NAMES = ["Cash", "BRI", "BSI", "BCA", "DANA", "GoPay", "Seabank"]
 DEFAULT_CATEGORY_ROWS = [
@@ -173,6 +173,82 @@ def get_category_records_safe() -> list[dict]:
     return _safe_records(SHEET_CATEGORIES, DEFAULT_CATEGORY_ROWS)
 
 
+def normalize_category_aliases(aliases: Any, category_name: str = "", *, limit: int = 24) -> str:
+    """Normalize aliases into the comma-separated `categories.aliases` format.
+
+    Args:
+        aliases: Raw aliases from Gemini, manual user input, or existing sheet
+            data. Accepted input types are a string (`"a,b,c"`), list, tuple,
+            set, `None`, or any value that can be converted to string.
+        category_name: Optional category name to force into the first alias
+            candidates, for example `Belanja Online`.
+        limit: Maximum number of aliases kept after cleanup.
+
+    Returns:
+        A comma-separated lowercase string without duplicate compact keys, for
+        example `belanja online,shopping,shopee,tokopedia`. Empty or fully
+        blocked input returns an empty string.
+
+    Cleanup rules:
+        - Split strings by comma, semicolon, or newline.
+        - Normalize text with the same lookup rules used by category resolver.
+        - Drop overly broad aliases such as `uang`, `bayar`, `expense`, and
+          `income`.
+        - Deduplicate aliases by compact lookup key so `tiktok shop` and
+          `tiktokshop` do not both survive.
+    """
+    # Accept empty alias input without failing the category wizard.
+    if aliases is None:
+        raw_items = []
+    # Gemini can return a list; manual code may pass tuple/set too.
+    elif isinstance(aliases, (list, tuple, set)):
+        raw_items = [str(item or "") for item in aliases]
+    # Manual text input is split by common list separators.
+    else:
+        raw_items = re.split(r"[,;\n]+", str(aliases or ""))
+
+    # Always include the category name itself as the first alias candidate.
+    if category_name:
+        raw_items = [str(category_name)] + list(raw_items)
+
+    # Broad finance words are blocked because they would over-match categories.
+    blocked = {
+        "uang",
+        "bayar",
+        "pembayaran",
+        "transaksi",
+        "masuk",
+        "keluar",
+        "biaya",
+        "expense",
+        "income",
+        "pengeluaran",
+        "pemasukan",
+    }
+    # Compact keys are used for duplicate detection across spacing variants.
+    seen = set()
+    cleaned = []
+    for item in raw_items:
+        # Keep alias normalization consistent with transaction category lookup.
+        alias = normalize_lookup_key(item)
+        alias = re.sub(r"\s+", " ", alias).strip()
+        # Skip empty aliases and aliases that are too generic.
+        if not alias or alias in blocked:
+            continue
+        compact = compact_lookup_key(alias)
+        # Skip duplicates such as `tiktok shop` and `tiktokshop`.
+        if not compact or compact in seen:
+            continue
+        seen.add(compact)
+        cleaned.append(alias)
+        # Stop once the sheet-friendly alias limit is reached.
+        if len(cleaned) >= int(limit or 24):
+            break
+
+    # Store aliases in the existing comma-separated sheet format.
+    return ",".join(cleaned)
+
+
 def get_category_names_from_sheet(transaction_type: str | None = None) -> list[str]:
     """Return category names from the categories sheet."""
     txn_type = str(transaction_type or "").strip().lower()
@@ -207,6 +283,69 @@ def _default_category_name(transaction_type: str | None) -> str:
 
 def _default_category_emoji(transaction_type: str | None) -> str:
     return "💰" if _default_category_type(transaction_type) == "income" else "📦"
+
+
+def find_category_by_name(category_name: str) -> dict:
+    """Find an existing category row by exact normalized category name.
+
+    Args:
+        category_name: Category name from `/edit_kategori`, either command args
+            or the user's next message. Surrounding quotes are accepted and
+            removed.
+
+    Returns:
+        A dict with:
+        - `found`: bool indicating whether an exact normalized match exists.
+        - `record`: the Google Sheets record when found, otherwise `None`.
+        - `row_index`: 1-based sheet row index when found, including header row.
+        - `suggestions`: up to five similar category names when not found.
+        - `message`: read error message when Sheets cannot be read.
+
+    Notes:
+        This function reads the live `categories` sheet because edit flow must
+        target a real row and should not update fallback defaults.
+    """
+    # Category names may come from quoted command args.
+    clean_name = str(category_name or "").strip().strip('"').strip("'")
+    # Empty names cannot match any sheet row.
+    if not clean_name:
+        return {"found": False, "record": None, "row_index": None}
+
+    # Normalize input once so every row uses the same comparison key.
+    clean_key = normalize_lookup_key(clean_name)
+    try:
+        # Edit flow must read live sheet data, not fallback defaults.
+        records = get_all_records(SHEET_CATEGORIES)
+    except Exception as exc:
+        # Return the read error in-band so Telegram flow can report it safely.
+        return {"found": False, "record": None, "row_index": None, "message": str(exc)}
+
+    # Sheet row index starts at 2 because row 1 is the header.
+    for index, record in enumerate(records or [], start=2):
+        name = str((record or {}).get("category_name") or "").strip()
+        # Only exact normalized name matches are accepted for edit target.
+        if name and normalize_lookup_key(name) == clean_key:
+            return {"found": True, "record": record, "row_index": index}
+
+    # If exact match fails, build suggestions without auto-selecting them.
+    suggestions = []
+    for record in records or []:
+        # Suggestions are only hints; they are never auto-selected for editing.
+        name = str((record or {}).get("category_name") or "").strip()
+        if not name:
+            continue
+        score = SequenceMatcher(None, clean_key, normalize_lookup_key(name)).ratio()
+        if score >= 0.72:
+            suggestions.append({"name": name, "score": score})
+
+    # Highest similarity suggestions are shown first in Telegram.
+    suggestions = sorted(suggestions, key=lambda item: item["score"], reverse=True)
+    return {
+        "found": False,
+        "record": None,
+        "row_index": None,
+        "suggestions": [item["name"] for item in suggestions[:5]],
+    }
 
 
 def resolve_category_name(category_input: str, transaction_type: str | None = None, *, allow_create: bool = False) -> dict:
@@ -275,12 +414,36 @@ def resolve_category_name(category_input: str, transaction_type: str | None = No
 
 
 def create_category(category_name: str, transaction_type: str = "expense", emoji: str | None = None, aliases: str = "") -> dict:
-    """Create a category row in the categories sheet if it is truly new."""
+    """Append a new category row when no matching category already exists.
+
+    Args:
+        category_name: New category name from the wizard, for example
+            `Belanja Online`.
+        transaction_type: Category type selected by button. `income` is stored
+            as income; all other values become expense.
+        emoji: User-provided symbol. This is written to the existing sheet
+            column named `emoji`.
+        aliases: Comma-separated aliases prepared by the wizard. The value is
+            normalized again before write as a final safety step.
+
+    Returns:
+        A result dict with `success`, `created`, `message`, and
+        `category_name`. If a matching or similar category already exists,
+        `success` is true but `created` is false.
+
+    Sheet write:
+        Appends `[category_name, type, emoji, aliases]` to the `categories`
+        sheet. This function is called only after the user confirms the preview.
+    """
+    # Clean category name once before validation and matching.
     clean_name = str(category_name or "").strip().strip('"').strip("'")
+    # A blank name must not create a row in Google Sheets.
     if not clean_name:
         return {"success": False, "message": "Nama kategori kosong.", "category_name": ""}
 
+    # Keep category type restricted to the existing expense/income convention.
     txn_type = _default_category_type(transaction_type)
+    # Prevent duplicate rows by checking exact, alias, and similar matches.
     existing = resolve_category_name(clean_name, txn_type, allow_create=False)
     if existing.get("status") in {"exact", "alias", "similar"}:
         return {
@@ -290,12 +453,89 @@ def create_category(category_name: str, transaction_type: str = "expense", emoji
             "category_name": existing.get("category_name"),
         }
 
-    append_row_raw(SHEET_CATEGORIES, [clean_name, txn_type, emoji or _default_category_emoji(txn_type), aliases or normalize_lookup_key(clean_name)])
+    # Normalize aliases again at write boundary as a final safety step.
+    clean_aliases = normalize_category_aliases(aliases, clean_name)
+    # Preserve the current sheet schema: category_name, type, emoji, aliases.
+    append_row_raw(SHEET_CATEGORIES, [clean_name, txn_type, emoji or _default_category_emoji(txn_type), clean_aliases])
     return {
         "success": True,
         "created": True,
         "message": "Kategori baru dibuat.",
         "category_name": clean_name,
+    }
+
+
+def update_category(
+    category_name: str,
+    *,
+    transaction_type: str | None = None,
+    emoji: str | None = None,
+    aliases: str | list[str] | None = None,
+) -> dict:
+    """Update editable fields for an existing category row.
+
+    Args:
+        category_name: Existing category name selected in `/edit_kategori`.
+        transaction_type: Optional replacement type. `income` is stored as
+            income; all other non-None values become expense.
+        emoji: Optional replacement symbol for the sheet column named `emoji`.
+        aliases: Optional replacement aliases. Accepts comma-separated string or
+            list of strings. `None` means the aliases column is not touched.
+
+    Returns:
+        A result dict. On success it contains `success`, `message`,
+        `category_name`, `row_index`, `updated`, and the old `record`. On
+        failure it contains `success: False`, a `message`, and possibly
+        `suggestions`.
+
+    Sheet write:
+        Updates columns B-D on the matched row: type, emoji, and aliases. The
+        category name itself is not renamed by this function.
+    """
+    # Find the exact row first so updates target a deterministic sheet row.
+    found = find_category_by_name(category_name)
+    # Missing category names are returned with suggestions when available.
+    if not found.get("found"):
+        return {
+            "success": False,
+            "message": "Kategori tidak ditemukan.",
+            "suggestions": found.get("suggestions") or [],
+        }
+
+    # Row index is validated before any cell update happens.
+    row_index = int(found.get("row_index") or 0)
+    record = found.get("record") or {}
+    if row_index < 2:
+        return {"success": False, "message": "Row kategori tidak valid."}
+
+    # Track which fields were actually updated for the caller response.
+    updated = {}
+    if transaction_type is not None:
+        # Column B stores the category type.
+        txn_type = _default_category_type(transaction_type)
+        update_cell(SHEET_CATEGORIES, row_index, 2, txn_type)
+        updated["type"] = txn_type
+
+    if emoji is not None:
+        # Column C keeps the historical `emoji` schema, used as user symbol.
+        clean_emoji = str(emoji or "").strip()
+        update_cell(SHEET_CATEGORIES, row_index, 3, clean_emoji)
+        updated["emoji"] = clean_emoji
+
+    if aliases is not None:
+        # Column D uses one comma-separated aliases string.
+        clean_aliases = normalize_category_aliases(aliases, str(record.get("category_name") or category_name))
+        update_cell(SHEET_CATEGORIES, row_index, 4, clean_aliases)
+        updated["aliases"] = clean_aliases
+
+    return {
+        # Return both updated data and old record for Telegram confirmation text.
+        "success": True,
+        "message": "Kategori berhasil diupdate.",
+        "category_name": str(record.get("category_name") or category_name).strip(),
+        "row_index": row_index,
+        "updated": updated,
+        "record": record,
     }
 
 

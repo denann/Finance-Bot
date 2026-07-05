@@ -36,7 +36,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/transaksi`, `/edit_txn`, `/delete_txn`, `/debt_settle`, `/download_data`\n\n"
 
         "🕒 *Pending, budget & transaksi rutin*\n"
-        "`/pending`, `/pending_add`, `/budget`, `/budget_history`, `/recurring`\n"
+        "`/pending`, `/pending_add`, `/budget`, `/budget_history`, `/add_kategori`, `/edit_kategori`, `/recurring`\n"
         "Pending tidak mengubah saldo sampai ditandai `/pending_paid`. Recurring akan muncul sebagai reminder dengan tombol `Sudah bayar`.\n\n"
 
         "💼 *Net worth*\n"
@@ -217,7 +217,7 @@ async def quickstart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "`/last`\n"
         "`/hutang`\n"
         "`/bulanan`\n\n"
-        "Kalau flow dasar ini sudah aman, baru lanjut pakai fitur lain seperti `/budget`, `/pending`, `/recurring`, `/assets`, `/ask`, dan `/audit`."
+        "Kalau flow dasar ini sudah aman, baru lanjut pakai fitur lain seperti `/budget`, `/add_kategori`, `/pending`, `/recurring`, `/assets`, `/ask`, dan `/audit`."
     )
 
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -523,7 +523,15 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`budget transport 300rb 2026-07` — set budget bulan tertentu\n"
         "Catatan: `/budget` memakai realisasi bersih. Jika ada split bill, output tampil sebagai Bersih (Gross).\n\n"
 
-        "*15. Export, Recurring, Health*\n"
+        # Category help text documents the add/edit wizard and alias options.
+        "*15. Kategori*\n"
+        "`/add_kategori` — tambah kategori baru dengan wizard\n"
+        "`/add_kategori Belanja Online` — langsung isi nama kategori, lalu pilih tipe\n"
+        "`/edit_kategori` — edit tipe, symbol, dan aliases kategori existing\n"
+        "Saat tambah kategori, bot akan tanya nama, tipe `expense`/`income`, symbol, generate aliases via Gemini, lalu tampilkan preview sebelum save.\n"
+        "Saat edit aliases, ketik daftar dipisah koma, `auto` untuk generate ulang via Gemini, atau `sama` untuk mempertahankan. Perubahan tetap lewat preview sebelum save.\n\n"
+
+        "*16. Export, Recurring, Health*\n"
         "`/download_data`, `/download_data today`, `/download_data week`, `/download_data 2026-06`\n"
         "`/recurring` — lihat transaksi rutin\n"
         "`/recurring_add name=Netflix type=expense amount=65000 category=Entertainment account=DANA frequency=monthly day=5 description=\"Langganan Netflix\"`\n"
@@ -532,12 +540,12 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/health` — cek status bot, env, Google Sheets, dan sheet utama\n\n"
 
         "*D. Net Worth & Aset*\n\n"
-        "*16. Net Worth*\n"
+        "*17. Net Worth*\n"
         "`/networth` — lihat kekayaan bersih dari saldo rekening + aset aktif\n"
         "`/networth_snapshot` — simpan snapshot net worth hari ini\n"
         "`/networth_history` — lihat riwayat snapshot\n\n"
 
-        "*17. Aset*\n"
+        "*18. Aset*\n"
         "`/assets` — lihat daftar aset aktif\n"
         "`/asset_add` — tambah aset mode tanya-jawab/guided input\n"
         "Format utama:\n"
@@ -553,12 +561,12 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/asset_off asset_id`\n\n"
 
         "*E. Input Gambar & Analisis Gemini/RAG*\n\n"
-        "*18. Input Gambar / Struk*\n"
+        "*19. Input Gambar / Struk*\n"
         "Kirim foto struk, nota, QRIS, atau screenshot transaksi.\n"
         "Bot membaca gambar dengan Gemini, lalu menampilkan preview sebelum disimpan.\n"
         "Caption opsional: `pakai BSI`, `ini pemasukan`, `total aja`.\n\n"
 
-        "*19. Analisis Gemini / RAG Finance*\n"
+        "*20. Analisis Gemini / RAG Finance*\n"
         "Bagian ini read-only: bot mengambil data relevan dari Google Sheets, menghitung angka pakai Python, lalu Gemini menjelaskan insight.\n"
         "`/insight` — monthly narrative report bulan ini\n"
         "`/insight 2026-06` — insight bulan tertentu\n"

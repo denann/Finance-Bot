@@ -37,6 +37,12 @@ PENDING_FLOW_KEYS = (
     "pending_receipt_part_selection",
     "pending_receipt_extra_divisor",
     "pending_budget_confirm",
+    # Category add wizard state must clear on cancel or a new slash command.
+    "pending_category_add_flow",
+    # Category edit wizard state must clear separately from add flow.
+    "pending_category_edit_flow",
+    # Category inline prompt id is tracked so old keyboards can be cleaned.
+    "pending_category_prompt_message_id",
     "pending_recurring_confirm",
     "pending_recurring_add_flow",
     "pending_asset_add_prompt_message_id",
@@ -73,6 +79,12 @@ FLOW_LABELS = {
     "pending_receipt_context": "review foto struk",
     "pending_receipt_part_selection": "pemilihan item struk",
     "pending_receipt_extra_divisor": "pembagian biaya struk",
+    # Human-readable label for unfinished add category wizard.
+    "pending_category_add_flow": "wizard tambah kategori",
+    # Human-readable label for unfinished edit category wizard.
+    "pending_category_edit_flow": "wizard edit kategori",
+    # Human-readable label for the category type keyboard prompt.
+    "pending_category_prompt_message_id": "keyboard kategori",
     "pending_preview_edit_prompt_message_id": "keyboard edit preview",
     "pending_recurring_add_prompt_message_id": "keyboard wizard recurring_add",
     "pending_asset_add_prompt_message_id": "keyboard wizard tambah aset",

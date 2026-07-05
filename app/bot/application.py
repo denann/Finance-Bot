@@ -16,6 +16,7 @@ from telegram.ext import (
 
 from app.bot.handlers import (
     ask_handler,
+    add_kategori_handler,
     asset_add_handler,
     asset_off_handler,
     asset_update_handler,
@@ -37,6 +38,7 @@ from app.bot.handlers import (
     debt_void_handler,
     delete_txn_handler,
     edit_txn_handler,
+    edit_kategori_handler,
     error_handler,
     examples_handler,
     export_handler,
@@ -148,6 +150,15 @@ def register_handlers(telegram_app: Application) -> Application:
     add_command("set_budget", set_budget_handler)
     add_command("budget_history", budget_history_handler)
     add_message(filters.Regex(r"(?i)^budget\b"), set_budget_handler)
+
+    # Category management commands route add/edit kategori into the guided wizard.
+    add_command("add_kategori", add_kategori_handler)
+    add_command("tambah_kategori", add_kategori_handler)
+    add_command("add_category", add_kategori_handler)
+    # Edit category aliases/type/symbol uses a separate wizard from add flow.
+    add_command("edit_kategori", edit_kategori_handler)
+    add_command("ubah_kategori", edit_kategori_handler)
+    add_command("edit_category", edit_kategori_handler)
 
     # Pending expense commands for planned expenses or unpaid bills.
     add_command("pending", pending_handler)

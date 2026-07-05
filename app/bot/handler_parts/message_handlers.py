@@ -24,6 +24,7 @@ from app.bot.handler_parts.command_router import (
     resolve_txn_refs_from_last,
     router_args_to_last_filter,
 )
+from app.bot.handler_parts.category_flow import handle_pending_category_flow
 from app.bot.handler_parts.transaction_flow import (
     attach_split_bill_if_any,
     build_debt_account_prompt,
@@ -1169,6 +1170,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     preview_edit_handled = await handle_pending_preview_edit(update, context, user_text)
     if preview_edit_handled:
+        return
+
+    # Category wizard consumes text replies before they can be parsed as transactions.
+    category_flow_handled = await handle_pending_category_flow(update, context, user_text)
+    if category_flow_handled:
         return
 
     recurring_add_flow_handled = await handle_pending_recurring_add_flow(update, context, user_text)

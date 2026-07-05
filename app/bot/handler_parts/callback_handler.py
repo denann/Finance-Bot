@@ -9,6 +9,7 @@ from app.services.resolver_service import create_account
 from app.bot.handler_parts.state_utils import clear_pending_flow_state
 
 from app.bot.handler_parts.networth_assets import build_asset_added_text, handle_asset_add_skip_callback
+from app.bot.handler_parts.category_flow import handle_category_confirm_callback, handle_category_type_callback
 from app.bot.handler_parts.command_router import short_txn_id
 from app.bot.handler_parts.health_recurring_export import (
     build_recurring_saved_text,
@@ -583,6 +584,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data or ""
     await show_callback_loading(query)
+
+    # Category wizard type selection: expense/income button, no sheet write yet.
+    if data.startswith("category_type:"):
+        handled = await handle_category_type_callback(query, context, data)
+        if handled:
+            return
 
     if data == "asset_add:skip":
         await handle_asset_add_skip_callback(query, context)
@@ -1894,6 +1901,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("confirm:"):
         confirm_target = data.split(":")[1] if ":" in data else ""
+        # Category add/edit writes to Sheets only after this preview confirmation.
+        if confirm_target in {"category_add", "category_edit"}:
+            handled = await handle_category_confirm_callback(query, context, confirm_target)
+            if handled:
+                return
+
         if confirm_target == "set_balance":
             pending_balance = context.user_data.get("pending_set_balance") or {}
 

@@ -18,6 +18,12 @@ Telegram update
 - Message handler: handles natural text input and image input.
 - Callback handler: handles inline buttons such as save, edit, cancel, account choice, and split bill decisions.
 
+## Category management flow
+
+`/add_kategori` and `/edit_kategori` use a guided wizard. The bot asks for the category name, type, symbol, and aliases. For new categories, Gemini generates alias candidates automatically. For edits, aliases can be typed manually, regenerated with `auto`, or kept with `sama`.
+
+The category data is shown as a preview before the bot writes to the `categories` sheet.
+
 ## Important rule
 
 Slash commands should never be parsed as transactions. If a message starts with `/`, it must go to command handling or unknown command handling, not to the expense parser.

@@ -5,6 +5,8 @@ from app.bot.handler_parts.core import *
 from app.bot.handler_parts.networth_assets import *
 from app.bot.handler_parts.health_recurring_export import *
 from app.bot.handler_parts.command_router import *
+# Re-export category wizard handlers for application.py command registration.
+from app.bot.handler_parts.category_flow import *
 from app.bot.handler_parts.transaction_flow import *
 from app.bot.handler_parts.command_handlers import *
 from app.bot.handler_parts.message_handlers import *
