@@ -159,6 +159,10 @@ KNOWN_COMMANDS = {
         "description": "Lihat ringkasan transaksi bulan ini.",
         "destructive": False,
     },
+    "grafik": {
+        "description": "Buat grafik bulanan: line/time series, bar, atau pie.",
+        "destructive": False,
+    },
     "budget": {
         "description": "Lihat budget bulan berjalan atau bulan tertentu.",
         "destructive": False,
@@ -325,6 +329,9 @@ COMMAND_ALIASES = {
 
     "bulan": "bulanan",
     "bulanan": "bulanan",
+    "grafik": "grafik",
+    "chart": "grafik",
+    "grafik_bulanan": "grafik",
 
     # budget
     "buget": "budget",
@@ -674,14 +681,14 @@ def build_command_suggestion_text(resolved: dict, original_text: str) -> str:
             f"❓ Command `/{clean}` belum bisa saya pastikan.\n\n"
             "Command tersebut mirip dengan beberapa command lain, jadi saya tidak mau menebak.\n\n"
             "Command yang tersedia:\n"
-            "`/saldo`, `/set_saldo`, `/quickstart`, `/cancel`, `/harian`, `/mingguan`, `/bulanan`, `/budget`, `/set_budget`, `/budget_history`, "
+            "`/saldo`, `/set_saldo`, `/quickstart`, `/cancel`, `/harian`, `/mingguan`, `/bulanan`, `/grafik`, `/budget`, `/set_budget`, `/budget_history`, "
             "`/add_kategori`, `/edit_kategori`, `/hutang`, `/pending`, `/recurring`, `/asset_add`, `/assets`, `/cari`, `/last`, `/delete_txn`, `/edit_txn`, `/help`"
         )
 
     return (
         f"❓ Command `/{clean}` tidak tersedia.\n\n"
         "Command yang tersedia:\n"
-        "`/saldo`, `/set_saldo`, `/quickstart`, `/harian`, `/mingguan`, `/bulanan`, `/budget`, `/budget_history`, "
+        "`/saldo`, `/set_saldo`, `/quickstart`, `/harian`, `/mingguan`, `/bulanan`, `/grafik`, `/budget`, `/budget_history`, "
         "`/add_kategori`, `/edit_kategori`, `/hutang`, `/pending`, `/cari`, `/last`, `/delete_txn`, `/edit_txn`, `/help`\n\n"
         "Ketik `/help` untuk panduan lengkap."
     )

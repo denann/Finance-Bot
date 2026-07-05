@@ -42,6 +42,7 @@ from app.bot.handlers import (
     error_handler,
     examples_handler,
     export_handler,
+    grafik_handler,
     harian_handler,
     health_handler,
     help_handler,
@@ -135,6 +136,8 @@ def register_handlers(telegram_app: Application) -> Application:
     add_command("harian", harian_handler)
     add_command("mingguan", mingguan_handler)
     add_command("bulanan", bulanan_handler)
+    add_command("grafik", grafik_handler)
+    add_command("chart", grafik_handler)
     add_command("cari", cari_handler)
     add_command("last", last_handler)
     add_command("transaksi", transaksi_handler)

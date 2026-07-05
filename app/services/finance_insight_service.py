@@ -43,6 +43,7 @@ AVAILABLE_COMMANDS_FOR_AI = [
     "/harian",
     "/mingguan",
     "/bulanan",
+    "/grafik",
     "/cari",
     "/last",
     "/transaksi",

@@ -24,6 +24,41 @@ Telegram update
 
 The category data is shown as a preview before the bot writes to the `categories` sheet.
 
+## Debt-only payable flow
+
+`catat utang ke Budi 200k` creates a payable debt record without changing any account balance. This syntax is for cases where the user wants to acknowledge a liability, but no money entered the user's account at the time of logging.
+
+```text
+catat utang ke Budi 200k
+-> parse as add_payable with cashflow_mode=debt_only
+-> preview explains that saldo rekening will not change
+-> save creates the debt row and a debt-only transaction audit row
+```
+
+This flow is intentionally separate from normal borrowing syntax such as `saya pinjam 100k ke Budi`, because normal borrowing means money entered an account and the bot must ask for the account.
+
+## Reporting and chart flow
+
+Daily, weekly, monthly, account, and transaction-list summaries use net expense as the primary expense basis. Gross expense remains available for display as `net (gross)` when receivable shares from split bill or talangan make the values different.
+
+`/bulanan` sends three user-facing outputs:
+
+1. Monthly summary.
+2. Gemini monthly insight.
+3. Monthly time series chart document.
+
+`/grafik` is a read-only chart command. Supported examples:
+
+```text
+/grafik
+/grafik 2026-06
+/grafik line 2026-06
+/grafik bar 2026-06
+/grafik pie 2026-06
+```
+
+The line chart shows daily net expense, the bar chart ranks category net expense, and the pie chart shows category share from total net expense.
+
 ## Important rule
 
 Slash commands should never be parsed as transactions. If a message starts with `/`, it must go to command handling or unknown command handling, not to the expense parser.

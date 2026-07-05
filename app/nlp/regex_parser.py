@@ -259,7 +259,19 @@ DEBT_PAYMENT_KEYWORDS = [
 
 
 def parse_debt_input(text: str) -> dict | None:
-    """Parse input into structured data for debt input."""
+    """Parse Indonesian debt input into a structured debt payload.
+
+    Args:
+        text: Raw Telegram text. The input must contain a debt keyword and a
+            nominal amount. Slash commands are ignored because command routing
+            owns those messages.
+
+    Returns:
+        A dict with fields such as `intent`, `person_name`, `amount`, `date`,
+        and `raw_input`, or `None` when the text is not a debt input. Explicit
+        `catat utang ke ...` inputs return `cashflow_mode="debt_only"` so the
+        bot records the debt without changing any account balance.
+    """
     if str(text or "").strip().startswith("/"):
         return None
 
@@ -385,13 +397,52 @@ def parse_debt_input(text: str) -> dict | None:
                 "target_debt_type": "payable",
             }, text)
 
-    # Debt flow section
-    # Debt flow section
-    # Implementation note for this project-specific finance flow.
-    # Debt flow section
-    # Debt flow section
-    # Debt flow section
-    # Account flow section
+    # Explicit debt-only syntax: record a payable fact without treating it as
+    # money received into an account.
+    debt_only_payable_match = re.search(
+        r"^\s*(?:cuma\s+|hanya\s+)?(?:catat|catetin|record)\s+"
+        r"(?:(?:saya|aku|gue|gw|gua)\s+)?"
+        r"(?:(?:punya|ada)\s+)?"
+        r"(?:hutang|utang)\s+(?:ke|sama)\s+"
+        r"(?P<person>[a-zA-Z][a-zA-Z\s]{0,40}?)(?=\s*(?:\d|rp|idr))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if debt_only_payable_match:
+        person = re.sub(r"\s+", " ", debt_only_payable_match.group("person")).strip().title()
+        if person and person.lower() not in {"saya", "aku", "gw", "gue", "gua"}:
+            description = extract_description(text, amount)
+            person_pattern = re.escape(person)
+            # Keep the saved detail focused on the reason, not the command words.
+            description = re.sub(
+                rf"^\s*(?:cuma\s+|hanya\s+)?(?:catat|catetin|record)\s+"
+                rf"(?:(?:saya|aku|gue|gw|gua)\s+)?"
+                rf"(?:(?:punya|ada)\s+)?"
+                rf"(?:hutang|utang)\s+(?:ke|sama)\s+{person_pattern}\b",
+                "",
+                description or "",
+                flags=re.IGNORECASE,
+            )
+            description = re.sub(
+                r"^\s*(?:buat|untuk|karena)\s+",
+                "",
+                description,
+                flags=re.IGNORECASE,
+            ).strip(" .,-:")
+            return {
+                "intent": "add_payable",
+                "person_name": person,
+                "amount": amount,
+                "description": f"Catat utang ke {person}" + (f": {description}" if description else ""),
+                "date": detect_date(text),
+                "raw_input": text,
+                "cashflow_mode": "debt_only",
+                "fronting_mode": "catat_utang",
+                "account": "Debt Only",
+                "skip_account": True,
+            }
+
+    # Offset syntax creates a separate opposite-side debt without auto-netting.
     offset_self_context = False
     offset_match = re.search(
         r"\b(?:potong|kurangi|kompensasi|offset|netting)\s+"

@@ -162,7 +162,27 @@ def add_debt(
     cashflow_mode: str = "",
     fronting_mode: str = "",
 ) -> dict:
-    """Helper for add debt in the finance service layer."""
+    """Create a payable or receivable row in the debts sheet.
+
+    Args:
+        debt_type: Debt direction. Use `payable` when the user owes another
+            person, or `receivable` when another person owes the user.
+        person_name: Counterparty name as typed or parsed from Telegram input.
+        amount: Original debt amount in rupiah. The value must be positive.
+        description: Human-readable reason shown in debt detail commands.
+        due_date: Optional due date string. Empty value means no due date.
+        source_transaction_id: Optional transaction id linked to this debt.
+        cashflow_mode: Optional marker for the initial cashflow behavior. Use
+            `debt_only` when the debt row must not imply an account-balance
+            mutation.
+        fronting_mode: Optional parser/source marker, for example `talangin`,
+            `ditalangin`, `catat_utang`, or settlement overpayment modes.
+
+    Returns:
+        Result dict with `success`, `debt_id`, `type`, `person_name`,
+        `original_amount`, `remaining`, `message`, and `action` keys. When
+        validation fails, `success` is false and no sheet row is appended.
+    """
     person_name = normalize_person_name(person_name)
     amount = float(amount or 0)
 
@@ -1694,17 +1714,45 @@ def find_debt_initial_cashflow_candidates(debt: dict) -> list[dict]:
 
 
 def is_debt_without_initial_cashflow(debt: dict) -> bool:
-    """Check whether a condition is true for debt without initial cashflow."""
+    """Check whether a debt row was created without an initial account change.
+
+    Args:
+        debt: Debt sheet row. The row may include historical description
+            markers, or explicit `cashflow_mode` and `fronting_mode` metadata.
+
+    Returns:
+        `True` when edit/void logic should not search for an initial cashflow
+        transaction because the debt was intentionally recorded as debt-only.
+    """
     debt_type = str(debt.get("type", "")).strip()
     description = str(debt.get("description", "") or "").strip().lower()
+    cashflow_mode = str(debt.get("cashflow_mode", "") or "").strip().lower()
+    fronting_mode = str(debt.get("fronting_mode", "") or "").strip().lower()
 
     if debt_type == "receivable":
+        return True
+
+    if cashflow_mode == "debt_only":
+        return True
+
+    # Parser metadata is more reliable than description text for new rows.
+    debt_only_fronting_modes = {
+        "catat_utang",
+        "ditalangin",
+        "sudah_berlalu",
+        "overpayment_from_payment",
+        "overpayment_from_selected_settle",
+    }
+    if fronting_mode in debt_only_fronting_modes:
         return True
 
     debt_only_markers = [
         "ditalangin",
         "tanpa cashflow",
+        "tanpa ubah saldo",
+        "tanpa update saldo",
         "debt_only",
+        "catat utang",
         "nitip",
     ]
     return any(marker in description for marker in debt_only_markers)

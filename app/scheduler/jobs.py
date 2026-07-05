@@ -12,6 +12,7 @@ from app.services.report_service import (
     get_weekly_report,
     get_monthly_report,
     format_rupiah,
+    get_effective_expense_amount,
 )
 from app.bot.handlers import build_progress_bar
 from app.services.budget_service import get_budget_summary
@@ -79,6 +80,53 @@ async def send_message(text: str, parse_mode: str | None = "Markdown", reply_mar
 
 # ── Job functions ─────────────────────────────────────────────────────────────
 
+def format_scheduler_expense_amount(net_amount: float, gross_amount: float | None = None) -> str:
+    """Format scheduler expense output as net amount with optional gross value.
+
+    Args:
+        net_amount: Expense amount after subtracting linked receivable shares.
+        gross_amount: Original transaction amount before receivable subtraction.
+
+    Returns:
+        `Rpnet (Rpgross)` when net and gross differ, otherwise just `Rpamount`.
+    """
+    net = float(net_amount or 0)
+    gross = float(gross_amount if gross_amount is not None else net)
+    if abs(net - gross) > 0.0001:
+        return f"{format_rupiah(net)} ({format_rupiah(gross)})"
+    return format_rupiah(net)
+
+
+def append_scheduler_top_expenses(lines: list[str], report: dict):
+    """Append scheduler Top 3 expenses sorted by net expense.
+
+    Args:
+        lines: Mutable Markdown line list for the scheduled summary message.
+        report: Daily, weekly, or monthly report dict containing enriched
+            transactions.
+
+    Returns:
+        None. The function appends lines only when positive net expenses exist.
+    """
+    expenses = [
+        txn for txn in (report or {}).get("transactions", [])
+        if str((txn or {}).get("type", "")).strip().lower() == "expense"
+        and get_effective_expense_amount(txn) > 0
+    ]
+    top = sorted(expenses, key=get_effective_expense_amount, reverse=True)[:3]
+    if not top:
+        return
+
+    lines.append("\n*Top 3 Pengeluaran:*")
+    for i, txn in enumerate(top, 1):
+        net_amount = get_effective_expense_amount(txn)
+        gross_amount = float((txn or {}).get("amount", 0) or 0)
+        lines.append(
+            f"  {i}. {txn.get('description', '-')} - "
+            f"*{format_scheduler_expense_amount(net_amount, gross_amount)}*"
+        )
+
+
 async def job_daily_summary():
     """Helper for job daily summary in the scheduler layer."""
     try:
@@ -93,7 +141,7 @@ async def job_daily_summary():
 
         lines = [f"📅 *Ringkasan Harian — {report['date']}*\n"]
         lines.append(f"✅ Pemasukan : *{format_rupiah(report['total_income'])}*")
-        lines.append(f"❌ Pengeluaran: *{format_rupiah(report['total_expense'])}*")
+        lines.append(f"❌ Pengeluaran: *{format_scheduler_expense_amount(report['total_expense'], report.get('total_gross_expense'))}*")
         lines.append(f"📊 Net       : *{format_rupiah(report['net'])}*")
         lines.append(f"📝 Transaksi : {report['count']} item\n")
 
@@ -135,7 +183,7 @@ async def job_weekly_summary():
             return
 
         lines.append(f"✅ Pemasukan : *{format_rupiah(report['total_income'])}*")
-        lines.append(f"❌ Pengeluaran: *{format_rupiah(report['total_expense'])}*")
+        lines.append(f"❌ Pengeluaran: *{format_scheduler_expense_amount(report['total_expense'], report.get('total_gross_expense'))}*")
         lines.append(f"📊 Net       : *{format_rupiah(report['net'])}*")
         lines.append(f"📝 Transaksi : {report['count']} item\n")
 
@@ -144,20 +192,7 @@ async def job_weekly_summary():
             for cat, amount in report["by_category"].items():
                 lines.append(f"  • {cat}: {format_rupiah(amount)}")
 
-        # Implementation section
-        top = sorted(
-            [t for t in report["transactions"] if t.get("type") == "expense"],
-            key=lambda x: float(x.get("amount", 0)),
-            reverse=True
-        )[:3]
-
-        if top:
-            lines.append("\n*Top 3 Pengeluaran:*")
-            for i, t in enumerate(top, 1):
-                lines.append(
-                    f"  {i}. {t.get('description', '-')} — "
-                    f"*{format_rupiah(float(t.get('amount', 0)))}*"
-                )
+        append_scheduler_top_expenses(lines, report)
 
         await send_message("\n".join(lines))
 
@@ -186,7 +221,7 @@ async def job_monthly_summary():
             return
 
         lines.append(f"✅ Pemasukan : *{format_rupiah(report['total_income'])}*")
-        lines.append(f"❌ Pengeluaran: *{format_rupiah(report['total_expense'])}*")
+        lines.append(f"❌ Pengeluaran: *{format_scheduler_expense_amount(report['total_expense'], report.get('total_gross_expense'))}*")
         lines.append(f"📊 Net       : *{format_rupiah(report['net'])}*")
         lines.append(f"📝 Transaksi : {report['count']} item\n")
 
@@ -195,7 +230,7 @@ async def job_monthly_summary():
             for cat, amount in report["by_category"].items():
                 lines.append(f"  • {cat}: {format_rupiah(amount)}")
 
-        # Natural input section
+        # Budget warning section for the same monthly period.
         budget_summary = get_budget_summary(f"{year}-{month:02d}")
         if budget_summary:
             lines.append("\n*Budget vs Realisasi:*")

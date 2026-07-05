@@ -211,7 +211,16 @@ SKIP_ACCOUNT_NAMES = {
 
 
 def is_skip_account_transaction(parsed: dict) -> bool:
-    """Check whether a condition is true for skip account transaction."""
+    """Check whether a transaction must skip account balance mutation.
+
+    Args:
+        parsed: Parsed transaction payload. It may contain `skip_account=True`
+            or a sentinel account name such as `Debt Only` or `tanpa rekening`.
+
+    Returns:
+        `True` when the row should still be written for audit/reporting but
+        should not update any account balance.
+    """
     account = str(parsed.get("account") or "").strip().lower()
     return bool(parsed.get("skip_account")) or account in SKIP_ACCOUNT_NAMES
 
@@ -532,7 +541,19 @@ def apply_account_deltas(account_deltas: dict) -> dict:
 # ── Core transaction functions ────────────────────────────────────────────────
 
 def save_transaction(parsed: dict, raw_input: str) -> dict:
-    """Save data after validation and confirmation for transaction."""
+    """Save one confirmed transaction row and apply account deltas.
+
+    Args:
+        parsed: Parsed transaction payload after preview/confirmation. It must
+            include a valid `type`, `amount`, and required account fields unless
+            `skip_account` marks the row as audit-only.
+        raw_input: Original user text stored in the transaction row.
+
+    Returns:
+        Result dict with save status, transaction id, message, new balance
+        information, and account deltas. Validation failures return
+        `success=False` before any row or balance update is attempted.
+    """
     is_valid, validation_message = validate_transaction(parsed)
     if not is_valid:
         return {
@@ -628,7 +649,17 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
 
 
 def save_transactions_batch(parsed_items: list[dict]) -> dict:
-    """Save data after validation and confirmation for transactions batch."""
+    """Save confirmed transaction rows as a batch and apply combined deltas.
+
+    Args:
+        parsed_items: List of dicts with `parsed` payload and original `raw`
+            input. Each item is validated before rows are appended.
+
+    Returns:
+        Batch result containing success count, failed item details, saved ids,
+        new balances, and account deltas. Invalid items are skipped instead of
+        being written.
+    """
     if not parsed_items:
         return {
             "success": False,

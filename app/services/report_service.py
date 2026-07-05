@@ -235,9 +235,13 @@ DEFAULT_REPORT_CATEGORIES = [
     "Bayar Utang",
     "Pembayaran Piutang",
     "Utang Tanpa Cashflow",
+    "Utang Tanpa Ubah Saldo",
     "Piutang Tanpa Cashflow",
+    "Piutang Tanpa Ubah Saldo",
     "Pembayaran Debt Tanpa Cashflow",
+    "Pembayaran Debt Tanpa Ubah Saldo",
     "Debt Tanpa Cashflow",
+    "Debt Tanpa Ubah Saldo",
     "Kompensasi Hutang/Piutang",
 ]
 
@@ -505,39 +509,98 @@ def enrich_transactions_with_debt_info(transactions: list[dict]) -> list[dict]:
     return enriched
 
 
+def get_effective_expense_amount(txn: dict) -> float:
+    """Return the net expense amount after linked receivable shares.
+
+    Args:
+        txn: Transaction row. For expense rows, this may already include
+            `net_expense_after_receivable` from `enrich_transactions_with_debt_info`.
+
+    Returns:
+        Net expense for report calculations. Non-expense rows return their raw
+        amount so callers can safely reuse the helper in mixed sorting.
+    """
+    amount = safe_float((txn or {}).get("amount", 0))
+    if str((txn or {}).get("type", "") or "").strip().lower() != "expense":
+        return amount
+
+    if "net_expense_after_receivable" in (txn or {}):
+        return max(safe_float((txn or {}).get("net_expense_after_receivable", amount)), 0.0)
+
+    receivable = safe_float(
+        (txn or {}).get("debt_receivable_original", (txn or {}).get("debt_receivable_remaining", 0))
+    )
+    return max(amount - receivable, 0.0)
+
+
 def calculate_net_expense_after_receivable(transactions: list[dict]) -> float:
-    """Calculate derived values for net expense after receivable."""
+    """Calculate total net expense after linked receivable shares.
+
+    Args:
+        transactions: Enriched or raw transaction rows.
+
+    Returns:
+        Sum of expense amounts after subtracting receivable portions created by
+        split bill or talangan flows.
+    """
     total = 0.0
     for txn in transactions or []:
         txn_type = str((txn or {}).get("type", "") or "").strip().lower()
         if txn_type != "expense":
             continue
-        amount = safe_float((txn or {}).get("amount", 0))
-        receivable = safe_float((txn or {}).get("debt_receivable_original", (txn or {}).get("debt_receivable_remaining", 0)))
-        total += max(amount - receivable, 0.0)
+        total += get_effective_expense_amount(txn)
     return total
 
 
 def calculate_net_expense_by_category(transactions: list[dict]) -> dict:
-    """Calculate derived values for net expense by category."""
+    """Calculate net expense totals grouped by category.
+
+    Args:
+        transactions: Enriched or raw transaction rows.
+
+    Returns:
+        Category totals sorted descending by net expense.
+    """
     result = {}
     for txn in transactions or []:
         txn_type = str((txn or {}).get("type", "") or "").strip().lower()
         if txn_type != "expense":
             continue
         category = str((txn or {}).get("category") or "Other").strip() or "Other"
-        amount = safe_float((txn or {}).get("amount", 0))
-        receivable = safe_float((txn or {}).get("debt_receivable_original", (txn or {}).get("debt_receivable_remaining", 0)))
-        result[category] = result.get(category, 0.0) + max(amount - receivable, 0.0)
+        result[category] = result.get(category, 0.0) + get_effective_expense_amount(txn)
     return dict(sorted(result.items(), key=lambda x: x[1], reverse=True))
 
 
-def attach_enriched_transactions(summary: dict, transactions: list[dict]) -> dict:
-    """Helper for attach enriched transactions in the finance service layer."""
+def attach_enriched_transactions(summary: dict, transactions: list[dict], account: str | None = None) -> dict:
+    """Attach enriched transactions and refresh net-based summary fields.
+
+    Args:
+        summary: Existing report summary dict.
+        transactions: Raw or enriched transaction rows for the same report.
+        account: Optional account filter used for account-level net movement.
+
+    Returns:
+        The same summary dict with transactions attached and expense totals
+        normalized to net-after-receivable basis.
+    """
     enriched = enrich_transactions_with_debt_info(transactions)
+    refreshed = summarize(enriched, account)
+    for key in [
+        "total_income",
+        "total_expense",
+        "total_gross_expense",
+        "total_transfer",
+        "total_transfer_in",
+        "total_transfer_out",
+        "net",
+        "by_category",
+        "by_category_gross",
+        "count",
+    ]:
+        summary[key] = refreshed.get(key, summary.get(key))
     summary["transactions"] = enriched
-    summary["total_net_expense_after_receivable"] = calculate_net_expense_after_receivable(enriched)
-    summary["by_category_net"] = calculate_net_expense_by_category(enriched)
+    summary["total_net_expense_after_receivable"] = summary.get("total_expense", 0)
+    summary["by_category_net"] = summary.get("by_category", {})
     return summary
 
 
@@ -752,14 +815,29 @@ def filter_transactions(
 
 
 def summarize(transactions: list[dict], account: str | None = None) -> dict:
-    """Helper for summarize in the finance service layer."""
+    """Summarize transactions for report totals on a net expense basis.
+
+    Args:
+        transactions: Transaction rows, preferably enriched with debt metadata.
+            Raw rows still work, but split-bill receivable subtraction only
+            happens when debt metadata is available.
+        account: Optional account filter. When provided, transfers are treated
+            as account inflow/outflow and net becomes account movement.
+
+    Returns:
+        Summary dict where `total_expense` and `by_category` are net after
+        receivables, while `total_gross_expense` and `by_category_gross` keep
+        the original gross values for display as `Net (Gross)`.
+    """
     account_key = normalize_account_key(account) if account else None
     total_income = 0.0
     total_expense = 0.0
+    total_gross_expense = 0.0
     total_transfer = 0.0
     total_transfer_in = 0.0
     total_transfer_out = 0.0
     by_category = {}
+    by_category_gross = {}
 
     for t in transactions:
         amount = safe_float(t.get("amount", 0))
@@ -773,8 +851,11 @@ def summarize(transactions: list[dict], account: str | None = None) -> dict:
                 total_income += amount
         elif txn_type == "expense":
             if source_match:
-                total_expense += amount
-                by_category[category] = by_category.get(category, 0.0) + amount
+                net_amount = get_effective_expense_amount(t)
+                total_expense += net_amount
+                total_gross_expense += amount
+                by_category[category] = by_category.get(category, 0.0) + net_amount
+                by_category_gross[category] = by_category_gross.get(category, 0.0) + amount
         elif txn_type == "transfer":
             if account_key:
                 if source_match:
@@ -794,11 +875,13 @@ def summarize(transactions: list[dict], account: str | None = None) -> dict:
     return {
         "total_income": total_income,
         "total_expense": total_expense,
+        "total_gross_expense": total_gross_expense,
         "total_transfer": total_transfer,
         "total_transfer_in": total_transfer_in,
         "total_transfer_out": total_transfer_out,
         "net": net,
         "by_category": dict(sorted(by_category.items(), key=lambda x: x[1], reverse=True)),
+        "by_category_gross": dict(sorted(by_category_gross.items(), key=lambda x: x[1], reverse=True)),
         "count": len(transactions),
     }
 
@@ -831,9 +914,11 @@ def get_daily_report(date_str: str | None = None, category: str | None = None, a
         category=category_filter,
         account=account_filter,
     )
+    previous_transactions = enrich_transactions_with_debt_info(previous_transactions)
     previous_summary = summarize(previous_transactions, account_filter)
     previous_available = len(previous_transactions) > 0
 
+    transactions = enrich_transactions_with_debt_info(transactions)
     summary = summarize(transactions, account_filter)
     summary["date"] = date_str
     summary["previous_date"] = previous_date_str
@@ -845,7 +930,7 @@ def get_daily_report(date_str: str | None = None, category: str | None = None, a
         previous_summary.get("by_category", {}),
         previous_available,
     )
-    attach_enriched_transactions(summary, transactions)
+    attach_enriched_transactions(summary, transactions, account_filter)
     return summary
 
 
@@ -877,9 +962,11 @@ def get_weekly_report(reference_date: str | None = None, category: str | None = 
         category=category_filter,
         account=account_filter,
     )
+    previous_transactions = enrich_transactions_with_debt_info(previous_transactions)
     previous_summary = summarize(previous_transactions, account_filter)
     previous_available = len(previous_transactions) > 0
 
+    transactions = enrich_transactions_with_debt_info(transactions)
     summary = summarize(transactions, account_filter)
     summary["date_from"] = date_from
     summary["date_to"] = date_to
@@ -893,7 +980,7 @@ def get_weekly_report(reference_date: str | None = None, category: str | None = 
         previous_summary.get("by_category", {}),
         previous_available,
     )
-    attach_enriched_transactions(summary, transactions)
+    attach_enriched_transactions(summary, transactions, account_filter)
     return summary
 
 
@@ -929,9 +1016,11 @@ def get_monthly_report(year: int | None = None, month: int | None = None, catego
         category=category_filter,
         account=account_filter,
     )
+    previous_transactions = enrich_transactions_with_debt_info(previous_transactions)
     previous_summary = summarize(previous_transactions, account_filter)
     previous_available = len(previous_transactions) > 0
 
+    transactions = enrich_transactions_with_debt_info(transactions)
     summary = summarize(transactions, account_filter)
     summary["date_from"] = date_from
     summary["date_to"] = date_to
@@ -945,7 +1034,7 @@ def get_monthly_report(year: int | None = None, month: int | None = None, catego
         previous_summary.get("by_category", {}),
         previous_available,
     )
-    attach_enriched_transactions(summary, transactions)
+    attach_enriched_transactions(summary, transactions, account_filter)
     return summary
 
 
@@ -983,6 +1072,7 @@ def get_account_all_report(account: str) -> dict:
     transactions = filter_transactions(records, account=account_filter)
     transactions.sort(key=lambda x: (str(x.get("date", "")), int(x.get("_row_index", 0) or 0)), reverse=True)
 
+    transactions = enrich_transactions_with_debt_info(transactions)
     summary = summarize(transactions, account_filter)
     summary["period_label"] = "Semua histori"
     summary["period_type"] = "all"
@@ -990,7 +1080,7 @@ def get_account_all_report(account: str) -> dict:
     summary["category_filter"] = None
     summary["comparison"] = {}
     summary["category_comparison"] = {}
-    attach_enriched_transactions(summary, transactions)
+    attach_enriched_transactions(summary, transactions, account_filter)
     summary["account_balance"] = get_account_balance(account_filter)
     return summary
 
@@ -1030,7 +1120,15 @@ def search_transactions(keyword: str, limit: int = 10) -> list[dict]:
 
 
 def get_top_expenses(month: str | None = None, top_n: int = 5) -> list[dict]:
-    """Get data needed for top expenses."""
+    """Get top monthly expenses sorted by net expense amount.
+
+    Args:
+        month: Month string in `YYYY-MM` format. Defaults to current month.
+        top_n: Maximum number of rows to return.
+
+    Returns:
+        Enriched expense rows sorted by net amount after linked receivables.
+    """
     if not month:
         month = datetime.now().strftime("%Y-%m")
 
@@ -1041,5 +1139,6 @@ def get_top_expenses(month: str | None = None, top_n: int = 5) -> list[dict]:
         and str(r.get("date", "")).startswith(str(month))
     ]
 
-    expenses.sort(key=lambda x: safe_float(x.get("amount", 0)), reverse=True)
+    expenses = enrich_transactions_with_debt_info(expenses)
+    expenses.sort(key=get_effective_expense_amount, reverse=True)
     return expenses[:top_n]

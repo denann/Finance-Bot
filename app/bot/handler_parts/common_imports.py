@@ -502,7 +502,22 @@ def build_transactions_full_text_shared(
     *,
     current_balance: float | None = None,
 ) -> str:
-    """Build the data structure or message text for transactions full text shared."""
+    """Build full transaction history text with net/gross expense summaries.
+
+    Args:
+        transactions: Transaction rows to render. Rows may be raw or already
+            enriched with linked debt metadata.
+        title: Markdown title shown at the top of the message.
+        account_filter: Optional account name. When provided, summary totals
+            are calculated from that account's inflow, outflow, and transfers.
+        current_balance: Optional current account balance shown only in account
+            detail views.
+
+    Returns:
+        Markdown text grouped by transaction date. Expense and net values use
+        net-after-receivable as the primary amount and show gross in
+        parentheses when different.
+    """
     transactions = enrich_transactions_with_debt_info(transactions or [])
     lines = [f"🧾 *{md_safe(title)}*\n"]
     append_net_gross_note(lines, transactions)
@@ -554,8 +569,10 @@ def build_transactions_full_text_shared(
         lines.extend(build_transaction_display_lines(txn, index=i, include_date=False, include_id=True))
 
     if account_key:
-        net = total_income + total_transfer_in - total_expense - total_transfer_out
+        net_gross = total_income + total_transfer_in - total_expense - total_transfer_out
+        net_after_receivable = total_income + total_transfer_in - total_net_expense - total_transfer_out
         expense_text = format_expense_net_gross(total_net_expense, total_expense)
+        net_text = format_expense_net_gross(net_after_receivable, net_gross)
         summary_lines = [
             "\n*Ringkasan Rekening:*",
         ]
@@ -566,19 +583,21 @@ def build_transactions_full_text_shared(
             f"❌ Expense         : *{expense_text}*",
             f"🔁 Transfer Masuk  : *{format_rupiah(total_transfer_in)}*",
             f"🔁 Transfer Keluar : *{format_rupiah(total_transfer_out)}*",
-            f"📊 Net Rekening    : *{format_rupiah(net)}*",
+            f"📊 Net Rekening    : *{net_text}*",
             f"📝 Total           : *{len(transactions)} transaksi*",
         ])
         lines.append("\n".join(summary_lines))
     else:
-        net = total_income - total_expense
+        net_gross = total_income - total_expense
+        net_after_receivable = total_income - total_net_expense
         expense_text = format_expense_net_gross(total_net_expense, total_expense)
+        net_text = format_expense_net_gross(net_after_receivable, net_gross)
         lines.append(
             "\n*Ringkasan:*\n"
             f"✅ Income   : *{format_rupiah(total_income)}*\n"
             f"❌ Expense  : *{expense_text}*\n"
             f"🔄 Transfer : *{format_rupiah(total_transfer)}*\n"
-            f"📊 Net      : *{format_rupiah(net)}*\n"
+            f"📊 Net      : *{net_text}*\n"
             f"📝 Total    : *{len(transactions)} transaksi*"
         )
 

@@ -4064,7 +4064,24 @@ def build_debt_cashflow_transaction(
     account: str,
     debt_type_for_payment: str | None = None,
 ) -> dict:
-    """Build the data structure or message text for debt cashflow transaction."""
+    """Build the transaction row payload for a parsed debt action.
+
+    Args:
+        debt_parsed: Parsed debt payload from `parse_debt_input`, including
+            `intent`, `person_name`, `amount`, optional `cashflow_mode`, and
+            optional debt identifiers created during save.
+        account: Selected account name for debt actions that really move cash.
+            Debt-only and offset actions ignore this value and set
+            `skip_account=True`.
+        debt_type_for_payment: Optional resolved payment direction. Use
+            `payable` when the user pays their own debt and `receivable` when
+            another person pays the user's receivable.
+
+    Returns:
+        A transaction dict ready for `save_transaction` or batch saving. When
+        `cashflow_mode` is `debt_only`, the returned type is `debt_only` and
+        the account balance must not change.
+    """
     intent = debt_parsed.get("intent")
     person = debt_parsed.get("person_name") or ""
     amount = debt_parsed.get("amount") or 0
@@ -4080,10 +4097,8 @@ def build_debt_cashflow_transaction(
 
 
     if str(debt_parsed.get("cashflow_mode") or "").strip() == "debt_only":
-        # Account flow section
-        # Account flow section
-        # Natural input section
-        # Account flow section
+        # Debt-only rows preserve the audit trail while deliberately skipping
+        # account balance mutation.
         if is_ditalangin_expense_without_balance(debt_parsed):
             item_desc = str(debt_parsed.get("expense_description") or "").strip() or _fronting_expense_description(debt_parsed)
             catatan_parts = [str(raw or "").strip(), "ditalangin/tanpa update saldo rekening"]
@@ -4111,16 +4126,16 @@ def build_debt_cashflow_transaction(
             }
 
         if intent == "add_payable":
-            category = "Utang Tanpa Cashflow"
-            description = f"Utang tanpa cashflow ke {person}: {debt_parsed.get('description') or raw}"
+            category = "Utang Tanpa Ubah Saldo"
+            description = f"Catat utang ke {person} tanpa ubah saldo: {debt_parsed.get('description') or raw}"
         elif intent == "add_receivable":
-            category = "Piutang Tanpa Cashflow"
-            description = f"Piutang tanpa cashflow ke {person}: {debt_parsed.get('description') or raw}"
+            category = "Piutang Tanpa Ubah Saldo"
+            description = f"Catat piutang ke {person} tanpa ubah saldo: {debt_parsed.get('description') or raw}"
         elif intent == "add_payment":
-            category = "Pembayaran Debt Tanpa Cashflow"
-            description = f"Pembayaran debt tanpa cashflow {person}: {debt_parsed.get('description') or raw}"
+            category = "Pembayaran Debt Tanpa Ubah Saldo"
+            description = f"Catat pembayaran debt {person} tanpa ubah saldo: {debt_parsed.get('description') or raw}"
         else:
-            category = "Debt Tanpa Cashflow"
+            category = "Debt Tanpa Ubah Saldo"
             description = debt_parsed.get("description") or raw
 
         return {
@@ -4251,7 +4266,18 @@ def debt_uses_cashflow(debt_parsed: dict) -> bool:
 
 
 def build_debt_only_confirm_preview(debt_parsed: dict) -> str:
-    """Build the data structure or message text for debt only confirm preview."""
+    """Build a confirmation preview for debt actions without account movement.
+
+    Args:
+        debt_parsed: Parsed debt payload. The preview expects
+            `cashflow_mode="debt_only"` for normal debt-only facts, or
+            `intent="offset_debt"` for compensation without a bank account.
+
+    Returns:
+        Markdown text explaining the debt effect, transaction row effect, and
+        the fact that account balances will not change before the user confirms
+        the save action.
+    """
     intent = debt_parsed.get("intent")
     person = debt_parsed.get("person_name") or "-"
     amount = debt_parsed.get("amount") or 0
@@ -4283,11 +4309,11 @@ def build_debt_only_confirm_preview(debt_parsed: dict) -> str:
                     "Saldo rekening *tidak berubah* karena uang belum keluar dari rekening Anda."
                 )
         else:
-            title = "🟠 *Utang Tanpa Cashflow*"
+            title = "🟠 *Catat Utang Tanpa Ubah Saldo*"
             debt_effect = f"Anda punya utang ke {md_safe(person)}."
             transaction_effect = "Tetap dicatat di sheet transactions sebagai fact table, tetapi saldo rekening tidak berubah."
     elif intent == "add_receivable":
-        title = "🟢 *Talangin / Piutang Tanpa Cashflow*"
+        title = "🟢 *Talangin / Piutang Tanpa Ubah Saldo*"
         debt_effect = f"{md_safe(person)} punya utang ke Anda."
         transaction_effect = "Tetap dicatat di sheet transactions sebagai fact table, tetapi saldo rekening tidak berubah."
     elif intent == "offset_debt":
@@ -4296,7 +4322,7 @@ def build_debt_only_confirm_preview(debt_parsed: dict) -> str:
         debt_effect = f"Memotong {target_label} aktif dengan {md_safe(person)} tanpa rekening."
         transaction_effect = "Tetap dicatat sebagai debt offset tanpa mengubah saldo rekening."
     else:
-        title = "💸 *Debt Tanpa Cashflow*"
+        title = "💸 *Debt Tanpa Ubah Saldo*"
         debt_effect = "Debt dicatat tanpa transaksi kas."
         transaction_effect = "Tetap dicatat di sheet transactions sebagai fact table, tetapi saldo rekening tidak berubah."
 

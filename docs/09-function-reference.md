@@ -74,6 +74,11 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `append_recent_account_transaction_lines(lines: list[str], report: dict, limit: int=8)` | Append data to recent account transaction lines. |
 | `def` | `append_report_category_breakdown_lines(lines: list[str], report: dict, comparison_label: str)` | Append data to report category breakdown lines. |
 | `def` | `build_top_expense_debt_lines(txn: dict, amount: float)` | Build the data structure or message text for top expense debt lines. |
+| `def` | `get_top_expense_transactions(report: dict, limit: int=3)` | Return expense rows sorted by net expense amount. |
+| `def` | `append_top_expense_lines(lines: list[str], report: dict)` | Append Top 3 expense rows using net expense contribution. |
+| `def` | `normalize_chart_type(value: str \| None)` | Normalize `/grafik` chart type input. |
+| `def` | `parse_grafik_args(args: list[str] \| None)` | Parse `/grafik` arguments into chart type and month. |
+| `async def` | `send_monthly_chart_document(update: Update, report: dict, chart_type: str='timeseries')` | Generate and send a monthly SVG chart document. |
 | `def` | `is_category_detail_report(report: dict)` | Check whether a condition is true for category detail report. |
 | `def` | `get_category_list_title(category: str)` | Get data needed for category list title. |
 | `def` | `append_category_detail_summary(lines: list[str], report: dict, comparison_label: str)` | Append data to category detail summary. |
@@ -82,7 +87,9 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `async def` | `rekening_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for rekening. |
 | `async def` | `harian_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for harian. |
 | `async def` | `mingguan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for mingguan. |
-| `async def` | `bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for bulanan. |
+| `async def` | `bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for bulanan, including summary, Gemini insight, and time series chart output. |
+| `async def` | `grafik_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle read-only monthly chart requests for line, bar, or pie output. |
+| `async def` | `send_bulanan_timeseries_chart(update: Update, report: dict)` | Send the third `/bulanan` output as a net-expense time series chart. |
 | `async def` | `cari_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for cari. |
 | `def` | `format_budget_net_gross(net_amount: float, gross_amount: float)` | Format data into a readable display for budget net gross. |
 | `async def` | `budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for budget. |
@@ -256,6 +263,11 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `append_recent_account_transaction_lines(lines: list[str], report: dict, limit: int=8)` | Append data to recent account transaction lines. |
 | `def` | `append_report_category_breakdown_lines(lines: list[str], report: dict, comparison_label: str)` | Append data to report category breakdown lines. |
 | `def` | `build_top_expense_debt_lines(txn: dict, amount: float)` | Build the data structure or message text for top expense debt lines. |
+| `def` | `get_top_expense_transactions(report: dict, limit: int=3)` | Return expense rows sorted by net expense amount. |
+| `def` | `append_top_expense_lines(lines: list[str], report: dict)` | Append Top 3 expense rows using net expense contribution. |
+| `def` | `normalize_chart_type(value: str \| None)` | Normalize `/grafik` chart type input. |
+| `def` | `parse_grafik_args(args: list[str] \| None)` | Parse `/grafik` arguments into chart type and month. |
+| `async def` | `send_monthly_chart_document(update: Update, report: dict, chart_type: str='timeseries')` | Generate and send a monthly SVG chart document. |
 | `def` | `is_category_detail_report(report: dict)` | Check whether a condition is true for category detail report. |
 | `def` | `get_category_list_title(category: str)` | Get data needed for category list title. |
 | `def` | `append_category_detail_summary(lines: list[str], report: dict, comparison_label: str)` | Append data to category detail summary. |
@@ -264,7 +276,9 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `async def` | `rekening_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for rekening. |
 | `async def` | `harian_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for harian. |
 | `async def` | `mingguan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for mingguan. |
-| `async def` | `bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for bulanan. |
+| `async def` | `bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for bulanan, including summary, Gemini insight, and time series chart output. |
+| `async def` | `grafik_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle read-only monthly chart requests for line, bar, or pie output. |
+| `async def` | `send_bulanan_timeseries_chart(update: Update, report: dict)` | Send the third `/bulanan` output as a net-expense time series chart. |
 | `async def` | `cari_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for cari. |
 | `def` | `format_budget_net_gross(net_amount: float, gross_amount: float)` | Format data into a readable display for budget net gross. |
 | `async def` | `budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for budget. |
@@ -793,6 +807,23 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `get_budget_summary(month: str=None)` | Get data needed for budget summary. |
 | `def` | `check_budget_after_transaction(category: str, month: str=None)` | Helper for check budget after transaction in the finance service layer. |
 
+## `app/services/chart_service.py`
+
+| Type | Name / Signature | Purpose |
+|---|---|---|
+| `def` | `compact_rupiah(amount: float)` | Format rupiah values compactly for SVG chart labels. |
+| `def` | `transaction_day(txn: dict)` | Extract day-of-month from a transaction date. |
+| `def` | `monthly_day_count(month_label: str)` | Return the day count for a `YYYY-MM` month. |
+| `def` | `daily_net_expense_series(report: dict)` | Build daily net expense totals for a monthly report. |
+| `def` | `category_net_expense_items(report: dict, limit: int=8)` | Return category rows sorted by net expense. |
+| `def` | `svg_text(x: float, y: float, text: str, *, size: int=13, anchor: str='start', weight: str='400')` | Build an escaped SVG text element. |
+| `def` | `build_empty_chart_svg(title: str, message: str)` | Build an empty-state SVG chart. |
+| `def` | `build_monthly_timeseries_svg(report: dict)` | Build a daily net-expense line chart SVG. |
+| `def` | `build_monthly_bar_svg(report: dict)` | Build a category net-expense bar chart SVG. |
+| `def` | `build_monthly_pie_svg(report: dict)` | Build a category net-expense pie chart SVG. |
+| `def` | `build_monthly_chart_svg(report: dict, chart_type: str='timeseries')` | Build a monthly chart SVG by requested type. |
+| `def` | `write_monthly_chart_svg(report: dict, chart_type: str='timeseries')` | Write a monthly chart SVG to a temporary file. |
+
 ## `app/services/debt_service.py`
 
 | Type | Name / Signature | Purpose |
@@ -807,7 +838,7 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `get_debt_row_by_id(debt_id: str)` | Get data needed for debt row by id. |
 | `def` | `get_active_debt_exact_person(person_name: str)` | Get data needed for active debt exact person. |
 | `def` | `append_debt_mutation(debt_id: str, amount: float, note: str='', mutation_type: str='payment')` | Append data to debt mutation. |
-| `def` | `add_debt(debt_type: str, person_name: str, amount: float, description: str='', due_date: str='', source_transaction_id: str='', cashflow_mode: str='', fronting_mode: str='')` | Helper for add debt in the finance service layer. |
+| `def` | `add_debt(debt_type: str, person_name: str, amount: float, description: str='', due_date: str='', source_transaction_id: str='', cashflow_mode: str='', fronting_mode: str='')` | Create a payable or receivable row, including debt-only cashflow metadata. |
 | `def` | `get_active_debts(debt_type: str=None)` | Get data needed for active debts. |
 | `def` | `get_debt_by_person(person_name: str)` | Get data needed for debt by person. |
 | `def` | `add_payment(debt_id: str, amount: float, note: str='')` | Helper for add payment in the finance service layer. |
@@ -833,7 +864,7 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `resolve_debt_ref(ref: str, last_debt_map: dict \| None=None)` | Resolve a user input or reference for debt ref. |
 | `def` | `expected_initial_cashflow_category(debt: dict)` | Helper for expected initial cashflow category in the finance service layer. |
 | `def` | `find_debt_initial_cashflow_candidates(debt: dict)` | Find a record for debt initial cashflow candidates. |
-| `def` | `is_debt_without_initial_cashflow(debt: dict)` | Check whether a condition is true for debt without initial cashflow. |
+| `def` | `is_debt_without_initial_cashflow(debt: dict)` | Detect debt rows that should not search for an initial account cashflow. |
 | `def` | `build_debts_index(records: list[dict] \| None=None, active_only: bool=False)` | Build the data structure or message text for debts index. |
 | `def` | `get_debts_by_source_transaction_id(transaction_id: str, active_only: bool=True, debt_index: dict \| None=None)` | Get data needed for debts by source transaction id. |
 | `def` | `parse_debt_ids_from_transaction_record(txn: dict)` | Parse input into structured data for debt ids from transaction record. |
@@ -1020,9 +1051,10 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `build_debt_lookup(active_only: bool=True)` | Build the data structure or message text for debt lookup. |
 | `def` | `get_linked_debts_for_transaction(txn: dict, lookup: dict)` | Get data needed for linked debts for transaction. |
 | `def` | `enrich_transactions_with_debt_info(transactions: list[dict])` | Helper for enrich transactions with debt info in the finance service layer. |
+| `def` | `get_effective_expense_amount(txn: dict)` | Return net expense after linked receivable shares. |
 | `def` | `calculate_net_expense_after_receivable(transactions: list[dict])` | Calculate derived values for net expense after receivable. |
 | `def` | `calculate_net_expense_by_category(transactions: list[dict])` | Calculate derived values for net expense by category. |
-| `def` | `attach_enriched_transactions(summary: dict, transactions: list[dict])` | Helper for attach enriched transactions in the finance service layer. |
+| `def` | `attach_enriched_transactions(summary: dict, transactions: list[dict], account: str \| None=None)` | Attach enriched transactions and refresh net-based summary fields. |
 | `def` | `build_delta_info(current_value, previous_value, previous_available: bool=True)` | Build the data structure or message text for delta info. |
 | `def` | `build_summary_comparison(current: dict, previous: dict, previous_available: bool=True)` | Build the data structure or message text for summary comparison. |
 | `def` | `build_category_comparison(current: dict, previous: dict, previous_available: bool=True)` | Build the data structure or message text for category comparison. |
@@ -1031,7 +1063,7 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `get_week_range(reference_date: str \| None=None)` | Get data needed for week range. |
 | `def` | `get_month_range(year: int \| None=None, month: int \| None=None)` | Get data needed for month range. |
 | `def` | `filter_transactions(records: list[dict], date_from: str \| None=None, date_to: str \| None=None, txn_type: str \| None=None, category: str \| None=None, account: str \| None=None)` | Helper for filter transactions in the finance service layer. |
-| `def` | `summarize(transactions: list[dict], account: str \| None=None)` | Helper for summarize in the finance service layer. |
+| `def` | `summarize(transactions: list[dict], account: str \| None=None)` | Summarize report totals with net expense as the primary basis. |
 | `def` | `get_daily_report(date_str: str \| None=None, category: str \| None=None, account: str \| None=None)` | Get data needed for daily report. |
 | `def` | `get_weekly_report(reference_date: str \| None=None, category: str \| None=None, account: str \| None=None)` | Get data needed for weekly report. |
 | `def` | `get_monthly_report(year: int \| None=None, month: int \| None=None, category: str \| None=None, account: str \| None=None)` | Get data needed for monthly report. |
@@ -1040,7 +1072,7 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `get_account_all_report(account: str)` | Get data needed for account all report. |
 | `def` | `get_account_report(account: str, period_arg: str \| None='month')` | Get data needed for account report. |
 | `def` | `search_transactions(keyword: str, limit: int=10)` | Helper for search transactions in the finance service layer. |
-| `def` | `get_top_expenses(month: str \| None=None, top_n: int=5)` | Get data needed for top expenses. |
+| `def` | `get_top_expenses(month: str \| None=None, top_n: int=5)` | Return top monthly expenses sorted by net expense amount. |
 
 ## `app/services/transaction_service.py`
 
@@ -1050,7 +1082,7 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `normalize_export_period(period: str \| None=None)` | Normalize and clean input for export period. |
 | `def` | `parse_date_safe(value)` | Parse input into structured data for date safe. |
 | `def` | `get_transactions_for_export(period: str \| None=None)` | Get data needed for transactions for export. |
-| `def` | `is_skip_account_transaction(parsed: dict)` | Check whether a condition is true for skip account transaction. |
+| `def` | `is_skip_account_transaction(parsed: dict)` | Detect rows that should be written without changing account balance. |
 | `def` | `generate_transaction_id()` | Helper for generate transaction id in the finance service layer. |
 | `def` | `build_transaction_row(parsed: dict, raw_input: str)` | Build the data structure or message text for transaction row. |
 | `def` | `update_transaction_debt_relation(transaction_id: str, debt_ids: list[str], tipe_hutang: str='piutang')` | Update existing data for transaction debt relation. |
@@ -1063,8 +1095,8 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `validate_accounts_exist(account_deltas: dict)` | Validate data before it is used by accounts exist. |
 | `def` | `calculate_account_deltas(parsed_items: list[dict])` | Calculate derived values for account deltas. |
 | `def` | `apply_account_deltas(account_deltas: dict)` | Apply changes for account deltas. |
-| `def` | `save_transaction(parsed: dict, raw_input: str)` | Save data after validation and confirmation for transaction. |
-| `def` | `save_transactions_batch(parsed_items: list[dict])` | Save data after validation and confirmation for transactions batch. |
+| `def` | `save_transaction(parsed: dict, raw_input: str)` | Save one confirmed transaction row and apply account deltas. |
+| `def` | `save_transactions_batch(parsed_items: list[dict])` | Save confirmed transaction rows as a batch and apply combined deltas. |
 | `def` | `get_transactions_by_month(year: int, month: int)` | Get data needed for transactions by month. |
 | `def` | `get_transactions_by_date(date_str: str)` | Get data needed for transactions by date. |
 | `def` | `get_expense_by_category(year: int, month: int)` | Get data needed for expense by category. |

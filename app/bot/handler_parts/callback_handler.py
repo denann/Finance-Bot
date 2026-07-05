@@ -2746,10 +2746,28 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             debt_result = None
 
             if intent == "add_payable":
-                debt_result = add_debt("payable", person, amount, description)
+                # Preserve debt-only metadata so later void/edit logic knows no
+                # account balance was changed for this debt.
+                debt_result = add_debt(
+                    "payable",
+                    person,
+                    amount,
+                    description,
+                    cashflow_mode=debt_parsed.get("cashflow_mode", ""),
+                    fronting_mode=debt_parsed.get("fronting_mode", ""),
+                )
 
             elif intent == "add_receivable":
-                debt_result = add_debt("receivable", person, amount, description)
+                # Preserve debt-only metadata for receivable facts created
+                # without immediate account movement.
+                debt_result = add_debt(
+                    "receivable",
+                    person,
+                    amount,
+                    description,
+                    cashflow_mode=debt_parsed.get("cashflow_mode", ""),
+                    fronting_mode=debt_parsed.get("fronting_mode", ""),
+                )
 
             elif intent == "add_payment":
                 debt_result = add_payment_by_person(
@@ -2962,9 +2980,27 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 debt_result = None
 
                 if intent == "add_payable":
-                    debt_result = add_debt("payable", person, amount, description)
+                    # Batch debt-only items must keep the same metadata as the
+                    # single-input save path.
+                    debt_result = add_debt(
+                        "payable",
+                        person,
+                        amount,
+                        description,
+                        cashflow_mode=parsed.get("cashflow_mode", ""),
+                        fronting_mode=parsed.get("fronting_mode", ""),
+                    )
                 elif intent == "add_receivable":
-                    debt_result = add_debt("receivable", person, amount, description)
+                    # Batch receivable facts also carry the original no-balance
+                    # marker when the parser set one.
+                    debt_result = add_debt(
+                        "receivable",
+                        person,
+                        amount,
+                        description,
+                        cashflow_mode=parsed.get("cashflow_mode", ""),
+                        fronting_mode=parsed.get("fronting_mode", ""),
+                    )
                 elif intent == "add_payment":
                     target_debt_id = parsed.get("target_debt_id")
                     if target_debt_id:
@@ -3114,10 +3150,26 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 debt_result = None
 
                 if intent == "add_payable":
-                    debt_result = add_debt("payable", person, amount, description)
+                    # Keep metadata aligned in the mixed-input save path.
+                    debt_result = add_debt(
+                        "payable",
+                        person,
+                        amount,
+                        description,
+                        cashflow_mode=parsed.get("cashflow_mode", ""),
+                        fronting_mode=parsed.get("fronting_mode", ""),
+                    )
 
                 elif intent == "add_receivable":
-                    debt_result = add_debt("receivable", person, amount, description)
+                    # Keep metadata aligned in the mixed-input save path.
+                    debt_result = add_debt(
+                        "receivable",
+                        person,
+                        amount,
+                        description,
+                        cashflow_mode=parsed.get("cashflow_mode", ""),
+                        fronting_mode=parsed.get("fronting_mode", ""),
+                    )
 
                 elif intent == "add_payment":
                     target_debt_id = parsed.get("target_debt_id")

@@ -7,6 +7,7 @@ from app.bot.handler_parts.common_imports import *
 from app.bot.handler_parts.transaction_flow import build_pending_expense_confirm_preview, edit_or_continue_keyboard, preview_action_keyboard, preview_action_question
 from app.bot.handler_parts.state_utils import clear_pending_flow_state, describe_active_pending_flow, has_active_pending_flow
 from app.services.resolver_service import resolve_account_name
+from app.services.chart_service import write_monthly_chart_svg
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -27,12 +28,13 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         "🤝 *Utang, piutang, split bill*\n"
         "• `Budi minjem 300k`\n"
+        "• `catat utang ke Budi 200k`\n"
         "• `saya talangin Raka beli nasi kuning 12k`\n"
         "• `saya ditalangin Bagas beli nasi uduk 10k`\n"
         "• `nasi goreng 30k bagi 3 sama Dimas Raka`\n\n"
 
         "📊 *Laporan & koreksi data*\n"
-        "`/saldo`, `/rekening`, `/harian`, `/mingguan`, `/bulanan`, `/last`, `/cari`\n"
+        "`/saldo`, `/rekening`, `/harian`, `/mingguan`, `/bulanan`, `/grafik`, `/last`, `/cari`\n"
         "`/transaksi`, `/edit_txn`, `/delete_txn`, `/debt_settle`, `/download_data`\n\n"
 
         "🕒 *Pending, budget & transaksi rutin*\n"
@@ -401,6 +403,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*B. Utang, Piutang, Split Bill*\n\n"
         "*6. Utang/Piutang Biasa*\n"
         "`hutang ke Budi 500rb` — Anda punya utang ke Budi\n"
+        "`catat utang ke Budi 200k` — catat utang tanpa menambah saldo rekening\n"
         "`minjem uang Maya 220k` — Anda punya utang ke Maya\n"
         "`Budi minjem 300rb` — Budi punya utang ke Anda / piutang Anda\n"
         "`piutang ke Dimas 31100` — Dimas punya utang ke Anda\n"
@@ -463,14 +466,17 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/mingguan 2026-06-01` — ringkasan minggu yang memuat tanggal itu\n"
         "`/mingguan Bills & Utilities` — list transaksi kategori minggu ini\n"
         "`/mingguan rekening Dana` — ringkasan minggu ini khusus rekening Dana\n"
-        "`/bulanan` — ringkasan bulan ini + insight Gemini\n"
-        "`/bulanan 2026-06` — ringkasan bulan tertentu + insight Gemini\n"
+        "`/bulanan` — ringkasan bulan ini + insight Gemini + grafik time series\n"
+        "`/bulanan 2026-06` — ringkasan bulan tertentu + insight Gemini + grafik time series\n"
         "`/bulanan Food & Beverage` — list transaksi kategori bulan ini\n"
         "`/bulanan rekening Cash` — ringkasan bulan ini khusus rekening Cash\n"
         "`/bulanan 2026-06 rekening Cash` — ringkasan rekening bulan tertentu\n"
         "`/bulanan 2026-06 Food & Beverage rekening Cash` — list kategori + rekening bulan tertentu\n"
+        "`/grafik` — grafik time series pengeluaran net bulan ini\n"
+        "`/grafik bar 2026-06` — bar chart pengeluaran net per kategori\n"
+        "`/grafik pie 2026-06` — pie chart kategori berdasarkan pengeluaran net\n"
         "Report utama menampilkan tren vs periode sebelumnya, termasuk tren per kategori. Jika periode sebelumnya belum ada data, bot tampilkan `~`.\n"
-        "Nominal pengeluaran yang punya piutang aktif ditampilkan sebagai `Net (Gross)`, misalnya `Rp16.000 (Rp32.000)`.\n"
+        "Nominal dan ranking pengeluaran memakai basis net; jika ada piutang aktif ditampilkan sebagai `Net (Gross)`, misalnya `Rp16.000 (Rp32.000)`.\n"
         "`/cari kopi` — cari transaksi dengan keyword kopi\n\n"
 
         "*12. Lihat & Koreksi Transaksi*\n"
@@ -717,6 +723,7 @@ async def examples_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `tf gopay 100k dari BRI`\n\n"
         "*Utang, piutang, dan talangan*\n"
         "• `Budi minjem 50k`\n"
+        "• `catat utang ke Budi 200k`\n"
         "• `Budi bayar hutang 100k Cash`\n"
         "• `saya talangin Rina beli makan 40k`\n\n"
         "*Split bill*\n"
@@ -725,7 +732,8 @@ async def examples_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*AI finance insight*\n"
         "• `/ask bulan ini boros di mana?`\n"
         "• `/audit`\n"
-        "• `/coach`\n\n"
+        "• `/coach`\n"
+        "• `/grafik bar 2026-06`\n\n"
         "Catatan: input yang ambigu akan diminta klarifikasi atau ditampilkan sebagai warning preview sebelum disimpan."
     )
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -895,10 +903,8 @@ def append_report_comparison_lines(lines: list[str], report: dict, label: str):
 
 def get_report_expense_display(report: dict) -> str:
     """Get data needed for report expense display."""
-    gross = float((report or {}).get("total_expense", 0) or 0)
-    net = (report or {}).get("total_net_expense_after_receivable")
-    if net is None:
-        net = gross
+    net = float((report or {}).get("total_expense", 0) or 0)
+    gross = float((report or {}).get("total_gross_expense", net) or 0)
     return format_expense_net_gross(float(net or 0), gross)
 
 
@@ -958,15 +964,15 @@ def append_report_category_breakdown_lines(lines: list[str], report: dict, compa
     lines.append("*Pengeluaran per Kategori:*")
     total_expense = float((report or {}).get("total_expense", 0) or 0)
     category_comparison = (report or {}).get("category_comparison") or {}
-    by_category_net = (report or {}).get("by_category_net") or {}
+    by_category_gross = (report or {}).get("by_category_gross") or {}
 
     for cat, amount in sorted(by_category.items(), key=lambda x: x[1], reverse=True):
         pct = (float(amount) / total_expense) * 100 if total_expense else 0
         bar = build_progress_bar(pct)
         trend = format_report_delta(category_comparison.get(cat), positive_when_up=False)
         trend_text = f" | vs {comparison_label}: {trend}" if comparison_label else ""
-        net_amount = by_category_net.get(cat, amount)
-        amount_text = format_expense_net_gross(float(net_amount or 0), float(amount or 0))
+        gross_amount = by_category_gross.get(cat, amount)
+        amount_text = format_expense_net_gross(float(amount or 0), float(gross_amount or 0))
         lines.append(
             f"  • {md_safe(cat)}: *{amount_text}*\n"
             f"    {bar} {pct:.1f}%{trend_text}"
@@ -976,6 +982,132 @@ def append_report_category_breakdown_lines(lines: list[str], report: dict, compa
 def build_top_expense_debt_lines(txn: dict, amount: float) -> list[str]:
     """Build the data structure or message text for top expense debt lines."""
     return []
+
+
+def get_top_expense_transactions(report: dict, limit: int = 3) -> list[dict]:
+    """Return expense transactions sorted by net expense amount.
+
+    Args:
+        report: Report dict from `/harian`, `/mingguan`, or `/bulanan`.
+        limit: Maximum number of transactions to return.
+
+    Returns:
+        Expense rows sorted descending by net amount after receivable shares.
+    """
+    expenses = [
+        t for t in (report or {}).get("transactions", [])
+        if str((t or {}).get("type", "")).strip().lower() == "expense"
+        and get_net_expense_after_receivable(t) > 0
+    ]
+    return sorted(expenses, key=get_net_expense_after_receivable, reverse=True)[:limit]
+
+
+def append_top_expense_lines(lines: list[str], report: dict):
+    """Append Top 3 expense lines using net expense contribution.
+
+    Args:
+        lines: Mutable Markdown line list for the report response.
+        report: Daily, weekly, or monthly report dict with enriched
+            `transactions` and net-based `total_expense`.
+
+    Returns:
+        None. The function mutates `lines` in place only when expenses exist.
+    """
+    top = get_top_expense_transactions(report, limit=3)
+    if not top:
+        return
+
+    lines.append("\n*Top 3 Pengeluaran:*")
+    total_expense = float((report or {}).get("total_expense", 0) or 0)
+
+    for i, txn in enumerate(top, 1):
+        amount = get_net_expense_after_receivable(txn)
+        contrib = (amount / total_expense * 100) if total_expense else 0
+        lines.extend(
+            build_transaction_display_lines(
+                txn,
+                index=i,
+                include_date=True,
+                include_id=True,
+                contribution_pct=contrib,
+            )
+        )
+
+
+def normalize_chart_type(value: str | None) -> str | None:
+    """Normalize user chart type input into a supported chart type.
+
+    Args:
+        value: Raw chart token such as `line`, `bar`, `pie`, or Indonesian
+            aliases such as `kategori`.
+
+    Returns:
+        `timeseries`, `bar`, `pie`, or `None` when the token is not a chart
+        type.
+    """
+    raw = str(value or "").strip().lower()
+    if raw in {"line", "time", "timeseries", "time_series", "series", "tren", "trend"}:
+        return "timeseries"
+    if raw in {"bar", "barchart", "bar_chart", "batang", "pengeluaran"}:
+        return "bar"
+    if raw in {"pie", "piechart", "pie_chart", "kategori", "category"}:
+        return "pie"
+    return None
+
+
+def parse_grafik_args(args: list[str] | None) -> tuple[str, str | None]:
+    """Parse `/grafik` arguments into chart type and month argument.
+
+    Args:
+        args: Telegram command args after `/grafik`.
+
+    Returns:
+        Tuple of `(chart_type, month_arg)`. Chart type defaults to `timeseries`;
+        month argument defaults to `None`, which means current month.
+    """
+    chart_type = "timeseries"
+    month_tokens = []
+    for token in args or []:
+        normalized_type = normalize_chart_type(token)
+        if normalized_type:
+            chart_type = normalized_type
+            continue
+        month_tokens.append(token)
+    month_arg = " ".join(month_tokens).strip() or None
+    return chart_type, month_arg
+
+
+async def send_monthly_chart_document(update: Update, report: dict, chart_type: str = "timeseries"):
+    """Generate and send a monthly SVG chart, then remove its temp file.
+
+    Args:
+        update: Telegram update used to reply with a document.
+        report: Monthly report dict used as chart data source.
+        chart_type: `timeseries`, `bar`, or `pie`.
+
+    Returns:
+        None. The generated file is sent as a Telegram document and then
+        removed from the local temporary directory.
+    """
+    chart_path = write_monthly_chart_svg(report, chart_type)
+    month_label = str((report or {}).get("month") or "bulan").replace("/", "-")
+    filename = f"grafik-{chart_type}-{month_label}.svg"
+    caption = (
+        f"📈 Grafik {chart_type} {month_label}\n"
+        "Basis angka: pengeluaran net setelah piutang split bill/talangan."
+    )
+    try:
+        with open(chart_path, "rb") as file_obj:
+            await update.message.reply_document(
+                document=InputFile(file_obj, filename=filename),
+                caption=caption,
+            )
+    finally:
+        try:
+            os.remove(chart_path)
+        except OSError:
+            pass
+
 
 def is_category_detail_report(report: dict) -> bool:
     """Check whether a condition is true for category detail report."""
@@ -1209,29 +1341,7 @@ async def harian_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     append_report_category_breakdown_lines(lines, report, "hari sebelumnya")
 
-    top = sorted(
-        [t for t in report.get("transactions", []) if t.get("type") == "expense"],
-        key=lambda x: float(x.get("amount", 0) or 0),
-        reverse=True,
-    )[:3]
-
-    if top:
-        lines.append("\n*Top 3 Pengeluaran:*")
-        total_expense = float(report["total_expense"] or 0)
-
-        for i, t in enumerate(top, 1):
-            amount = float(t.get("amount", 0) or 0)
-            contrib = (amount / total_expense * 100) if total_expense else 0
-
-            lines.extend(
-                build_transaction_display_lines(
-                    t,
-                    index=i,
-                    include_date=True,
-                    include_id=True,
-                    contribution_pct=contrib,
-                )
-            )
+    append_top_expense_lines(lines, report)
 
     await reply_long_markdown(update, "\n".join(lines))
 
@@ -1305,31 +1415,50 @@ async def mingguan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     append_report_category_breakdown_lines(lines, report, "minggu sebelumnya")
 
-    top = sorted(
-        [t for t in report.get("transactions", []) if t.get("type") == "expense"],
-        key=lambda x: float(x.get("amount", 0) or 0),
-        reverse=True,
-    )[:3]
-
-    if top:
-        lines.append("\n*Top 3 Pengeluaran:*")
-        total_expense = float(report["total_expense"] or 0)
-
-        for i, t in enumerate(top, 1):
-            amount = float(t.get("amount", 0) or 0)
-            contrib = (amount / total_expense * 100) if total_expense else 0
-
-            lines.extend(
-                build_transaction_display_lines(
-                    t,
-                    index=i,
-                    include_date=True,
-                    include_id=True,
-                    contribution_pct=contrib,
-                )
-            )
+    append_top_expense_lines(lines, report)
 
     await reply_long_markdown(update, "\n".join(lines))
+
+
+async def grafik_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle `/grafik` monthly chart requests.
+
+    Accepted input examples:
+        `/grafik`
+        `/grafik 2026-06`
+        `/grafik bar 2026-06`
+        `/grafik pie 2026-06`
+
+    The command never writes to Google Sheets. It only reads the monthly report
+    and sends an SVG chart document.
+    """
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    chart_type, month_arg = parse_grafik_args(context.args)
+
+    try:
+        year, month_num = parse_report_month_arg(month_arg)
+        report = get_monthly_report(year, month_num)
+    except ValueError as e:
+        await update.message.reply_text(
+            f"❌ {str(e)}\n\n"
+            "Contoh:\n"
+            "`/grafik`\n"
+            "`/grafik 2026-06`\n"
+            "`/grafik line 2026-06`\n"
+            "`/grafik bar 2026-06`\n"
+            "`/grafik pie 2026-06`",
+            parse_mode="Markdown",
+        )
+        return
+
+    if report.get("count", 0) == 0:
+        await update.message.reply_text(f"📭 Belum ada transaksi untuk {report.get('month', '-')}.")
+        return
+
+    await send_monthly_chart_document(update, report, chart_type)
 
 
 async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1393,29 +1522,7 @@ async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     append_report_category_breakdown_lines(lines, report, "bulan lalu")
 
-    top = sorted(
-        [t for t in report.get("transactions", []) if t.get("type") == "expense"],
-        key=lambda x: float(x.get("amount", 0) or 0),
-        reverse=True,
-    )[:3]
-
-    if top:
-        lines.append("\n*Top 3 Pengeluaran:*")
-        total_expense = float(report["total_expense"] or 0)
-
-        for i, t in enumerate(top, 1):
-            amount = float(t.get("amount", 0) or 0)
-            contrib = (amount / total_expense * 100) if total_expense else 0
-
-            lines.extend(
-                build_transaction_display_lines(
-                    t,
-                    index=i,
-                    include_date=True,
-                    include_id=True,
-                    contribution_pct=contrib,
-                )
-            )
+    append_top_expense_lines(lines, report)
 
     budget_summary = get_budget_summary(month_name)
     if budget_summary:
@@ -1442,6 +1549,28 @@ async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(
             f"⚠️ Ringkasan bulanan berhasil, tapi insight Gemini gagal dibuat: {str(e)}"
+        )
+
+
+    await send_bulanan_timeseries_chart(update, report)
+
+
+async def send_bulanan_timeseries_chart(update: Update, report: dict):
+    """Send the third `/bulanan` output: monthly net expense time series.
+
+    Args:
+        update: Telegram update used to send the chart document or warning.
+        report: Monthly report dict that already powers the text summary.
+
+    Returns:
+        None. Failures are reported to the user without blocking the already
+        delivered monthly summary and Gemini insight.
+    """
+    try:
+        await send_monthly_chart_document(update, report, "timeseries")
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ Ringkasan dan insight sudah terkirim, tapi grafik time series gagal dibuat: {str(e)}"
         )
 
 
