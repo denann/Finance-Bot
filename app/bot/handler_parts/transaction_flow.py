@@ -2406,7 +2406,6 @@ def parse_preview_direct_field_update(field: str, value: str) -> dict:
 def build_preview_edit_help(scope: str = "single") -> str:
     """Build the data structure or message text for preview edit help."""
     if scope == "pending_expense":
-        fields = "nominal, kategori, subjek, deskripsi, rekening, tanggal, bulan"
         # Open a multi-line structure for the values below.
         examples = (
             "`nominal: 285k, kategori: Bills & Utilities, rekening: BRI`\n"
@@ -2414,7 +2413,6 @@ def build_preview_edit_help(scope: str = "single") -> str:
         # Close the structure that was opened above.
         )
     elif scope == "asset":
-        fields = "nama, nominal, kategori, deskripsi, jumlah, unit, harga_satuan, harga_beli, tanggal_beli"
         # Open a multi-line structure for the values below.
         examples = (
             "`nama: Laptop kerja, nominal: 8jt, kategori: Electronics`\n"
@@ -2422,7 +2420,6 @@ def build_preview_edit_help(scope: str = "single") -> str:
         # Close the structure that was opened above.
         )
     elif scope == "debt":
-        fields = "nominal, orang, deskripsi, rekening, tanggal"
         # Open a multi-line structure for the values below.
         examples = (
             "`nominal: 50k, orang: Budi, rekening: DANA`\n"
@@ -2431,7 +2428,6 @@ def build_preview_edit_help(scope: str = "single") -> str:
         )
     # Handle the fallback path after earlier conditions are skipped.
     else:
-        fields = "nominal, kategori, deskripsi, subjek, tipe, tanggal, rekening, catatan"
         # Open a multi-line structure for the values below.
         examples = (
             "`nominal: 20k, kategori: Other Expense, rekening: DANA`\n"
@@ -2439,19 +2435,16 @@ def build_preview_edit_help(scope: str = "single") -> str:
         # Close the structure that was opened above.
         )
 
-    item_hint = "" if scope == "single" else "\nKamu sedang mengedit item yang dipilih."
-    # Return ( to the caller.
+    item_hint = "" if scope == "single" else "\nItem yang dipilih akan diedit."
+    # Show concise edit guidance before the user sends manual field changes.
     return (
-        "✏️ *Mau edit apa?*" + item_hint + "\n\n"
-        "Kamu bisa pilih tombol field di bawah, atau langsung ketik manual.\n\n"
-        f"Field yang umum diedit: {md_safe(fields)}.\n\n"
-        "Format manual bisa satu field:\n"
+        "✏️ *Edit transaksi*" + item_hint + "\n\n"
+        "Pilih field di tombol bawah, atau ketik langsung:\n\n"
         "`nominal 20k`\n"
         "`kategori Other Expense`\n"
         "`rekening DANA`\n\n"
-        "Bisa juga multi edit sekaligus pakai koma, titik koma, atau baris baru:\n"
-        f"{examples}\n\n"
-        "Format `field=value` juga tetap bisa, contoh `category=Food & Beverage`."
+        "Bisa edit beberapa field sekaligus:\n"
+        f"{examples}"
     # Close the structure that was opened above.
     )
 
