@@ -1774,18 +1774,15 @@ def build_preview_edit_help(scope: str = "single") -> str:
             "`deskripsi: Mie Goreng, tanggal: 2026-07-02`"
         )
 
-    item_hint = "" if scope == "single" else "\nKamu sedang mengedit item yang dipilih."
+    item_hint = "" if scope == "single" else "\nItem yang dipilih akan diedit."
     return (
-        "✏️ *Mau edit apa?*" + item_hint + "\n\n"
-        "Kamu bisa pilih tombol field di bawah, atau langsung ketik manual.\n\n"
-        f"Field yang umum diedit: {md_safe(fields)}.\n\n"
-        "Format manual bisa satu field:\n"
+        "✏️ *Edit transaksi*" + item_hint + "\n\n"
+        "Pilih field di tombol bawah, atau ketik langsung:\n\n"
         "`nominal 20k`\n"
         "`kategori Other Expense`\n"
         "`rekening DANA`\n\n"
-        "Bisa juga multi edit sekaligus pakai koma, titik koma, atau baris baru:\n"
-        f"{examples}\n\n"
-        "Format `field=value` juga tetap bisa, contoh `category=Food & Beverage`."
+        "Bisa edit beberapa field sekaligus:\n"
+        f"{examples}"
     )
 
 
