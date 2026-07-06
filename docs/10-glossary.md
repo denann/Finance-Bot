@@ -38,7 +38,7 @@ A payable debt recorded without changing an account balance. Example: `catat uta
 
 ## Monthly chart
 
-An SVG document generated from monthly report data. The line chart shows daily net expense, the bar chart ranks net expense by category, and the pie chart shows category share from total net expense.
+A PNG document generated from monthly report data. The line chart shows daily net expense, the bar chart ranks net expense by category, and the pie chart shows category share from total net expense.
 
 ## Polling mode
 

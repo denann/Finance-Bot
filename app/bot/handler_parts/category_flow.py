@@ -9,7 +9,7 @@ actual Google Sheets write happens in `handle_category_confirm_callback`.
 from __future__ import annotations
 
 from app.bot.handler_parts.common_imports import *
-from app.bot.handler_parts.state_utils import clear_pending_flow_state
+from app.bot.handler_parts.state_utils import BULK_EDIT_CATEGORY_DECISION_KEY, clear_pending_flow_state
 from app.nlp.gemini_category_aliases import generate_category_alias_candidates
 from app.services.resolver_service import (
     create_category,
@@ -51,15 +51,17 @@ def _category_flow_keyboard(mode: str) -> InlineKeyboardMarkup:
         mode: Flow mode used in callback data. Must be `add` or `edit`.
 
     Returns:
-        An inline keyboard with one row and two columns: `Expense` and
-        `Income`. The callback format is `category_type:{mode}:{type}`.
+        An inline keyboard with one row and two columns for `Expense` and
+        `Income`, plus one cancel row. The callback format for type buttons is
+        `category_type:{mode}:{type}`.
     """
     # Keep the requested layout: one row, two columns.
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("Expense", callback_data=f"category_type:{mode}:expense"),
             InlineKeyboardButton("Income", callback_data=f"category_type:{mode}:income"),
-        ]
+        ],
+        [InlineKeyboardButton("❌ Batal", callback_data=f"cancel:category_{mode}")],
     ])
 
 
@@ -112,6 +114,71 @@ def _format_category_rows_for_help(limit: int = 18) -> str:
             rows.append(f"- {emoji} `{md_code_text(name)}` ({md_safe(txn_type)})")
     # Show an empty-state message if the sheet has no readable category names.
     return "\n".join(rows) if rows else "Belum ada kategori di sheet `categories`."
+
+
+def _format_alias_preview(aliases: str, *, max_items: int = 8, max_len: int = 120) -> str:
+    """Format aliases into a short readable list for `/kategori`.
+
+    Args:
+        aliases: Raw comma-separated value from the `categories.aliases` column.
+        max_items: Maximum alias count shown for one category row.
+        max_len: Maximum displayed character length after joining aliases.
+
+    Returns:
+        A comma-separated alias preview or `-` when aliases are empty.
+    """
+    # Split the existing sheet format without changing the stored value.
+    items = [part.strip() for part in str(aliases or "").split(",") if part.strip()]
+    if not items:
+        return "-"
+    preview = ", ".join(items[:max_items])
+    if len(items) > max_items:
+        preview += ", ..."
+    if len(preview) > max_len:
+        preview = preview[: max_len - 3].rstrip(", ") + "..."
+    return preview
+
+
+def _build_category_list_text(records: list[dict]) -> str:
+    """Build the `/kategori` category listing message.
+
+    Args:
+        records: Category records from `get_category_records_safe()`. Expected
+            keys are `category_name`, `type`, `emoji`, and `aliases`.
+
+    Returns:
+        Markdown text grouped by expense and income. Each row shows symbol,
+        category name, and a short aliases preview.
+    """
+    grouped = {"expense": [], "income": [], "other": []}
+    for record in records or []:
+        # Ignore blank names because they cannot be selected or edited safely.
+        name = str((record or {}).get("category_name") or "").strip()
+        if not name:
+            continue
+        txn_type = str((record or {}).get("type") or "other").strip().lower()
+        group_key = txn_type if txn_type in {"expense", "income"} else "other"
+        grouped[group_key].append(record)
+
+    if not any(grouped.values()):
+        return "ðŸ“ *Daftar Kategori*\n\nBelum ada kategori yang bisa dibaca dari sheet `categories`."
+
+    lines = [
+        "ðŸ“ *Daftar Kategori*",
+        "Basis: sheet `categories`. Aliases ditampilkan ringkas untuk bantu cek mapping.",
+    ]
+    for group_key, title in [("expense", "Expense"), ("income", "Income"), ("other", "Lainnya")]:
+        rows = grouped.get(group_key) or []
+        if not rows:
+            continue
+        lines.append(f"\n*{title}*")
+        for record in sorted(rows, key=lambda item: str(item.get("category_name") or "").lower()):
+            name = str(record.get("category_name") or "").strip()
+            symbol = str(record.get("emoji") or "-").strip() or "-"
+            aliases = _format_alias_preview(str(record.get("aliases") or ""))
+            lines.append(f"- {md_safe(symbol)} *{md_safe(name)}*")
+            lines.append(f"  Aliases: `{md_code_text(aliases)}`")
+    return "\n".join(lines)
 
 
 def _build_type_prompt(category_name: str, *, current_type: str = "") -> str:
@@ -390,6 +457,33 @@ async def add_kategori_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         "Kategorinya apa?\n\n"
         "Contoh: `Belanja Online`, `Freelance`, `Kucing`, `Investasi`.",
         parse_mode="Markdown",
+        reply_markup=cancel_keyboard(),
+    )
+
+
+async def kategori_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the current category list from the categories sheet.
+
+    Args:
+        update: Telegram command update for `/kategori`.
+        context: Telegram context. This handler does not require command args
+            and does not mutate `context.user_data`.
+
+    Returns:
+        None. The function sends a grouped Markdown list of existing categories,
+        including symbol and a short aliases preview.
+    """
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    # This is read-only; it never writes to Google Sheets.
+    records = get_category_records_safe()
+    await reply_message_safely(
+        update.message,
+        _build_category_list_text(records),
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard(),
     )
 
 
@@ -434,6 +528,7 @@ async def edit_kategori_handler(update: Update, context: ContextTypes.DEFAULT_TY
         "Ketik nama kategori persis seperti di sheet `categories`.\n\n"
         f"{_format_category_rows_for_help()}",
         parse_mode="Markdown",
+        reply_markup=cancel_keyboard(),
     )
 
 
@@ -464,7 +559,7 @@ async def _accept_category_name(
     clean_name = _clean_category_name(category_name)
     # Empty names cannot be added or resolved for editing.
     if not clean_name:
-        await update.message.reply_text("Nama kategori belum kebaca. Coba ketik lagi.")
+        await update.message.reply_text("Nama kategori belum kebaca. Coba ketik lagi.", reply_markup=cancel_keyboard())
         return
 
     if mode == "edit":
@@ -480,8 +575,9 @@ async def _accept_category_name(
             await update.message.reply_text(
                 f"Kategori `{md_code_text(clean_name)}` tidak ditemukan di sheet `categories`."
                 f"{suggestion_text}\n\n"
-                "Ketik nama kategori lain, atau `/cancel` untuk batal.",
+                "Ketik nama kategori lain, atau tekan *Batal* untuk membatalkan.",
                 parse_mode="Markdown",
+                reply_markup=cancel_keyboard(),
             )
             return
 
@@ -565,6 +661,7 @@ async def handle_category_type_callback(query, context: ContextTypes.DEFAULT_TYP
         query,
         _build_symbol_prompt(state, edit_mode=(mode == "edit")),
         parse_mode="Markdown",
+        reply_markup=cancel_keyboard(),
     )
     return True
 
@@ -606,11 +703,11 @@ async def handle_pending_category_flow(update: Update, context: ContextTypes.DEF
 
         # Empty symbol is rejected because user explicitly wanted to choose it.
         if not clean_symbol:
-            await update.message.reply_text("Symbol belum kebaca. Ketik symbol untuk kategori ini.")
+            await update.message.reply_text("Symbol belum kebaca. Ketik symbol untuk kategori ini.", reply_markup=cancel_keyboard())
             return True
         # Keep symbol short so the categories sheet stays readable.
         if len(clean_symbol) > 20:
-            await update.message.reply_text("Symbol terlalu panjang. Pakai emoji atau label pendek saja.")
+            await update.message.reply_text("Symbol terlalu panjang. Pakai emoji atau label pendek saja.", reply_markup=cancel_keyboard())
             return True
 
         # Store symbol in state; resolver later writes it to the emoji column.
@@ -628,6 +725,7 @@ async def handle_pending_category_flow(update: Update, context: ContextTypes.DEF
         await update.message.reply_text(
             _build_alias_prompt(state),
             parse_mode="Markdown",
+            reply_markup=cancel_keyboard(),
         )
         return True
 
@@ -641,11 +739,12 @@ async def handle_pending_category_flow(update: Update, context: ContextTypes.DEF
         await update.message.reply_text(
             "Preview kategori sudah siap. Klik *Simpan* untuk menyimpan ke sheet, atau *Batal* untuk membatalkan.",
             parse_mode="Markdown",
+            reply_markup=confirm_keyboard(_category_confirm_target(mode)),
         )
         return True
 
     # Unknown stage is blocked so it cannot fall through into transaction parsing.
-    await update.message.reply_text("State kategori tidak dikenali. Jalankan `/cancel`, lalu coba lagi.", parse_mode="Markdown")
+    await update.message.reply_text("State kategori tidak dikenali. Tekan *Batal*, lalu coba lagi.", parse_mode="Markdown", reply_markup=cancel_keyboard())
     return True
 
 
@@ -722,6 +821,7 @@ async def _prepare_edited_category_preview(update: Update, context: ContextTypes
         await update.message.reply_text(
             "Aliases belum valid. Ketik daftar dipisah koma, `auto`, atau `sama`.",
             parse_mode="Markdown",
+            reply_markup=cancel_keyboard(),
         )
         return
 
@@ -793,16 +893,41 @@ async def handle_category_confirm_callback(query, context: ContextTypes.DEFAULT_
 
         # Existing or similar categories are reported without appending a duplicate.
         if not result.get("created"):
+            detected_category = str(result.get("category_name") or category_name).strip()
+            bulk_state = context.user_data.get(BULK_EDIT_CATEGORY_DECISION_KEY) or {}
+            duplicate_markup = None
+            if bulk_state.get("paused_for_category_add") is not None:
+                # Let paused bulk edit continue by using the detected existing category.
+                current_index = int(bulk_state.get("current_index") or 0)
+                decisions = bulk_state.get("decisions") or []
+                if 0 <= current_index < len(decisions):
+                    decisions[current_index]["suggested_category"] = detected_category
+                    bulk_state["decisions"] = decisions
+                    context.user_data[BULK_EDIT_CATEGORY_DECISION_KEY] = bulk_state
+                label = detected_category if len(detected_category) <= 34 else detected_category[:31].rstrip() + "..."
+                duplicate_markup = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f"Ikuti {label}", callback_data="bulk_edit_category_choice:use")],
+                    [InlineKeyboardButton("❌ Batal", callback_data="cancel:bulk_edit_category")],
+                ])
             await safe_edit_message(
                 query,
                 "Kategori tidak ditambahkan karena sudah ada atau mirip kategori existing.\n\n"
-                f"Kategori terdeteksi: *{md_safe(result.get('category_name') or category_name)}*",
+                f"Kategori terdeteksi: *{md_safe(detected_category)}*",
                 parse_mode="Markdown",
+                reply_markup=duplicate_markup,
             )
             return True
 
         # Fallback source gets an explicit note so aliases origin is transparent.
         source_note = "" if source == "Gemini" else "\n\nCatatan: Gemini gagal, jadi aliases fallback minimal dipakai."
+        bulk_state = context.user_data.get(BULK_EDIT_CATEGORY_DECISION_KEY) or {}
+        resume_markup = None
+        if bulk_state.get("paused_for_category_add") is not None:
+            # Resume is explicit so category write and transaction bulk preview stay separated.
+            resume_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("Lanjut bulk edit", callback_data="bulk_edit_category_choice:resume")],
+                [InlineKeyboardButton("❌ Batal", callback_data="cancel:bulk_edit_category")],
+            ])
         await safe_edit_message(
             query,
             "Kategori baru berhasil ditambahkan.\n\n"
@@ -813,6 +938,7 @@ async def handle_category_confirm_callback(query, context: ContextTypes.DEFAULT_
             f"`{md_code_text(_format_aliases_for_message(aliases))}`"
             f"{source_note}",
             parse_mode="Markdown",
+            reply_markup=resume_markup,
         )
         return True
 

@@ -51,6 +51,7 @@ from app.bot.handlers import (
     hutang_handler,
     image_handler,
     insight_handler,
+    kategori_handler,
     last_handler,
     message_handler,
     mingguan_handler,
@@ -155,6 +156,9 @@ def register_handlers(telegram_app: Application) -> Application:
     add_message(filters.Regex(r"(?i)^budget\b"), set_budget_handler)
 
     # Category management commands route add/edit kategori into the guided wizard.
+    add_command("kategori", kategori_handler)
+    add_command("categories", kategori_handler)
+    add_command("list_kategori", kategori_handler)
     add_command("add_kategori", add_kategori_handler)
     add_command("tambah_kategori", add_kategori_handler)
     add_command("add_category", add_kategori_handler)

@@ -7,7 +7,7 @@ from app.bot.handler_parts.common_imports import *
 from app.bot.handler_parts.transaction_flow import build_pending_expense_confirm_preview, edit_or_continue_keyboard, preview_action_keyboard, preview_action_question
 from app.bot.handler_parts.state_utils import clear_pending_flow_state, describe_active_pending_flow, has_active_pending_flow
 from app.services.resolver_service import resolve_account_name
-from app.services.chart_service import write_monthly_chart_svg
+from app.services.chart_service import write_monthly_chart_png
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -38,7 +38,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/transaksi`, `/edit_txn`, `/delete_txn`, `/debt_settle`, `/download_data`\n\n"
 
         "🕒 *Pending, budget & transaksi rutin*\n"
-        "`/pending`, `/pending_add`, `/budget`, `/budget_history`, `/add_kategori`, `/edit_kategori`, `/recurring`\n"
+        "`/pending`, `/pending_add`, `/budget`, `/budget_history`, `/kategori`, `/add_kategori`, `/edit_kategori`, `/recurring`\n"
         "Pending tidak mengubah saldo sampai ditandai `/pending_paid`. Recurring akan muncul sebagai reminder dengan tombol `Sudah bayar`.\n\n"
 
         "💼 *Net worth*\n"
@@ -219,7 +219,7 @@ async def quickstart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "`/last`\n"
         "`/hutang`\n"
         "`/bulanan`\n\n"
-        "Kalau flow dasar ini sudah aman, baru lanjut pakai fitur lain seperti `/budget`, `/add_kategori`, `/pending`, `/recurring`, `/assets`, `/ask`, dan `/audit`."
+        "Kalau flow dasar ini sudah aman, baru lanjut pakai fitur lain seperti `/budget`, `/kategori`, `/add_kategori`, `/pending`, `/recurring`, `/assets`, `/ask`, dan `/audit`."
     )
 
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -362,7 +362,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/start` — ringkasan fitur utama bot\n"
         "`/quickstart` — panduan langkah awal untuk user baru\n"
         "`/help` — panduan lengkap ini\n"
-        "`/cancel` — batalkan wizard/preview yang sedang aktif\n\n"
+        "Gunakan tombol *Batal* untuk membatalkan wizard/preview yang sedang aktif.\n\n"
 
         "*A. Cara Input Utama*\n"
         "Bot bisa menerima 1 transaksi, banyak transaksi sekaligus, foto struk/QRIS, atau command.\n\n"
@@ -531,6 +531,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Category help text documents the add/edit wizard and alias options.
         "*15. Kategori*\n"
+        "`/kategori` — lihat daftar kategori, tipe, symbol, dan aliases\n"
         "`/add_kategori` — tambah kategori baru dengan wizard\n"
         "`/add_kategori Belanja Online` — langsung isi nama kategori, lalu pilih tipe\n"
         "`/edit_kategori` — edit tipe, symbol, dan aliases kategori existing\n"
@@ -1078,7 +1079,7 @@ def parse_grafik_args(args: list[str] | None) -> tuple[str, str | None]:
 
 
 async def send_monthly_chart_document(update: Update, report: dict, chart_type: str = "timeseries"):
-    """Generate and send a monthly SVG chart, then remove its temp file.
+    """Generate and send a monthly PNG chart, then remove its temp file.
 
     Args:
         update: Telegram update used to reply with a document.
@@ -1089,9 +1090,9 @@ async def send_monthly_chart_document(update: Update, report: dict, chart_type: 
         None. The generated file is sent as a Telegram document and then
         removed from the local temporary directory.
     """
-    chart_path = write_monthly_chart_svg(report, chart_type)
+    chart_path = write_monthly_chart_png(report, chart_type)
     month_label = str((report or {}).get("month") or "bulan").replace("/", "-")
-    filename = f"grafik-{chart_type}-{month_label}.svg"
+    filename = f"grafik-{chart_type}-{month_label}.png"
     caption = (
         f"📈 Grafik {chart_type} {month_label}\n"
         "Basis angka: pengeluaran net setelah piutang split bill/talangan."
@@ -1430,7 +1431,7 @@ async def grafik_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         `/grafik pie 2026-06`
 
     The command never writes to Google Sheets. It only reads the monthly report
-    and sends an SVG chart document.
+    and sends a PNG chart document.
     """
     if not is_authorized(update):
         await reject_unauthorized(update)

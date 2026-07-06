@@ -116,7 +116,7 @@ KNOWN_COMMANDS = {
         "destructive": False,
     },
     "batal": {
-        "description": "Alias /cancel untuk membatalkan flow aktif.",
+        "description": "Batalkan flow aktif melalui command fallback.",
         "destructive": False,
     },
     "examples": {
@@ -173,6 +173,10 @@ KNOWN_COMMANDS = {
     },
     "budget_history": {
         "description": "Lihat daftar bulan yang punya data budget.",
+        "destructive": False,
+    },
+    "kategori": {
+        "description": "Lihat daftar kategori, symbol, tipe, dan aliases.",
         "destructive": False,
     },
     # Category add changes the categories sheet after its own preview confirm.
@@ -349,6 +353,11 @@ COMMAND_ALIASES = {
     "histori_budget": "budget_history",
 
     # Category management section
+    # Category list is read-only and helps users inspect existing aliases.
+    "kategori": "kategori",
+    "categories": "kategori",
+    "list_kategori": "kategori",
+    "kategori_list": "kategori",
     # Natural Indonesian alias for adding a category.
     "add_kategori": "add_kategori",
     "tambah_kategori": "add_kategori",
@@ -681,15 +690,15 @@ def build_command_suggestion_text(resolved: dict, original_text: str) -> str:
             f"❓ Command `/{clean}` belum bisa saya pastikan.\n\n"
             "Command tersebut mirip dengan beberapa command lain, jadi saya tidak mau menebak.\n\n"
             "Command yang tersedia:\n"
-            "`/saldo`, `/set_saldo`, `/quickstart`, `/cancel`, `/harian`, `/mingguan`, `/bulanan`, `/grafik`, `/budget`, `/set_budget`, `/budget_history`, "
-            "`/add_kategori`, `/edit_kategori`, `/hutang`, `/pending`, `/recurring`, `/asset_add`, `/assets`, `/cari`, `/last`, `/delete_txn`, `/edit_txn`, `/help`"
+            "`/saldo`, `/set_saldo`, `/quickstart`, `/harian`, `/mingguan`, `/bulanan`, `/grafik`, `/budget`, `/set_budget`, `/budget_history`, "
+            "`/kategori`, `/add_kategori`, `/edit_kategori`, `/hutang`, `/pending`, `/recurring`, `/asset_add`, `/assets`, `/cari`, `/last`, `/delete_txn`, `/edit_txn`, `/help`"
         )
 
     return (
         f"❓ Command `/{clean}` tidak tersedia.\n\n"
         "Command yang tersedia:\n"
         "`/saldo`, `/set_saldo`, `/quickstart`, `/harian`, `/mingguan`, `/bulanan`, `/grafik`, `/budget`, `/budget_history`, "
-        "`/add_kategori`, `/edit_kategori`, `/hutang`, `/pending`, `/cari`, `/last`, `/delete_txn`, `/edit_txn`, `/help`\n\n"
+        "`/kategori`, `/add_kategori`, `/edit_kategori`, `/hutang`, `/pending`, `/cari`, `/last`, `/delete_txn`, `/edit_txn`, `/help`\n\n"
         "Ketik `/help` untuk panduan lengkap."
     )
 

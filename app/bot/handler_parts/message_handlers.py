@@ -6,6 +6,7 @@
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
 from app.bot.handler_parts.common_imports import _safe_float_for_display
+from app.bot.handler_parts.state_utils import BULK_EDIT_CATEGORY_DECISION_KEY, EDIT_CATEGORY_CHOICE_KEY
 
 from app.bot.handler_parts.networth_assets import (
     build_asset_confirm_preview,
@@ -103,6 +104,7 @@ from app.nlp.parse_safety import (
     WARNING_PREVIEW,
     assess_parse_safety,
 )
+from app.services.resolver_service import resolve_category_name
 
 async def send_parse_clarification(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: str, parsed: dict | None, assessment: dict) -> None:
     """Ask the user to clarify a risky or ambiguous parse result.
@@ -550,6 +552,18 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"❌ {preview.get('message')}",
                 parse_mode="Markdown",
             )
+            return True
+
+        if await maybe_prompt_edit_category_choice(
+            update,
+            context,
+            updates=updates,
+            preview=preview,
+            row_index=row_index,
+            txn_id=txn_id,
+            split_raw="",
+            has_split_bill=False,
+        ):
             return True
 
         context.user_data["pending_edit_txn"] = {
@@ -2290,6 +2304,188 @@ def build_edit_preview_text(preview: dict) -> str:
     return "\n".join(lines)
 
 
+def build_edit_category_choice_keyboard(suggested_category: str) -> InlineKeyboardMarkup:
+    """Build the category match decision keyboard for `/edit_txn`.
+
+    Args:
+        suggested_category: Existing category name suggested by the resolver.
+
+    Returns:
+        Inline keyboard with two decision buttons: use existing category or
+        start a new category flow, plus a cancel button.
+    """
+    # Telegram button text has a practical length limit, so long categories are trimmed.
+    clean_suggestion = str(suggested_category or "-").strip()
+    label = clean_suggestion if len(clean_suggestion) <= 34 else clean_suggestion[:31].rstrip() + "..."
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"✅ Ikuti {label}", callback_data="edit_category_choice:use")],
+        [InlineKeyboardButton("➕ Tambah kategori baru", callback_data="edit_category_choice:create")],
+        [InlineKeyboardButton("❌ Batal", callback_data="cancel:edit_txn")],
+    ])
+
+
+def build_bulk_edit_category_choice_keyboard(suggested_category: str) -> InlineKeyboardMarkup:
+    """Build the category decision keyboard for bulk `/edit_txn`.
+
+    Args:
+        suggested_category: Existing category name suggested by the resolver for
+            the current bulk-edit line.
+
+    Returns:
+        Inline keyboard with `Ikuti`, `Tambah kategori baru`, and `Batal`.
+        Callback data is intentionally scoped with `bulk_edit_category_choice`
+        so it cannot be confused with the single edit category callback.
+    """
+    # Keep long category names readable inside Telegram button limits.
+    clean_suggestion = str(suggested_category or "-").strip()
+    label = clean_suggestion if len(clean_suggestion) <= 34 else clean_suggestion[:31].rstrip() + "..."
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"✅ Ikuti {label}", callback_data="bulk_edit_category_choice:use")],
+        [InlineKeyboardButton("➕ Tambah kategori baru", callback_data="bulk_edit_category_choice:create")],
+        [InlineKeyboardButton("❌ Batal", callback_data="cancel:bulk_edit_category")],
+    ])
+
+
+def build_bulk_edit_category_choice_text(decision: dict, current_number: int, total: int) -> str:
+    """Build the per-line category decision prompt for bulk edit.
+
+    Args:
+        decision: Queue item with `line_no`, `raw_category`, and
+            `suggested_category`.
+        current_number: 1-based position of the active decision in the queue.
+        total: Total number of category decisions in the queue.
+
+    Returns:
+        Markdown prompt matching the requested bulk category clarification
+        wording.
+    """
+    line_no = int((decision or {}).get("line_no") or current_number)
+    raw_category = str((decision or {}).get("raw_category") or "-").strip()
+    suggested = str((decision or {}).get("suggested_category") or "-").strip()
+    return (
+        f"Baris {line_no}: input kategori `{md_code_text(raw_category)}` cocok ke "
+        f"`{md_code_text(suggested)}`. Mau ikuti kategori existing atau tambah kategori baru?\n\n"
+        f"Decision {current_number}/{total}"
+    )
+
+
+def get_edit_category_choice_prompt(updates: dict, preview: dict) -> dict | None:
+    """Detect whether `/edit_txn category=...` needs category confirmation.
+
+    Args:
+        updates: Parsed edit updates from `parse_edit_updates`.
+        preview: Preview dict from `preview_edit_transaction_by_ref`. The old
+            and new transaction type are used to restrict category matching.
+
+    Returns:
+        A prompt payload containing raw category, suggested category, resolver
+        status, and transaction type. Returns `None` when the category is exact
+        or no category field is being edited.
+    """
+    if "category" not in (updates or {}):
+        return None
+
+    raw_category = str((updates or {}).get("category") or "").strip()
+    if not raw_category:
+        return None
+
+    new_txn = (preview or {}).get("new_txn") or {}
+    old_txn = (preview or {}).get("old_txn") or {}
+    txn_type = str((updates or {}).get("type") or new_txn.get("type") or old_txn.get("type") or "").strip().lower()
+    if txn_type not in {"expense", "income"}:
+        return None
+
+    resolved = resolve_category_name(raw_category, txn_type, allow_create=False)
+    status = str(resolved.get("status") or "").strip().lower()
+    suggested = str(resolved.get("category_name") or "").strip()
+    if not suggested:
+        return None
+
+    # Ask only when the resolver maps the user's text to a different existing category.
+    if status in {"alias", "similar", "exact"} and raw_category.strip().lower() != suggested.strip().lower():
+        return {
+            "raw_category": raw_category,
+            "suggested_category": suggested,
+            "status": status,
+            "transaction_type": txn_type,
+        }
+    return None
+
+
+def build_edit_category_choice_text(choice: dict) -> str:
+    """Build the confirmation text for a matched edit category.
+
+    Args:
+        choice: Payload from `get_edit_category_choice_prompt`.
+
+    Returns:
+        Markdown text asking the user whether to use the existing category or
+        add the typed category as a new one.
+    """
+    raw_category = str((choice or {}).get("raw_category") or "-").strip()
+    suggested = str((choice or {}).get("suggested_category") or "-").strip()
+    status = str((choice or {}).get("status") or "similar").strip()
+    reason = "cocok dari aliases" if status == "alias" else "mirip dengan kategori existing"
+    return (
+        f"Input kategori kamu: `{md_code_text(raw_category)}`\n"
+        f"Kategori yang sudah ada: *{md_safe(suggested)}* ({md_safe(reason)}).\n\n"
+        f"Outputnya udah ada nih *{md_safe(suggested)}*, mau ngikutin atau nambah kategori?"
+    )
+
+
+async def maybe_prompt_edit_category_choice(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    updates: dict,
+    preview: dict,
+    row_index: int | None,
+    txn_id: str | None,
+    split_raw: str,
+    has_split_bill: bool,
+) -> bool:
+    """Ask the user to confirm a matched category before edit preview.
+
+    Args:
+        update: Telegram update used to send the decision prompt.
+        context: Telegram context where the pending decision is stored.
+        updates: Parsed edit updates. The `category` value is replaced only
+            after the user presses a button.
+        preview: Successful edit preview used to infer transaction type.
+        row_index: Target sheet row index when the transaction was resolved from
+            `/last` numbering.
+        txn_id: Target transaction ID when row index is not available.
+        split_raw: Raw edit args used later for split bill parsing.
+        has_split_bill: Whether the same edit command also contains split bill
+            syntax and may need a split status decision after category choice.
+
+    Returns:
+        True when a category decision prompt was sent and normal edit preview
+        should stop for now. False when no prompt is needed.
+    """
+    choice = get_edit_category_choice_prompt(updates, preview)
+    if not choice:
+        return False
+
+    context.user_data[EDIT_CATEGORY_CHOICE_KEY] = {
+        "row_index": row_index,
+        "txn_id": txn_id,
+        "updates": dict(updates or {}),
+        "split_raw": split_raw,
+        "has_split_bill": bool(has_split_bill),
+        "raw_category": choice.get("raw_category"),
+        "suggested_category": choice.get("suggested_category"),
+        "transaction_type": choice.get("transaction_type"),
+        "status": choice.get("status"),
+    }
+    await update.message.reply_text(
+        build_edit_category_choice_text(choice),
+        parse_mode="Markdown",
+        reply_markup=build_edit_category_choice_keyboard(choice.get("suggested_category")),
+    )
+    return True
+
+
 
 def extract_bulk_edit_txn_lines(raw_text: str) -> list[str]:
     """Extract the required part of input for bulk edit txn lines."""
@@ -2393,10 +2589,90 @@ def build_bulk_edit_error_text(errors: list[str]) -> str:
     return "\n".join(lines)
 
 
-def parse_bulk_edit_txn_entries(lines: list[str], context: ContextTypes.DEFAULT_TYPE) -> tuple[list[dict], list[str]]:
-    """Parse input into structured data for bulk edit txn entries."""
+def build_bulk_edit_confirm_state(entries: list[dict]) -> dict:
+    """Build the pending confirm payload for bulk edit transactions.
+
+    Args:
+        entries: Parsed bulk edit entries. Each item should contain line number,
+            ref, target row or transaction ID, and final updates.
+
+    Returns:
+        Dict stored in `context.user_data["pending_bulk_edit_txns"]`. Preview
+        data is intentionally omitted because confirm only needs stable targets
+        and updates.
+    """
+    return {
+        "entries": [
+            {
+                "line_no": entry.get("line_no"),
+                "line": entry.get("line"),
+                "ref": entry.get("ref"),
+                "row_index": entry.get("row_index"),
+                "txn_id": entry.get("txn_id"),
+                "updates": entry.get("updates") or {},
+            }
+            for entry in entries
+        ]
+    }
+
+
+def build_bulk_edit_category_decision_state(entries: list[dict], decisions: list[dict]) -> dict:
+    """Build pending state for the bulk category clarification queue.
+
+    Args:
+        entries: All valid bulk edit entries, including rows that still need a
+            category decision.
+        decisions: Queue items generated from category alias/similarity matches.
+            Each decision references `entry_index` in `entries`.
+
+    Returns:
+        Dict stored under `BULK_EDIT_CATEGORY_DECISION_KEY`. The state keeps all
+        parsed rows in memory, advances one decision at a time, and only creates
+        `pending_bulk_edit_txns` after every decision is resolved.
+    """
+    return {
+        "entries": entries,
+        "decisions": decisions,
+        "current_index": 0,
+        "paused_for_category_add": None,
+    }
+
+
+def get_current_bulk_edit_category_decision(state: dict) -> tuple[dict | None, int, int]:
+    """Return the active bulk category decision and queue counters.
+
+    Args:
+        state: Pending queue state from `BULK_EDIT_CATEGORY_DECISION_KEY`.
+
+    Returns:
+        Tuple `(decision, current_number, total)`. `decision` is `None` when the
+        queue is empty or already complete.
+    """
+    decisions = (state or {}).get("decisions") or []
+    current_index = int((state or {}).get("current_index") or 0)
+    total = len(decisions)
+    if current_index < 0 or current_index >= total:
+        return None, current_index + 1, total
+    return decisions[current_index], current_index + 1, total
+
+
+def parse_bulk_edit_txn_entries(lines: list[str], context: ContextTypes.DEFAULT_TYPE) -> tuple[list[dict], list[str], list[dict]]:
+    """Parse input into structured data for bulk edit txn entries.
+
+    Args:
+        lines: Bulk `/edit_txn` command lines extracted from one Telegram
+            message.
+        context: Telegram context used to resolve `/last` references.
+
+    Returns:
+        Tuple `(entries, errors, category_decisions)`. `entries` contains valid
+        rows. `errors` contains blocking parse/preview errors. `category_decisions`
+        contains non-blocking category alias/similarity choices that must be
+        resolved before the final bulk preview is shown.
+    """
     entries: list[dict] = []
     errors: list[str] = []
+    category_decisions: list[dict] = []
     seen_targets: set[str] = set()
 
     for line_no, line in enumerate(lines, 1):
@@ -2466,6 +2742,8 @@ def parse_bulk_edit_txn_entries(lines: list[str], context: ContextTypes.DEFAULT_
             errors.append(f"Baris {line_no}: {preview.get('message') or 'Gagal preview edit.'}")
             continue
 
+        category_choice = get_edit_category_choice_prompt(updates, preview)
+        entry_index = len(entries)
         entries.append({
             "line_no": line_no,
             "line": line,
@@ -2476,12 +2754,35 @@ def parse_bulk_edit_txn_entries(lines: list[str], context: ContextTypes.DEFAULT_
             "preview": preview,
         })
 
-    return entries, errors
+        if category_choice:
+            category_decisions.append({
+                "entry_index": entry_index,
+                "line_no": line_no,
+                "raw_category": category_choice.get("raw_category"),
+                "suggested_category": category_choice.get("suggested_category"),
+                "transaction_type": category_choice.get("transaction_type"),
+                "status": category_choice.get("status"),
+            })
+
+    return entries, errors, category_decisions
 
 
 async def bulk_edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, lines: list[str]):
-    """Handle the Telegram request for bulk edit txn."""
-    entries, errors = parse_bulk_edit_txn_entries(lines, context)
+    """Handle the Telegram request for bulk edit txn.
+
+    Args:
+        update: Telegram command/message update containing multiple `/edit_txn`
+            lines.
+        context: Telegram context used to store pending confirmation or pending
+            category decision queue.
+        lines: Extracted `/edit_txn` lines from the user's bulk message.
+
+    Returns:
+        None. The handler either shows blocking errors, starts category decision
+        clarification, or shows the final bulk edit preview. It never writes to
+        Google Sheets before the final `Simpan` confirmation.
+    """
+    entries, errors, category_decisions = parse_bulk_edit_txn_entries(lines, context)
 
     if errors or not entries:
         await update.message.reply_text(
@@ -2490,19 +2791,19 @@ async def bulk_edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
-    context.user_data["pending_bulk_edit_txns"] = {
-        "entries": [
-            {
-                "line_no": entry.get("line_no"),
-                "line": entry.get("line"),
-                "ref": entry.get("ref"),
-                "row_index": entry.get("row_index"),
-                "txn_id": entry.get("txn_id"),
-                "updates": entry.get("updates") or {},
-            }
-            for entry in entries
-        ]
-    }
+    if category_decisions:
+        # Category decisions are resolved before final preview, preserving preview-before-write.
+        state = build_bulk_edit_category_decision_state(entries, category_decisions)
+        context.user_data[BULK_EDIT_CATEGORY_DECISION_KEY] = state
+        decision, current_number, total = get_current_bulk_edit_category_decision(state)
+        await update.message.reply_text(
+            build_bulk_edit_category_choice_text(decision, current_number, total),
+            parse_mode="Markdown",
+            reply_markup=build_bulk_edit_category_choice_keyboard(decision.get("suggested_category")),
+        )
+        return
+
+    context.user_data["pending_bulk_edit_txns"] = build_bulk_edit_confirm_state(entries)
 
     await update.message.reply_text(
         build_bulk_edit_preview_text(entries),
@@ -2669,9 +2970,22 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    split_parsed = None
     split_raw = " ".join(update_args)
-    if edit_args_contain_split_bill(update_args):
+    has_split_bill = edit_args_contain_split_bill(update_args)
+    if await maybe_prompt_edit_category_choice(
+        update,
+        context,
+        updates=updates,
+        preview=preview,
+        row_index=row_index,
+        txn_id=txn_id,
+        split_raw=split_raw,
+        has_split_bill=has_split_bill,
+    ):
+        return
+
+    split_parsed = None
+    if has_split_bill:
         split_parsed = dict(preview.get("new_txn", {}) or {})
         attach_split_bill_if_any(split_parsed, split_raw)
 

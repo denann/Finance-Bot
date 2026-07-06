@@ -20,9 +20,22 @@ Telegram update
 
 ## Category management flow
 
-`/add_kategori` and `/edit_kategori` use a guided wizard. The bot asks for the category name, type, symbol, and aliases. For new categories, Gemini generates alias candidates automatically. For edits, aliases can be typed manually, regenerated with `auto`, or kept with `sama`.
+`/kategori` is read-only and lists existing categories, their type, symbol, and a short aliases preview.
+
+`/add_kategori` and `/edit_kategori` use a guided wizard. The bot asks for the category name, type, symbol, and aliases. Type selection uses one row with two buttons: `Expense` and `Income`; the flow also includes a `Batal` button. For new categories, Gemini generates alias candidates automatically. For edits, aliases can be typed manually, regenerated with `auto`, or kept with `sama`.
 
 The category data is shown as a preview before the bot writes to the `categories` sheet.
+
+When `/edit_txn` changes a transaction category, the bot checks the typed value against existing category names and aliases. If the input maps to an existing category, for example `household` or `kebutuhan rumah` mapping to `Household & Supplies`, the bot asks whether to use that existing category or start a new category flow. This avoids silently creating redundant categories.
+
+Bulk `/edit_txn` keeps the same safety rule. If several pasted edit rows contain category values that match existing categories through name, alias, or similarity, the bot stores a pending category decision queue and asks one row at a time:
+
+```text
+Baris 2: input kategori `household` cocok ke `Household & Supplies`.
+-> Ikuti Household & Supplies / Tambah kategori baru / Batal
+```
+
+After every category decision is resolved, the bot shows the normal bulk edit preview with `Simpan` and `Batal`. Choosing `Tambah kategori baru` pauses the bulk queue and starts the category add wizard first; transaction rows are still not written until the final bulk preview is confirmed.
 
 ## Debt-only payable flow
 
@@ -45,7 +58,7 @@ Daily, weekly, monthly, account, and transaction-list summaries use net expense 
 
 1. Monthly summary.
 2. Gemini monthly insight.
-3. Monthly time series chart document.
+3. Monthly time series PNG chart document.
 
 `/grafik` is a read-only chart command. Supported examples:
 
@@ -57,7 +70,7 @@ Daily, weekly, monthly, account, and transaction-list summaries use net expense 
 /grafik pie 2026-06
 ```
 
-The line chart shows daily net expense, the bar chart ranks category net expense, and the pie chart shows category share from total net expense.
+The line chart shows daily net expense, the bar chart ranks category net expense, and the pie chart shows category share from total net expense. Chart files are generated as PNG documents.
 
 ## Important rule
 

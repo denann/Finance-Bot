@@ -51,6 +51,10 @@ CATEGORY_CANONICAL_ALIASES = {
     "utility": "Bills & Utilities",
     "shopping": "Shopping",
     "belanja": "Shopping",
+    "household": "Household & Supplies",
+    "household and supplies": "Household & Supplies",
+    "kebutuhan rumah": "Household & Supplies",
+    "perlengkapan rumah": "Household & Supplies",
     "kesehatan": "Health",
     "health": "Health",
     "pendidikan": "Education",
@@ -266,10 +270,40 @@ def get_category_names_from_sheet(transaction_type: str | None = None) -> list[s
 
 
 def _category_alias_candidates(record: dict) -> list[str]:
+    """Return the category name plus comma-separated aliases for matching.
+
+    Args:
+        record: Category sheet record with `category_name` and `aliases`.
+
+    Returns:
+        List of candidate strings. Empty aliases are skipped.
+    """
     aliases = str(record.get("aliases") or "")
     result = [str(record.get("category_name") or "")]
     result.extend(part.strip() for part in aliases.split(",") if part.strip())
     return result
+
+
+def _category_name_exists(records: list[dict], category_name: str, transaction_type: str) -> bool:
+    """Check whether a canonical category exists for the selected type.
+
+    Args:
+        records: Category records read from sheet or fallback defaults.
+        category_name: Canonical category target from built-in aliases.
+        transaction_type: Normalized target type, either `expense` or `income`.
+
+    Returns:
+        True when the exact normalized category exists in records with the same
+        type. False prevents built-in aliases from fabricating missing category
+        names.
+    """
+    target_key = normalize_lookup_key(category_name)
+    for record in records or []:
+        name = str((record or {}).get("category_name") or "").strip()
+        record_type = str((record or {}).get("type") or transaction_type).strip().lower() or transaction_type
+        if name and record_type == transaction_type and normalize_lookup_key(name) == target_key:
+            return True
+    return False
 
 
 def _default_category_type(transaction_type: str | None) -> str:
@@ -349,7 +383,22 @@ def find_category_by_name(category_name: str) -> dict:
 
 
 def resolve_category_name(category_input: str, transaction_type: str | None = None, *, allow_create: bool = False) -> dict:
-    """Resolve category input against existing categories and common aliases."""
+    """Resolve category input against existing categories and aliases.
+
+    Args:
+        category_input: User or parser category text, for example `household`,
+            `kebutuhan rumah`, `Food & Beverage`, or a sheet alias.
+        transaction_type: Category type context. `income` restricts matching to
+            income rows; every other value uses expense rows.
+        allow_create: When true, create a category row after exact, alias, and
+            similarity matching fail. This is used at transaction save boundary,
+            not at preview-only clarification steps.
+
+    Returns:
+        Dict with `status`, `category_name`, and `created`. Status can be:
+        `default`, `exact`, `alias`, `similar`, `created`, `fallback`, or
+        `missing`.
+    """
     raw = str(category_input or "").strip()
     txn_type = _default_category_type(transaction_type)
     if not raw:
@@ -360,7 +409,7 @@ def resolve_category_name(category_input: str, transaction_type: str | None = No
     raw_compact = compact_lookup_key(raw)
     canonical = CATEGORY_CANONICAL_ALIASES.get(raw_key) or CATEGORY_CANONICAL_ALIASES.get(raw_compact)
 
-    if canonical:
+    if canonical and _category_name_exists(records, canonical, txn_type):
         raw = canonical
         raw_key = normalize_lookup_key(raw)
         raw_compact = compact_lookup_key(raw)
@@ -394,10 +443,18 @@ def resolve_category_name(category_input: str, transaction_type: str | None = No
         if not name or record_type != txn_type:
             continue
         for alias in _category_alias_candidates(record):
-            score = SequenceMatcher(None, raw_key, normalize_lookup_key(alias)).ratio()
-            if score > best_score:
+            alias_key = normalize_lookup_key(alias)
+            alias_compact = compact_lookup_key(alias)
+            score = SequenceMatcher(None, raw_key, alias_key).ratio()
+            substring_match = bool(
+                len(raw_compact) >= 5
+                and len(alias_compact) >= 5
+                and (raw_compact in alias_compact or alias_compact in raw_compact)
+            )
+            effective_score = max(score, 0.95 if substring_match else score)
+            if effective_score > best_score:
                 best_name = name
-                best_score = score
+                best_score = effective_score
 
     if best_name and best_score >= 0.86:
         return {"status": "similar", "category_name": best_name, "created": False}

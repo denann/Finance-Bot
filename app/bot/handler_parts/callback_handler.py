@@ -6,11 +6,18 @@
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
 from app.services.resolver_service import create_account
-from app.bot.handler_parts.state_utils import clear_pending_flow_state
+from app.bot.handler_parts.state_utils import BULK_EDIT_CATEGORY_DECISION_KEY, EDIT_CATEGORY_CHOICE_KEY, clear_pending_flow_state
 
 from app.bot.handler_parts.networth_assets import build_asset_added_text, handle_asset_add_skip_callback
-from app.bot.handler_parts.category_flow import handle_category_confirm_callback, handle_category_type_callback
+from app.bot.handler_parts.category_flow import CATEGORY_ADD_FLOW_KEY, handle_category_confirm_callback, handle_category_type_callback
 from app.bot.handler_parts.command_router import short_txn_id
+from app.bot.handler_parts.message_handlers import (
+    build_bulk_edit_category_choice_keyboard,
+    build_bulk_edit_category_choice_text,
+    build_bulk_edit_confirm_state,
+    build_bulk_edit_preview_text,
+    get_current_bulk_edit_category_decision,
+)
 from app.bot.handler_parts.health_recurring_export import (
     build_recurring_saved_text,
     handle_recurring_add_skip_callback,
@@ -564,6 +571,129 @@ def _build_saved_account_balance_info(parsed: dict, result: dict) -> str:
     return ""
 
 
+def apply_bulk_edit_category_decision(state: dict, decision: dict, category_name: str) -> dict:
+    """Apply one resolved category decision to pending bulk edit state.
+
+    Args:
+        state: Pending queue stored under `BULK_EDIT_CATEGORY_DECISION_KEY`.
+            Expected keys are `entries`, `decisions`, and `current_index`.
+        decision: Current queue item. It must contain `entry_index`, pointing to
+            the affected row in `state["entries"]`.
+        category_name: Final category chosen for that row. This can be the
+            suggested existing category or the raw category after the add-category
+            wizard finishes.
+
+    Returns:
+        Result dict with `success`, optional `message`, and updated `state`.
+
+    Notes:
+        This rebuilds preview data only. It does not write to Google Sheets; the
+        write still requires the final `confirm:edit_txns_bulk` callback.
+    """
+    entries = (state or {}).get("entries") or []
+    entry_index = int((decision or {}).get("entry_index") or -1)
+    if entry_index < 0 or entry_index >= len(entries):
+        return {"success": False, "message": "Index baris bulk edit tidak valid.", "state": state}
+
+    entry = entries[entry_index]
+    updates = dict(entry.get("updates") or {})
+    updates["category"] = str(category_name or "").strip()
+
+    preview = preview_edit_transaction_by_ref(
+        updates=updates,
+        row_index=entry.get("row_index"),
+        txn_id=entry.get("txn_id"),
+    )
+    if not preview.get("success"):
+        return {
+            "success": False,
+            "message": preview.get("message") or "Gagal preview ulang bulk edit.",
+            "state": state,
+        }
+
+    entry["updates"] = preview.get("updates") or updates
+    entry["preview"] = preview
+    entries[entry_index] = entry
+    state["entries"] = entries
+    state["current_index"] = int(state.get("current_index") or 0) + 1
+    state["paused_for_category_add"] = None
+    return {"success": True, "state": state}
+
+
+async def show_next_or_final_bulk_edit_category_decision(query, context: ContextTypes.DEFAULT_TYPE, state: dict) -> None:
+    """Show the next bulk category decision or the final bulk edit preview.
+
+    Args:
+        query: Telegram callback query whose message should be edited.
+        context: Telegram context used to move state from the category queue to
+            final bulk edit confirmation.
+        state: Updated pending bulk category decision queue.
+
+    Returns:
+        None. When all decisions are resolved, this function creates
+        `pending_bulk_edit_txns` and shows the existing Simpan/Batal preview.
+    """
+    decision, current_number, total = get_current_bulk_edit_category_decision(state)
+    if not decision:
+        entries = (state or {}).get("entries") or []
+        context.user_data.pop(BULK_EDIT_CATEGORY_DECISION_KEY, None)
+        context.user_data["pending_bulk_edit_txns"] = build_bulk_edit_confirm_state(entries)
+        await safe_edit_message(
+            query,
+            build_bulk_edit_preview_text(entries),
+            parse_mode="Markdown",
+            reply_markup=confirm_keyboard("edit_txns_bulk"),
+        )
+        return
+
+    context.user_data[BULK_EDIT_CATEGORY_DECISION_KEY] = state
+    await safe_edit_message(
+        query,
+        build_bulk_edit_category_choice_text(decision, current_number, total),
+        parse_mode="Markdown",
+        reply_markup=build_bulk_edit_category_choice_keyboard(decision.get("suggested_category")),
+    )
+
+
+async def start_bulk_edit_category_add_wizard(query, context: ContextTypes.DEFAULT_TYPE, state: dict, decision: dict) -> None:
+    """Pause bulk category decisions and start add-category wizard.
+
+    Args:
+        query: Telegram callback query from `Tambah kategori baru`.
+        context: Telegram context used to keep both the paused bulk queue and
+            the category add wizard state.
+        state: Pending bulk category queue that should be paused.
+        decision: Current queue item whose raw category becomes the new category
+            name.
+
+    Returns:
+        None. The function asks for the category symbol and leaves transaction
+        edits unwritten until the final bulk preview is confirmed.
+    """
+    raw_category = str((decision or {}).get("raw_category") or "").strip()
+    transaction_type = str((decision or {}).get("transaction_type") or "expense").strip().lower()
+    transaction_type = transaction_type if transaction_type in {"expense", "income"} else "expense"
+
+    # Keep queue position stable so the user can resume after category save.
+    state["paused_for_category_add"] = int(state.get("current_index") or 0)
+    context.user_data[BULK_EDIT_CATEGORY_DECISION_KEY] = state
+    context.user_data[CATEGORY_ADD_FLOW_KEY] = {
+        "stage": "symbol",
+        "mode": "add",
+        "category_name": raw_category,
+        "type": transaction_type,
+    }
+    await safe_edit_message(
+        query,
+        "Oke, kita tambah kategori baru dulu.\n\n"
+        f"Kategori: *{md_safe(raw_category or '-')}*\n"
+        f"Tipe: *{md_safe(transaction_type)}*\n\n"
+        "Symbolnya apa?",
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard(),
+    )
+
+
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Route Telegram inline button callbacks to the right pending flow.
 
@@ -590,6 +720,137 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         handled = await handle_category_type_callback(query, context, data)
         if handled:
             return
+
+    # Category choice for /edit_txn: use existing category or start add-category wizard.
+    if data.startswith("edit_category_choice:"):
+        action = data.split(":", 1)[1]
+        pending_choice = context.user_data.get(EDIT_CATEGORY_CHOICE_KEY) or {}
+        if not pending_choice:
+            await safe_edit_message(query, "❌ Sesi pilihan kategori expired. Coba ulangi `/edit_txn`.", parse_mode="Markdown")
+            return
+
+        raw_category = str(pending_choice.get("raw_category") or "").strip()
+        suggested_category = str(pending_choice.get("suggested_category") or "").strip()
+        transaction_type = str(pending_choice.get("transaction_type") or "expense").strip().lower()
+
+        if action == "create":
+            context.user_data.pop(EDIT_CATEGORY_CHOICE_KEY, None)
+            context.user_data[CATEGORY_ADD_FLOW_KEY] = {
+                "stage": "symbol",
+                "mode": "add",
+                "category_name": raw_category,
+                "type": transaction_type if transaction_type in {"expense", "income"} else "expense",
+            }
+            await safe_edit_message(
+                query,
+                "Oke, kita tambah kategori baru dulu.\n\n"
+                f"Kategori: *{md_safe(raw_category or '-')}*\n"
+                f"Tipe: *{md_safe(transaction_type if transaction_type in {'expense', 'income'} else 'expense')}*\n\n"
+                "Symbolnya apa?\n\n"
+                "Setelah kategori tersimpan, ulangi `/edit_txn` untuk memakai kategori baru itu di transaksi.",
+                parse_mode="Markdown",
+                reply_markup=cancel_keyboard(),
+            )
+            return
+
+        if action != "use":
+            await safe_edit_message(query, "❌ Pilihan kategori tidak valid.", parse_mode="Markdown")
+            return
+
+        updates = dict(pending_choice.get("updates") or {})
+        updates["category"] = suggested_category
+        preview = preview_edit_transaction_by_ref(
+            updates=updates,
+            row_index=pending_choice.get("row_index"),
+            txn_id=pending_choice.get("txn_id"),
+        )
+        if not preview.get("success"):
+            context.user_data.pop(EDIT_CATEGORY_CHOICE_KEY, None)
+            await safe_edit_message(query, f"❌ {preview.get('message') or 'Gagal preview edit.'}", parse_mode="Markdown")
+            return
+
+        split_parsed = None
+        split_raw = str(pending_choice.get("split_raw") or "").strip()
+        if bool(pending_choice.get("has_split_bill")):
+            split_parsed = dict(preview.get("new_txn", {}) or {})
+            attach_split_bill_if_any(split_parsed, split_raw)
+            if split_bill_needs_decision(split_parsed):
+                context.user_data.pop(EDIT_CATEGORY_CHOICE_KEY, None)
+                context.user_data["pending_edit_txn"] = {
+                    "row_index": pending_choice.get("row_index"),
+                    "txn_id": pending_choice.get("txn_id"),
+                    "updates": updates,
+                    "split_raw": split_raw,
+                    "split_parsed": split_parsed,
+                }
+                await safe_edit_message(
+                    query,
+                    build_split_bill_prompt_from_parsed(split_parsed),
+                    parse_mode="Markdown",
+                    reply_markup=split_bill_keyboard("edit_txn"),
+                )
+                return
+
+        context.user_data.pop(EDIT_CATEGORY_CHOICE_KEY, None)
+        context.user_data["pending_edit_txn"] = {
+            "row_index": pending_choice.get("row_index"),
+            "txn_id": pending_choice.get("txn_id"),
+            "updates": updates,
+            "split_raw": split_raw if split_parsed else "",
+            "split_parsed": split_parsed,
+        }
+        await safe_edit_message(
+            query,
+            build_edit_txn_preview_text_for_callback(preview, split_parsed),
+            parse_mode="Markdown",
+            reply_markup=confirm_keyboard("edit_txn"),
+        )
+        return
+
+    # Bulk category queue: resolve one category ambiguity per callback.
+    if data.startswith("bulk_edit_category_choice:"):
+        action = data.split(":", 1)[1]
+        state = context.user_data.get(BULK_EDIT_CATEGORY_DECISION_KEY) or {}
+        if not state:
+            await safe_edit_message(query, "❌ Sesi pilihan kategori bulk edit expired. Coba ulangi bulk `/edit_txn`.", parse_mode="Markdown")
+            return
+
+        decision, _, _ = get_current_bulk_edit_category_decision(state)
+        if action == "resume":
+            paused_index = state.get("paused_for_category_add")
+            current_index = int(state.get("current_index") or 0)
+            if paused_index is None or int(paused_index) != current_index or not decision:
+                await safe_edit_message(query, "❌ Sesi lanjut bulk edit tidak valid. Coba ulangi bulk `/edit_txn`.", parse_mode="Markdown")
+                context.user_data.pop(BULK_EDIT_CATEGORY_DECISION_KEY, None)
+                return
+            result = apply_bulk_edit_category_decision(state, decision, decision.get("raw_category"))
+            if not result.get("success"):
+                context.user_data.pop(BULK_EDIT_CATEGORY_DECISION_KEY, None)
+                await safe_edit_message(query, f"❌ {md_safe(result.get('message') or 'Gagal lanjut bulk edit.')}", parse_mode="Markdown")
+                return
+            await show_next_or_final_bulk_edit_category_decision(query, context, result.get("state") or state)
+            return
+
+        if not decision:
+            await show_next_or_final_bulk_edit_category_decision(query, context, state)
+            return
+
+        if action == "create":
+            await start_bulk_edit_category_add_wizard(query, context, state, decision)
+            return
+
+        if action != "use":
+            await safe_edit_message(query, "❌ Pilihan kategori bulk edit tidak valid.", parse_mode="Markdown")
+            return
+
+        result = apply_bulk_edit_category_decision(state, decision, decision.get("suggested_category"))
+        if not result.get("success"):
+            context.user_data.pop(BULK_EDIT_CATEGORY_DECISION_KEY, None)
+            await safe_edit_message(query, f"❌ {md_safe(result.get('message') or 'Gagal preview bulk edit.')}", parse_mode="Markdown")
+            return
+
+        await show_next_or_final_bulk_edit_category_decision(query, context, result.get("state") or state)
+        return
 
     if data == "asset_add:skip":
         await handle_asset_add_skip_callback(query, context)

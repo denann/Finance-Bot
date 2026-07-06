@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+# Single edit category ambiguity state.
+EDIT_CATEGORY_CHOICE_KEY = "pending_edit_category_choice"
+# Bulk edit category ambiguity queue state.
+BULK_EDIT_CATEGORY_DECISION_KEY = "pending_bulk_edit_category_decision"
+
 # Only transient flow keys are listed here. Long-lived helper state such as
 # `last_txn_map` must stay untouched because /last numbers are reused by
 # /edit_txn and /delete_txn.
@@ -18,6 +23,8 @@ PENDING_FLOW_KEYS = (
     "pending_delete_refs",
     "pending_delete_txn_ids",
     "pending_edit_txn",
+    EDIT_CATEGORY_CHOICE_KEY,
+    BULK_EDIT_CATEGORY_DECISION_KEY,
     "pending_bulk_edit_txns",
     "pending_debt_void",
     "pending_debt_settle",
@@ -61,6 +68,8 @@ FLOW_LABELS = {
     "pending_delete_refs": "preview hapus transaksi",
     "pending_delete_txn_ids": "preview hapus transaksi",
     "pending_edit_txn": "preview edit transaksi",
+    EDIT_CATEGORY_CHOICE_KEY: "pilihan kategori edit transaksi",
+    BULK_EDIT_CATEGORY_DECISION_KEY: "pilihan kategori bulk edit transaksi",
     "pending_bulk_edit_txns": "preview edit banyak transaksi",
     "pending_debt_void": "preview void hutang/piutang",
     "pending_debt_settle": "preview pelunasan hutang/piutang",

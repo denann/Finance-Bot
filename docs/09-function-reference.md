@@ -42,6 +42,9 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `build_expense_candidate_raw(raw: str)` | Build the data structure or message text for expense candidate raw. |
 | `def` | `build_clarified_expense(raw: str, parsed: dict \| None=None)` | Build the data structure or message text for clarified expense. |
 | `def` | `build_clarified_fronting(raw: str, parsed: dict \| None=None)` | Build the data structure or message text for clarified fronting. |
+| `def` | `apply_bulk_edit_category_decision(state: dict, decision: dict, category_name: str)` | Apply one resolved category choice to pending bulk edit preview state without writing to Sheets. |
+| `async def` | `show_next_or_final_bulk_edit_category_decision(query, context: ContextTypes.DEFAULT_TYPE, state: dict)` | Show the next category decision or the final bulk edit preview. |
+| `async def` | `start_bulk_edit_category_add_wizard(query, context: ContextTypes.DEFAULT_TYPE, state: dict, decision: dict)` | Pause bulk edit category queue and start the add-category wizard. |
 | `async def` | `callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle inline button callbacks for save, edit, cancel, account choice, split bill, debt, and asset flows. |
 
 ## `app/app/bot/handler_parts/command_handlers.py`
@@ -78,7 +81,7 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `append_top_expense_lines(lines: list[str], report: dict)` | Append Top 3 expense rows using net expense contribution. |
 | `def` | `normalize_chart_type(value: str \| None)` | Normalize `/grafik` chart type input. |
 | `def` | `parse_grafik_args(args: list[str] \| None)` | Parse `/grafik` arguments into chart type and month. |
-| `async def` | `send_monthly_chart_document(update: Update, report: dict, chart_type: str='timeseries')` | Generate and send a monthly SVG chart document. |
+| `async def` | `send_monthly_chart_document(update: Update, report: dict, chart_type: str='timeseries')` | Generate and send a monthly PNG chart document. |
 | `def` | `is_category_detail_report(report: dict)` | Check whether a condition is true for category detail report. |
 | `def` | `get_category_list_title(category: str)` | Get data needed for category list title. |
 | `def` | `append_category_detail_summary(lines: list[str], report: dict, comparison_label: str)` | Append data to category detail summary. |
@@ -267,7 +270,7 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `append_top_expense_lines(lines: list[str], report: dict)` | Append Top 3 expense rows using net expense contribution. |
 | `def` | `normalize_chart_type(value: str \| None)` | Normalize `/grafik` chart type input. |
 | `def` | `parse_grafik_args(args: list[str] \| None)` | Parse `/grafik` arguments into chart type and month. |
-| `async def` | `send_monthly_chart_document(update: Update, report: dict, chart_type: str='timeseries')` | Generate and send a monthly SVG chart document. |
+| `async def` | `send_monthly_chart_document(update: Update, report: dict, chart_type: str='timeseries')` | Generate and send a monthly PNG chart document. |
 | `def` | `is_category_detail_report(report: dict)` | Check whether a condition is true for category detail report. |
 | `def` | `get_category_list_title(category: str)` | Get data needed for category list title. |
 | `def` | `append_category_detail_summary(lines: list[str], report: dict, comparison_label: str)` | Append data to category detail summary. |
@@ -431,6 +434,22 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `async def` | `export_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for export. |
 | `async def` | `scheduled_export_transactions(bot, chat_id: int, period=None)` | Helper for scheduled export transactions in the Telegram bot flow. |
 
+## `app/bot/handler_parts/category_flow.py`
+
+| Type | Name / Signature | Purpose |
+|---|---|---|
+| `def` | `_clean_category_name(value: str)` | Clean category input from command args or text replies. |
+| `def` | `_category_flow_keyboard(mode: str)` | Build the Expense/Income type keyboard plus Batal for category wizard flows. |
+| `def` | `_format_category_rows_for_help(limit: int=18)` | Format existing categories as examples for `/edit_kategori`. |
+| `def` | `_format_alias_preview(aliases: str, *, max_items: int=8, max_len: int=120)` | Format aliases into a short preview for `/kategori`. |
+| `def` | `_build_category_list_text(records: list[dict])` | Build the read-only `/kategori` category list text. |
+| `async def` | `add_kategori_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Start the add-category wizard. |
+| `async def` | `kategori_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | List existing categories, symbols, types, and aliases. |
+| `async def` | `edit_kategori_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Start the edit-category wizard. |
+| `async def` | `handle_category_type_callback(query, context: ContextTypes.DEFAULT_TYPE, data: str)` | Handle the Expense/Income type button in category flows. |
+| `async def` | `handle_pending_category_flow(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str)` | Continue add/edit category wizard text stages. |
+| `async def` | `handle_category_confirm_callback(query, context: ContextTypes.DEFAULT_TYPE, confirm_target: str)` | Write add/edit category changes only after preview confirmation. |
+
 ## `app/bot/handler_parts/message_handlers.py`
 
 | Type | Name / Signature | Purpose |
@@ -461,11 +480,20 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `build_edit_debt_payment_preview_text(preview: dict, conversion: dict, debt_check: dict)` | Build the data structure or message text for edit debt payment preview text. |
 | `def` | `build_edit_split_preview_text(preview: dict, split_parsed: dict \| None=None)` | Build the data structure or message text for edit split preview text. |
 | `def` | `build_edit_preview_text(preview: dict)` | Build the data structure or message text for edit preview text. |
+| `def` | `build_edit_category_choice_keyboard(suggested_category: str)` | Build the two-choice category match keyboard for `/edit_txn`. |
+| `def` | `build_bulk_edit_category_choice_keyboard(suggested_category: str)` | Build the category decision keyboard for bulk `/edit_txn`. |
+| `def` | `build_bulk_edit_category_choice_text(decision: dict, current_number: int, total: int)` | Build the per-line category decision prompt for bulk edit. |
+| `def` | `get_edit_category_choice_prompt(updates: dict, preview: dict)` | Detect whether a category edit maps to an existing category alias or similar name. |
+| `def` | `build_edit_category_choice_text(choice: dict)` | Build the category match confirmation text for `/edit_txn`. |
+| `async def` | `maybe_prompt_edit_category_choice(update: Update, context: ContextTypes.DEFAULT_TYPE, *, updates: dict, preview: dict, row_index: int \| None, txn_id: str \| None, split_raw: str, has_split_bill: bool)` | Ask the user to use an existing category or start the add-category wizard. |
 | `def` | `extract_bulk_edit_txn_lines(raw_text: str)` | Extract the required part of input for bulk edit txn lines. |
 | `def` | `_format_bulk_edit_value(value)` | Format data into a readable display for bulk edit value. |
 | `def` | `build_bulk_edit_preview_text(entries: list[dict])` | Build the data structure or message text for bulk edit preview text. |
 | `def` | `build_bulk_edit_error_text(errors: list[str])` | Build the data structure or message text for bulk edit error text. |
-| `def` | `parse_bulk_edit_txn_entries(lines: list[str], context: ContextTypes.DEFAULT_TYPE)` | Parse input into structured data for bulk edit txn entries. |
+| `def` | `build_bulk_edit_confirm_state(entries: list[dict])` | Build the final pending confirm payload for bulk edit transactions. |
+| `def` | `build_bulk_edit_category_decision_state(entries: list[dict], decisions: list[dict])` | Build pending state for the bulk category clarification queue. |
+| `def` | `get_current_bulk_edit_category_decision(state: dict)` | Return the active bulk category decision and queue counters. |
+| `def` | `parse_bulk_edit_txn_entries(lines: list[str], context: ContextTypes.DEFAULT_TYPE)` | Parse bulk edit rows and return entries, blocking errors, and category decision queue. |
 | `async def` | `bulk_edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, lines: list[str])` | Handle the Telegram request for bulk edit txn. |
 | `async def` | `edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for edit txn. |
 
@@ -811,18 +839,22 @@ This file is a quick reference for top-level functions and classes. It is useful
 
 | Type | Name / Signature | Purpose |
 |---|---|---|
-| `def` | `compact_rupiah(amount: float)` | Format rupiah values compactly for SVG chart labels. |
+| `def` | `compact_rupiah(amount: float)` | Format rupiah values compactly for chart labels. |
 | `def` | `transaction_day(txn: dict)` | Extract day-of-month from a transaction date. |
 | `def` | `monthly_day_count(month_label: str)` | Return the day count for a `YYYY-MM` month. |
 | `def` | `daily_net_expense_series(report: dict)` | Build daily net expense totals for a monthly report. |
 | `def` | `category_net_expense_items(report: dict, limit: int=8)` | Return category rows sorted by net expense. |
-| `def` | `svg_text(x: float, y: float, text: str, *, size: int=13, anchor: str='start', weight: str='400')` | Build an escaped SVG text element. |
-| `def` | `build_empty_chart_svg(title: str, message: str)` | Build an empty-state SVG chart. |
-| `def` | `build_monthly_timeseries_svg(report: dict)` | Build a daily net-expense line chart SVG. |
-| `def` | `build_monthly_bar_svg(report: dict)` | Build a category net-expense bar chart SVG. |
-| `def` | `build_monthly_pie_svg(report: dict)` | Build a category net-expense pie chart SVG. |
-| `def` | `build_monthly_chart_svg(report: dict, chart_type: str='timeseries')` | Build a monthly chart SVG by requested type. |
-| `def` | `write_monthly_chart_svg(report: dict, chart_type: str='timeseries')` | Write a monthly chart SVG to a temporary file. |
+| `class` | `PngCanvas` | Small dependency-free RGB canvas used by PNG chart generation. |
+| `def` | `png_chunk(chunk_type: bytes, data: bytes)` | Serialize one PNG chunk with CRC. |
+| `def` | `text_pixel_width(text: str, *, scale: int=2)` | Measure bitmap text width for PNG labels. |
+| `def` | `truncate_label(value: str, max_chars: int)` | Shorten chart labels so PNG layout stays stable. |
+| `def` | `draw_chart_header(canvas: PngCanvas, title: str, subtitle: str='')` | Draw the common PNG chart title and subtitle. |
+| `def` | `build_empty_chart_png_bytes(title: str, message: str)` | Build an empty-state PNG chart. |
+| `def` | `build_monthly_timeseries_png_bytes(report: dict)` | Build a daily net-expense line chart PNG. |
+| `def` | `build_monthly_bar_png_bytes(report: dict)` | Build a category net-expense bar chart PNG. |
+| `def` | `build_monthly_pie_png_bytes(report: dict)` | Build a category net-expense pie chart PNG. |
+| `def` | `build_monthly_chart_png_bytes(report: dict, chart_type: str='timeseries')` | Build a monthly chart PNG by requested type. |
+| `def` | `write_monthly_chart_png(report: dict, chart_type: str='timeseries')` | Write a monthly chart PNG to a temporary file. |
 
 ## `app/services/debt_service.py`
 

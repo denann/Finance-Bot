@@ -210,7 +210,7 @@ class CommandRun:
 
 KNOWN_SLASH_COMMANDS = {
     "start", "quickstart", "help", "saldo", "set_saldo", "saldo_set", "set_balance", "harian", "mingguan", "bulanan", "transaksi", "cari",
-    "budget", "budget_history", "set_budget", "hutang", "debt", "debt_void", "debt_edit",
+    "budget", "budget_history", "set_budget", "kategori", "categories", "list_kategori", "hutang", "debt", "debt_void", "debt_edit",
     "recurring", "recurring_add", "recurring_run", "recurring_off", "recurring_edit",
     "export", "health", "last", "delete_txn", "edit_txn", "ask", "coach", "insight", "audit",
     "networth", "assets", "liabilities", "asset_add", "liability_add", "asset_update",
