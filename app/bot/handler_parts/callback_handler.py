@@ -1478,7 +1478,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if scope == "mixed" and "index" not in state:
                 mixed_items = context.user_data.get("pending_mixed") or []
                 context.user_data["pending_preview_edit"] = {"scope": "mixed", "step": "choose_item"}
-                await safe_edit_message(query, build_mixed_edit_choose_prompt(mixed_items), parse_mode="Markdown")
+                await safe_edit_message(
+                    query,
+                    build_mixed_edit_choose_prompt(mixed_items),
+                    parse_mode="Markdown",
+                    reply_markup=cancel_keyboard(),
+                )
                 return
 
             state["step"] = "direct_field"
@@ -1503,6 +1508,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await safe_edit_message(query, 
                     build_mixed_edit_choose_prompt(mixed_items),
                     parse_mode="Markdown",
+                    reply_markup=cancel_keyboard(),
                 )
                 return
 

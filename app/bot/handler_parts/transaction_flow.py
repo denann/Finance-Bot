@@ -2139,12 +2139,19 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
         try:
             item_index = int(str(user_text).strip()) - 1
         except Exception:
-            await update.message.reply_text("❌ Balas dengan nomor item, contoh: `2`.", parse_mode="Markdown")
+            await update.message.reply_text(
+                "Balas dengan nomor item, contoh: `2`.",
+                parse_mode="Markdown",
+                reply_markup=cancel_keyboard(),
+            )
             return True
 
         mixed_items = context.user_data.get("pending_mixed") or []
         if item_index < 0 or item_index >= len(mixed_items):
-            await update.message.reply_text("❌ Nomor item tidak valid. Coba pilih nomor yang ada di preview.")
+            await update.message.reply_text(
+                "Nomor item tidak valid. Coba pilih nomor yang ada di preview.",
+                reply_markup=cancel_keyboard(),
+            )
             return True
 
         state["step"] = "edit_item"
@@ -2412,7 +2419,19 @@ def build_preview(parsed: dict) -> str:
 
 
 def build_batch_preview(parsed_items: list[dict]) -> str:
-    """Build a compact multi-transaction preview without changing save logic."""
+    """Build a compact multi-transaction preview without changing save logic.
+
+    Args:
+        parsed_items: Parsed transaction items. Each item is expected to contain
+            a `parsed` dict with transaction fields such as `type`, `amount`,
+            `description`, `subject`, `category`, `account`, and
+            `tipe_pengeluaran`.
+
+    Returns:
+        Markdown text for the batch preview. The primary row title prioritizes
+        `description` over `subject` because `subject` may contain payer/person
+        metadata or, in some parser outputs, an account-like token.
+    """
     total_count = len(parsed_items or [])
     lines = [f"🧾 *Preview ({total_count} transaksi)*", ""]
 
@@ -2468,7 +2487,8 @@ def build_batch_preview(parsed_items: list[dict]) -> str:
                 "transfer": "🔄",
             }.get(txn_type, "❓")
             amount = _receipt_amount(parsed.get("amount"), 0)
-            subject = str(parsed.get("subject") or parsed.get("description") or "-").strip() or "-"
+            # Preview title should describe the item, not rekening/person metadata.
+            subject = str(parsed.get("description") or parsed.get("subject") or "-").strip() or "-"
             description = str(parsed.get("description") or "").strip()
             category = str(parsed.get("category") or "-").strip() or "-"
             account = str(parsed.get("account") or "-").strip() or "-"
@@ -2479,7 +2499,7 @@ def build_batch_preview(parsed_items: list[dict]) -> str:
                 f"   📁 {md_safe(category)} • 🏦 {md_safe(account)} • 🏷️ {md_safe(spending_type)}"
             )
 
-            if description and description.lower() != subject.lower():
+            if description:
                 lines.append(f"   📝 {md_safe(description)}")
 
             if parsed.get("catatan"):
