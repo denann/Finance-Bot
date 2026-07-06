@@ -2,17 +2,23 @@
 
 
 
+# Import json for this module's local operations.
 import json
+# Import re for this module's local operations.
 import re
+# Import os for this module's local operations.
 import os
 
+# Import app.config so this module can use its helpers.
 from app.config import GEMINI_API_KEY
+# Import app.nlp.gemini_langchain_client so this module can use its helpers.
 from app.nlp.gemini_langchain_client import generate_text_with_gemini
 
 
 GEMINI_INTENT_MODEL = os.getenv("GEMINI_INTENT_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"))
 
 
+# Open a multi-line structure for the values below.
 ALLOWED_INTENTS = {
     "saldo",
     "harian",
@@ -27,15 +33,19 @@ ALLOWED_INTENTS = {
     "edit_txn",
     "help",
     "unknown",
+# Close the structure that was opened above.
 }
 
 
+# Open a multi-line structure for the values below.
 DESTRUCTIVE_INTENTS = {
     "delete_txn",
     "edit_txn",
+# Close the structure that was opened above.
 }
 
 
+# Open a multi-line structure for the values below.
 INTENT_KEYWORDS = [
     "lihat",
     "tampilkan",
@@ -64,32 +74,45 @@ INTENT_KEYWORDS = [
     "bulan",
     "minggu",
     "hari",
+# Close the structure that was opened above.
 ]
 
 
+# Define should try gemini intent router for callers in this flow.
 def should_try_gemini_intent_router(text: str) -> bool:
     """Decide whether the flow should try gemini intent router."""
     clean = str(text or "").strip().lower()
 
+    # Handle the missing or empty clean case.
     if not clean:
+        # Return False to the caller.
         return False
 
     if clean.startswith("/"):
+        # Return False to the caller.
         return False
 
+    # Prepare words for the next step.
     words = clean.split()
 
+    # Handle the case where len(words) > 30.
     if len(words) > 30:
+        # Return False to the caller.
         return False
 
+    # Return any(keyword in clean for keyword in INTENT_KEYWORDS) to the caller.
     return any(keyword in clean for keyword in INTENT_KEYWORDS)
 
 
+# Define extract json object for callers in this flow.
 def extract_json_object(text: str) -> dict:
     """Extract the required part of input for json object."""
+    # Handle the missing or empty text case.
     if not text:
+        # Return {} to the caller.
         return {}
 
+    # Prepare clean for the next step.
     clean = text.strip()
 
     clean = re.sub(r"^```json\s*", "", clean, flags=re.IGNORECASE)
@@ -99,46 +122,90 @@ def extract_json_object(text: str) -> dict:
     start = clean.find("{")
     end = clean.rfind("}")
 
+    # Handle the case where start == -1 or end == -1 or end <= start.
     if start == -1 or end == -1 or end <= start:
+        # Return {} to the caller.
         return {}
 
+    # Prepare json text for the next step.
     json_text = clean[start:end + 1]
 
+    # Run this operation in a guarded block so failures can be handled.
     try:
+        # Return json.loads(json_text) to the caller.
         return json.loads(json_text)
+    # Handle an expected failure from the guarded operation above.
     except Exception:
+        # Return {} to the caller.
         return {}
 
 
+# Define normalize router result for callers in this flow.
 def normalize_router_result(data: dict) -> dict:
-    """Normalize and clean input for router result."""
+    """Normalize input values for the normalize router result workflow in the NLP/parser layer.
+
+    Args:
+        data: Structured input data used by the current flow.
+
+    Returns:
+        `dict` value as defined by the function signature.
+
+    Side effects:
+        None beyond the side effects already performed by the existing implementation.
+
+    Flow constraints:
+        Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
+    """
     intent = str(data.get("intent", "unknown") or "unknown").strip().lower()
     confidence = data.get("confidence", 0)
     args = data.get("args", {}) or {}
     explanation = str(data.get("explanation", "") or "").strip()
 
+    # Run this operation in a guarded block so failures can be handled.
     try:
+        # Prepare confidence for the next step.
         confidence = float(confidence)
+    # Handle an expected failure from the guarded operation above.
     except Exception:
+        # Prepare confidence for the next step.
         confidence = 0.0
 
+    # Handle the case where intent not in ALLOWED_INTENTS.
     if intent not in ALLOWED_INTENTS:
         intent = "unknown"
 
+    # Handle the missing or empty isinstance(args, dict) case.
     if not isinstance(args, dict):
+        # Prepare args for the next step.
         args = {}
 
+    # Return { to the caller.
     return {
         "intent": intent,
         "confidence": confidence,
         "args": args,
         "explanation": explanation,
         "is_destructive": intent in DESTRUCTIVE_INTENTS,
+    # Close the structure that was opened above.
     }
 
 
+# Define route intent with gemini for callers in this flow.
 def route_intent_with_gemini(user_text: str) -> dict:
-    """Helper for route intent with gemini in the NLP and parser layer."""
+    """Coordinate the route intent with gemini logic in the NLP/parser layer.
+
+    Args:
+        user_text: Input value supplied by the caller; accepted shape follows the function signature and local validation.
+
+    Returns:
+        `dict` value as defined by the function signature.
+
+    Side effects:
+        None beyond the side effects already performed by the existing implementation.
+
+    Flow constraints:
+        Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
+    """
     prompt = f"""
 Anda adalah intent router untuk personal finance Telegram bot.
 
@@ -221,19 +288,31 @@ Input user:
 {user_text}
 """
 
+    # Run this operation in a guarded block so failures can be handled.
     try:
+        # Handle the missing or empty GEMINI_API_KEY case.
         if not GEMINI_API_KEY:
             raw_text = ""
+        # Handle the fallback path after earlier conditions are skipped.
         else:
+            # Open a multi-line structure for the values below.
             raw_text = generate_text_with_gemini(
+                # Include this value in the surrounding collection or call.
                 prompt,
+                # Prepare model name for the next step.
                 model_name=GEMINI_INTENT_MODEL,
+                # Prepare temperature for the next step.
                 temperature=0.0,
+            # Close the structure that was opened above.
             )
+        # Prepare data for the next step.
         data = extract_json_object(raw_text)
+        # Return normalize_router_result(data) to the caller.
         return normalize_router_result(data)
 
+    # Handle an expected failure from the guarded operation above.
     except Exception as e:
+        # Return { to the caller.
         return {
             "intent": "unknown",
             "confidence": 0.0,
@@ -241,4 +320,5 @@ Input user:
             "explanation": f"Gemini intent router error: {str(e)}",
             "is_destructive": False,
             "error": str(e),
+        # Close the structure that was opened above.
         }

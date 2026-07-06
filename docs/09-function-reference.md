@@ -115,14 +115,15 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `async def` | `debt_edit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for debt edit. |
 | `def` | `format_debt_created_date_for_display(debt: dict)` | Format data into a readable display for debt created date for display. |
 | `def` | `debt_detail_sort_key_for_display(debt: dict)` | Helper for debt detail sort key for display in the application. |
-| `def` | `parse_debt_number_selection(selection: str)` | Parse input into structured data for debt number selection. |
-| `def` | `parse_debt_settle_command_args(args: list[str])` | Parse input into structured data for debt settle command args. |
+| `def` | `parse_debt_number_selection(selection: str)` | Parse debt detail number/range selection into ordered unique numbers. |
+| `def` | `parse_debt_settle_command_args(args: list[str])` | Parse `/debt_settle` args for all-person or selected-detail settlement preview. |
 | `def` | `parse_natural_debt_settle_text(text: str)` | Parse input into structured data for natural debt settle text. |
-| `def` | `resolve_selected_debts_from_last_detail(context: ContextTypes.DEFAULT_TYPE, person_name: str, numbers: list[str])` | Resolve a user input or reference for selected debts from last detail. |
-| `def` | `build_selected_debt_total_text(payload: dict)` | Build the data structure or message text for selected debt total text. |
-| `def` | `build_selected_debt_settle_preview_text(payload: dict)` | Build the data structure or message text for selected debt settle preview text. |
+| `def` | `resolve_selected_debts_from_last_detail(context: ContextTypes.DEFAULT_TYPE, person_name: str, numbers: list[str])` | Resolve numbered debt selections from the latest `/hutang Nama` detail. |
+| `def` | `resolve_all_active_debts_for_person(person_name: str)` | Resolve all active debt rows for one counterparty. |
+| `def` | `build_selected_debt_total_text(payload: dict)` | Build informational total text for selected debt rows. |
+| `def` | `build_selected_debt_settle_preview_text(payload: dict)` | Build final preview text before selected debt settlement is saved. |
 | `def` | `build_selected_settle_catatan(payload: dict, result: dict)` | Build the data structure or message text for selected settle catatan. |
-| `def` | `prepare_selected_debt_settle_payload(context: ContextTypes.DEFAULT_TYPE, parsed: dict)` | Helper for prepare selected debt settle payload in the application. |
+| `def` | `prepare_selected_debt_settle_payload(context: ContextTypes.DEFAULT_TYPE, parsed: dict)` | Prepare debt settlement preview payload and auto-fill omitted amount from net debt. |
 | `def` | `selected_debt_settle_overpay_keyboard()` | Helper for selected debt settle overpay keyboard in the application. |
 | `async def` | `debt_settle_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for debt settle. |
 | `async def` | `handle_natural_debt_settle(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str)` | Helper for handle natural debt settle in the application. |
@@ -304,14 +305,15 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `async def` | `debt_edit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for debt edit. |
 | `def` | `format_debt_created_date_for_display(debt: dict)` | Format data into a readable display for debt created date for display. |
 | `def` | `debt_detail_sort_key_for_display(debt: dict)` | Helper for debt detail sort key for display in the Telegram bot flow. |
-| `def` | `parse_debt_number_selection(selection: str)` | Parse input into structured data for debt number selection. |
-| `def` | `parse_debt_settle_command_args(args: list[str])` | Parse input into structured data for debt settle command args. |
+| `def` | `parse_debt_number_selection(selection: str)` | Parse debt detail number/range selection into ordered unique numbers. |
+| `def` | `parse_debt_settle_command_args(args: list[str])` | Parse `/debt_settle` args for all-person or selected-detail settlement preview. |
 | `def` | `parse_natural_debt_settle_text(text: str)` | Parse input into structured data for natural debt settle text. |
-| `def` | `resolve_selected_debts_from_last_detail(context: ContextTypes.DEFAULT_TYPE, person_name: str, numbers: list[str])` | Resolve a user input or reference for selected debts from last detail. |
-| `def` | `build_selected_debt_total_text(payload: dict)` | Build the data structure or message text for selected debt total text. |
-| `def` | `build_selected_debt_settle_preview_text(payload: dict)` | Build the data structure or message text for selected debt settle preview text. |
+| `def` | `resolve_selected_debts_from_last_detail(context: ContextTypes.DEFAULT_TYPE, person_name: str, numbers: list[str])` | Resolve numbered debt selections from the latest `/hutang Nama` detail. |
+| `def` | `resolve_all_active_debts_for_person(person_name: str)` | Resolve all active debt rows for one counterparty. |
+| `def` | `build_selected_debt_total_text(payload: dict)` | Build informational total text for selected debt rows. |
+| `def` | `build_selected_debt_settle_preview_text(payload: dict)` | Build final preview text before selected debt settlement is saved. |
 | `def` | `build_selected_settle_catatan(payload: dict, result: dict)` | Build the data structure or message text for selected settle catatan. |
-| `def` | `prepare_selected_debt_settle_payload(context: ContextTypes.DEFAULT_TYPE, parsed: dict)` | Helper for prepare selected debt settle payload in the Telegram bot flow. |
+| `def` | `prepare_selected_debt_settle_payload(context: ContextTypes.DEFAULT_TYPE, parsed: dict)` | Prepare debt settlement preview payload and auto-fill omitted amount from net debt. |
 | `def` | `selected_debt_settle_overpay_keyboard()` | Helper for selected debt settle overpay keyboard in the Telegram bot flow. |
 | `async def` | `debt_settle_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for debt settle. |
 | `async def` | `handle_natural_debt_settle(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str)` | Helper for handle natural debt settle in the Telegram bot flow. |
@@ -839,16 +841,18 @@ This file is a quick reference for top-level functions and classes. It is useful
 
 | Type | Name / Signature | Purpose |
 |---|---|---|
+| `def` | `safe_float(value, default: float=0.0)` | Convert chart input values into floats safely. |
+| `def` | `get_chart_effective_expense_amount(txn: dict)` | Return net expense for chart calculations without importing Google Sheets dependencies. |
 | `def` | `compact_rupiah(amount: float)` | Format rupiah values compactly for chart labels. |
 | `def` | `transaction_day(txn: dict)` | Extract day-of-month from a transaction date. |
 | `def` | `monthly_day_count(month_label: str)` | Return the day count for a `YYYY-MM` month. |
 | `def` | `daily_net_expense_series(report: dict)` | Build daily net expense totals for a monthly report. |
 | `def` | `category_net_expense_items(report: dict, limit: int=8)` | Return category rows sorted by net expense. |
-| `class` | `PngCanvas` | Small dependency-free RGB canvas used by PNG chart generation. |
-| `def` | `png_chunk(chunk_type: bytes, data: bytes)` | Serialize one PNG chunk with CRC. |
-| `def` | `text_pixel_width(text: str, *, scale: int=2)` | Measure bitmap text width for PNG labels. |
+| `def` | `_load_matplotlib_pyplot()` | Load matplotlib with the headless `Agg` PNG backend. |
+| `def` | `_configure_matplotlib_style(plt)` | Apply the shared chart style, including the clean sans-serif font stack. |
+| `def` | `_format_axis_rupiah(value: float, _position: int \| None=None)` | Format chart axis ticks as compact rupiah labels. |
+| `def` | `_finalize_figure_to_png_bytes(fig, plt)` | Serialize a matplotlib figure into PNG bytes and close it. |
 | `def` | `truncate_label(value: str, max_chars: int)` | Shorten chart labels so PNG layout stays stable. |
-| `def` | `draw_chart_header(canvas: PngCanvas, title: str, subtitle: str='')` | Draw the common PNG chart title and subtitle. |
 | `def` | `build_empty_chart_png_bytes(title: str, message: str)` | Build an empty-state PNG chart. |
 | `def` | `build_monthly_timeseries_png_bytes(report: dict)` | Build a daily net-expense line chart PNG. |
 | `def` | `build_monthly_bar_png_bytes(report: dict)` | Build a category net-expense bar chart PNG. |

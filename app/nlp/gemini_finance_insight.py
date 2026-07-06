@@ -1,18 +1,25 @@
 """Gemini-based finance insight generator for ask, audit, coach, and monthly insight modes."""
 
 
+# Import __future__ so this module can use its helpers.
 from __future__ import annotations
 
+# Import json for this module's local operations.
 import json
+# Import os for this module's local operations.
 import os
 
+# Import app.config so this module can use its helpers.
 from app.config import GEMINI_API_KEY
+# Import app.nlp.gemini_langchain_client so this module can use its helpers.
 from app.nlp.gemini_langchain_client import generate_text_with_gemini
+# Import app.services.finance_insight_service so this module can use its helpers.
 from app.services.finance_insight_service import deterministic_audit_text, deterministic_monthly_text
 
 
 GEMINI_INSIGHT_MODEL = os.getenv("GEMINI_INSIGHT_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
 
+# Open a multi-line structure for the values below.
 MODE_LABELS = {
     "monthly_auto": "Insight otomatis setelah laporan bulanan",
     "monthly_insight": "Monthly narrative report",
@@ -20,16 +27,33 @@ MODE_LABELS = {
     "audit": "Deteksi anomali dan data quality checker",
     "budget_assistant": "Budget assistant",
     "coach": "Financial coach ringan",
+# Close the structure that was opened above.
 }
 
 
+# Define json dumps for callers in this flow.
 def _json_dumps(data: dict) -> str:
-    """Helper for json dumps in the NLP and parser layer."""
+    """Coordinate the json dumps logic in the NLP/parser layer.
+
+    Args:
+        data: Structured input data used by the current flow.
+
+    Returns:
+        `str` value as defined by the function signature.
+
+    Side effects:
+        None beyond the side effects already performed by the existing implementation.
+
+    Flow constraints:
+        Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
+    """
+    # Return json.dumps(data, ensure_ascii=False, indent=2, default=str) to the caller.
     return json.dumps(data, ensure_ascii=False, indent=2, default=str)
 
 
 def build_finance_insight_prompt(mode: str, context: dict, question: str = "") -> str:
     """Build the data structure or message text for finance insight prompt."""
+    # Prepare mode label for the next step.
     mode_label = MODE_LABELS.get(mode, mode)
     question_line = question or context.get("question") or "-"
 
@@ -39,6 +63,7 @@ def build_finance_insight_prompt(mode: str, context: dict, question: str = "") -
         length_rule = "Jawab ringkas, natural, dan actionable. Jika tidak ada issues/anomalies, jawab tenang seperti: ✅ Tidak ada anomali bulan ini. Data transaksi bulan ini terlihat cukup aman."
     elif mode == "coach":
         length_rule = "Jawab sebagai financial coach ringan: realistis, berbasis angka, tanpa menghakimi. Beri 3-5 aksi konkret."
+    # Handle the fallback path after earlier conditions are skipped.
     else:
         length_rule = "Jawab natural seperti financial assistant pribadi: mulai dari temuan utama, sebut angka paling penting, jelaskan kemungkinan penyebab, lalu beri 2-3 saran praktis. Tetap ringkas."
 
@@ -82,33 +107,65 @@ Konteks JSON:
 
 
 def generate_finance_insight(mode: str, context: dict, question: str = "") -> str:
-    """Helper for generate finance insight in the NLP and parser layer."""
+    """Coordinate the generate finance insight logic in the NLP/parser layer.
+
+    Args:
+        mode: Input value supplied by the caller; accepted shape follows the function signature and local validation.
+        context: Telegram callback context containing args, bot data, user data, and job data.
+        question: Input value supplied by the caller; accepted shape follows the function signature and local validation.
+
+    Returns:
+        `str` value as defined by the function signature.
+
+    Side effects:
+        None beyond the side effects already performed by the existing implementation.
+
+    Flow constraints:
+        Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
+    """
     if mode == "audit" and not context.get("data_quality_issues") and not context.get("anomalies"):
+        # Return deterministic_audit_text(context) to the caller.
         return deterministic_audit_text(context)
 
+    # Handle the missing or empty GEMINI_API_KEY case.
     if not GEMINI_API_KEY:
         if mode == "audit":
+            # Return deterministic_audit_text(context) to the caller.
             return deterministic_audit_text(context)
         if "monthly" in mode or mode in {"coach", "budget_assistant", "ask"}:
             base = context.get("monthly_context") if "monthly_context" in context else context
+            # Return deterministic_monthly_text(base) to the caller.
             return deterministic_monthly_text(base)
         return "GEMINI_API_KEY belum tersedia, jadi insight AI belum bisa dibuat."
 
+    # Run this operation in a guarded block so failures can be handled.
     try:
+        # Prepare prompt for the next step.
         prompt = build_finance_insight_prompt(mode, context, question=question)
+        # Open a multi-line structure for the values below.
         text = generate_text_with_gemini(
+            # Include this value in the surrounding collection or call.
             prompt,
+            # Prepare model name for the next step.
             model_name=GEMINI_INSIGHT_MODEL,
+            # Prepare temperature for the next step.
             temperature=0.25,
+        # Close the structure that was opened above.
         ).strip()
+        # Handle the case where text.
         if text:
+            # Return text to the caller.
             return text
+    # Handle an expected failure from the guarded operation above.
     except Exception as e:
         fallback_prefix = f"⚠️ Insight Gemini gagal dibuat: {str(e)}\n\nFallback lokal:\n"
         if mode == "audit":
+            # Return fallback_prefix + deterministic_audit_text(context) to the caller.
             return fallback_prefix + deterministic_audit_text(context)
         base = context.get("monthly_context") if "monthly_context" in context else context
+        # Return fallback_prefix + deterministic_monthly_text(base) to the caller.
         return fallback_prefix + deterministic_monthly_text(base)
 
     base = context.get("monthly_context") if "monthly_context" in context else context
+    # Return deterministic_monthly_text(base) to the caller.
     return deterministic_monthly_text(base)

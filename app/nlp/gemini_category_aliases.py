@@ -5,14 +5,19 @@ The final aliases are still normalized by `resolver_service` before they are
 shown in preview or written to Google Sheets.
 """
 
+# Import __future__ so this module can use its helpers.
 from __future__ import annotations
 
+# Import json for this module's local operations.
 import json
+# Import re for this module's local operations.
 import re
 
+# Import app.nlp.gemini_langchain_client so this module can use its helpers.
 from app.nlp.gemini_langchain_client import generate_text_with_gemini
 
 
+# Define extract json object for callers in this flow.
 def _extract_json_object(text: str) -> dict:
     """Extract the first JSON object from a Gemini text response.
 
@@ -29,31 +34,46 @@ def _extract_json_object(text: str) -> dict:
     raw = str(text or "").strip()
     # Empty model output cannot produce aliases.
     if not raw:
+        # Return {} to the caller.
         return {}
 
     # First try the ideal contract: response is already pure JSON.
     try:
+        # Return json.loads(raw) to the caller.
         return json.loads(raw)
+    # Handle an expected failure from the guarded operation above.
     except Exception:
+        # Keep this intentionally empty block valid.
         pass
 
     # If Gemini wraps JSON in prose, extract the first object-shaped block.
     match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+    # Handle the missing or empty match case.
     if not match:
+        # Return {} to the caller.
         return {}
 
-    # Return parsed object only when the extracted block is valid JSON.
+    # Run this operation in a guarded block so failures can be handled.
     try:
+        # Return json.loads(match.group(0)) to the caller.
         return json.loads(match.group(0))
+    # Handle an expected failure from the guarded operation above.
     except Exception:
+        # Return {} to the caller.
         return {}
 
 
+# Define generate category alias candidates for callers in this flow.
 def generate_category_alias_candidates(
+    # Include this value in the surrounding collection or call.
     category_name: str,
+    # Include this value in the surrounding collection or call.
     transaction_type: str,
+    # Include this value in the surrounding collection or call.
     *,
+    # Include this value in the surrounding collection or call.
     limit: int = 20,
+# Close the structure that was opened above.
 ) -> list[str]:
     """Generate raw alias candidates for a finance category using Gemini.
 
@@ -115,7 +135,10 @@ Rules:
 
     # Fallback parser handles non-JSON model output without failing the wizard.
     return [
+        # Run this statement as part of the current workflow.
         part.strip()
         for part in re.split(r"[,;\n]+", response_text)
+        # Handle the case where part.strip().
         if part.strip()
+    # Close the structure that was opened above.
     ]

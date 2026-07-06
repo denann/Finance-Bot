@@ -1,7 +1,9 @@
 """Small utilities for cleaning pending Telegram conversation state."""
 
+# Import __future__ so this module can use its helpers.
 from __future__ import annotations
 
+# Import typing so this module can use its helpers.
 from typing import Any
 
 # Single edit category ambiguity state.
@@ -23,7 +25,9 @@ PENDING_FLOW_KEYS = (
     "pending_delete_refs",
     "pending_delete_txn_ids",
     "pending_edit_txn",
+    # Include this value in the surrounding collection or call.
     EDIT_CATEGORY_CHOICE_KEY,
+    # Include this value in the surrounding collection or call.
     BULK_EDIT_CATEGORY_DECISION_KEY,
     "pending_bulk_edit_txns",
     "pending_debt_void",
@@ -56,8 +60,10 @@ PENDING_FLOW_KEYS = (
     "pending_recurring_add_prompt_message_id",
     "pending_preview_edit_prompt_message_id",
     "mixed_review_preview_sent",
+# Close the structure that was opened above.
 )
 
+# Open a multi-line structure for the values below.
 FLOW_LABELS = {
     "pending_parsed": "preview transaksi",
     "pending_batch": "preview batch transaksi",
@@ -100,55 +106,83 @@ FLOW_LABELS = {
     "pending_recurring_add_flow": "wizard recurring_add",
     "pending_recurring_confirm": "preview recurring transaction",
     "pending_budget_confirm": "preview set budget",
+# Close the structure that was opened above.
 }
 
 
+# Define active pending flow keys for callers in this flow.
 def active_pending_flow_keys(context: Any) -> list[str]:
     """Return pending flow keys that currently exist in `context.user_data`."""
     user_data = getattr(context, "user_data", {}) or {}
+    # Return [key for key in PENDING_FLOW_KEYS if key in user_data] to the caller.
     return [key for key in PENDING_FLOW_KEYS if key in user_data]
 
 
+# Define has active pending flow for callers in this flow.
 def has_active_pending_flow(context: Any) -> bool:
     """Check whether the user has an unfinished wizard, preview, or confirmation flow."""
+    # Return bool(active_pending_flow_keys(context)) to the caller.
     return bool(active_pending_flow_keys(context))
 
 
+# Define describe active pending flow for callers in this flow.
 def describe_active_pending_flow(context: Any) -> str:
     """Build a short human-readable label for the current active flow."""
+    # Prepare keys for the next step.
     keys = active_pending_flow_keys(context)
+    # Handle the missing or empty keys case.
     if not keys:
         return ""
 
+    # Prepare labels for the next step.
     labels = []
+    # Prepare seen for the next step.
     seen = set()
+    # Process each key in the current collection.
     for key in keys:
+        # Prepare label for the next step.
         label = FLOW_LABELS.get(key, key)
+        # Handle the case where label not in seen.
         if label not in seen:
+            # Update labels with the current value.
             labels.append(label)
+            # Update seen with the current value.
             seen.add(label)
 
+    # Handle the case where len(labels) == 1.
     if len(labels) == 1:
+        # Return labels[0] to the caller.
         return labels[0]
+    # Handle the case where len(labels) <= 3.
     if len(labels) <= 3:
         return ", ".join(labels)
     return ", ".join(labels[:3]) + f", dan {len(labels) - 3} state lain"
 
 
+# Define clear pending flow state for callers in this flow.
 def clear_pending_flow_state(context: Any) -> list[str]:
     """Remove all transient pending flow state and return the removed keys."""
+    # Prepare removed for the next step.
     removed = []
     user_data = getattr(context, "user_data", None)
+    # Handle the case where user_data is None.
     if user_data is None:
+        # Return removed to the caller.
         return removed
 
+    # Process each key in the current collection.
     for key in PENDING_FLOW_KEYS:
+        # Handle the case where key in user_data.
         if key in user_data:
+            # Update user data with the current value.
             user_data.pop(key, None)
+            # Update removed with the current value.
             removed.append(key)
+    # Return removed to the caller.
     return removed
 
 
+# Define clear pending flow state before command for callers in this flow.
 def clear_pending_flow_state_before_command(context: Any, command_name: str | None = None) -> list[str]:
     """Clear stale wizard state before a new explicit slash command runs.
 
@@ -161,5 +195,7 @@ def clear_pending_flow_state_before_command(context: Any, command_name: str | No
     Returns:
         List of removed context.user_data keys.
     """
+    # Prepare _ for the next step.
     _ = command_name
+    # Return clear_pending_flow_state(context) to the caller.
     return clear_pending_flow_state(context)
