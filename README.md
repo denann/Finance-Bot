@@ -418,9 +418,13 @@ saya pinjam 100k ke Budi
 catat utang ke Budi 200k
 Budi bayar 25k ke DANA
 saya bayar hutang Budi 50k dari BRI
+/debt_settle Budi
+/debt_settle Budi 1-3
 ```
 
 Use `catat utang ke Budi 200k` when the debt should be recorded without increasing any account balance. This is different from `saya pinjam 100k ke Budi`, which represents money received and therefore needs an account cashflow.
+
+Use `/debt_settle Budi` to settle all active debt rows for Budi with an automatically calculated net amount after preview confirmation. Use `/debt_settle Budi 1-3` to settle only numbered rows from the latest `/hutang Budi` detail output.
 
 ### Talangin and ditalangin
 
@@ -456,7 +460,7 @@ nanti bayar wifi 285k bulan depan
 /grafik pie 2026-06
 ```
 
-Expense totals, Top 3 expenses, category ranking, and percentage contribution use net expense after active receivable shares. When gross differs from net, the bot displays the value as `net (gross)`. `/bulanan` sends three outputs: monthly summary, Gemini insight, and a monthly net-expense time series PNG chart. `/grafik` is read-only and sends a PNG chart document without writing to Google Sheets.
+Expense totals, Top 3 expenses, category ranking, and percentage contribution use net expense after active receivable shares. When gross differs from net, the bot displays the value as `net (gross)`. `/bulanan` sends three outputs: monthly summary, Gemini insight, and a monthly net-expense time series PNG chart. `/grafik` is read-only and sends a matplotlib-generated PNG chart document without writing to Google Sheets.
 
 ### Categories
 

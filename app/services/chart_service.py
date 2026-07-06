@@ -1,352 +1,454 @@
-"""Chart generation for monthly finance reports without external plotting dependencies."""
+"""Matplotlib-based PNG chart generation for monthly finance reports."""
 
-
+# Import __future__ so this module can use its helpers.
 from __future__ import annotations
 
+# Import calendar so this module can use its helpers.
 from calendar import monthrange
-from math import atan2, pi
+# Import io so this module can use its helpers.
+from io import BytesIO
+# Import pathlib so this module can use its helpers.
 from pathlib import Path
-import struct
+# Import tempfile for this module's local operations.
 import tempfile
-import zlib
-
-from app.services.report_service import get_effective_expense_amount, safe_float
 
 
-def compact_rupiah(amount: float) -> str:
-    """Format a rupiah amount compactly for chart labels.
+# Prepare CHART DPI for the next step.
+CHART_DPI = 140
+# Prepare CHART FIGSIZE for the next step.
+CHART_FIGSIZE = (9.6, 5.4)
+CHART_FONT_FAMILY = ["DejaVu Sans", "Segoe UI", "Arial", "sans-serif"]
+CHART_TEXT = "#111827"
+CHART_MUTED = "#6b7280"
+CHART_GRID = "#e5e7eb"
+# Open a multi-line structure for the values below.
+CHART_COLORS = [
+    "#2563eb",
+    "#16a34a",
+    "#dc2626",
+    "#d97706",
+    "#7c3aed",
+    "#0891b2",
+    "#be185d",
+    "#4b5563",
+# Close the structure that was opened above.
+]
+
+
+# Define safe float for callers in this flow.
+def safe_float(value, default: float = 0.0) -> float:
+    """Convert chart input values into float safely.
 
     Args:
-        amount: Numeric rupiah value.
+        value: Raw numeric value from report or transaction dictionaries. This
+            may be an int, float, numeric string, empty value, or `None`.
+        default: Fallback float returned when conversion fails.
 
     Returns:
-        Short label such as `500k`, `1.2jt`, or `0`.
+        Float representation of `value`, or `default` when the value cannot be
+        converted.
+
+    Side effects:
+        None.
+
+    Flow constraints:
+        This helper is local to chart rendering and must not normalize values
+        back into report data or Google Sheets.
     """
+    # Run this operation in a guarded block so failures can be handled.
+    try:
+        # Return float(value) to the caller.
+        return float(value)
+    # Handle an expected failure from the guarded operation above.
+    except Exception:
+        # Return float(default) to the caller.
+        return float(default)
+
+
+# Define get chart effective expense amount for callers in this flow.
+def get_chart_effective_expense_amount(txn: dict) -> float:
+    """Return the net expense amount used by chart calculations.
+
+    Args:
+        txn: Transaction dict from an enriched monthly report. Expense rows may
+            include `net_expense_after_receivable`; otherwise the helper falls
+            back to `amount - debt_receivable_original/debt_receivable_remaining`.
+
+    Returns:
+        Float net expense amount. Non-expense rows return their raw amount so
+        mixed-row callers do not fail.
+
+    Side effects:
+        None. This helper only reads the transaction dict.
+
+    Flow constraints:
+        Keep this logic aligned with `report_service.get_effective_expense_amount`
+        without importing `report_service`, because that module loads Google
+        Sheets dependencies that are unnecessary for chart rendering.
+    """
+    amount = safe_float((txn or {}).get("amount", 0))
+    if str((txn or {}).get("type", "") or "").strip().lower() != "expense":
+        # Return amount to the caller.
+        return amount
+    if "net_expense_after_receivable" in (txn or {}):
+        return max(safe_float((txn or {}).get("net_expense_after_receivable", amount)), 0.0)
+    # Open a multi-line structure for the values below.
+    receivable = safe_float(
+        (txn or {}).get("debt_receivable_original", (txn or {}).get("debt_receivable_remaining", 0))
+    # Close the structure that was opened above.
+    )
+    # Return max(amount - receivable, 0.0) to the caller.
+    return max(amount - receivable, 0.0)
+
+
+# Define compact rupiah for callers in this flow.
+def compact_rupiah(amount: float) -> str:
+    """Format a rupiah amount into a short chart-safe label.
+
+    Args:
+        amount: Numeric rupiah value. `None`, empty, or falsey values are
+            treated as `0`.
+
+    Returns:
+        Short display string such as `500k`, `1.2jt`, `-250k`, or `0`.
+
+    Side effects:
+        None. This helper only formats numeric input.
+
+    Flow constraints:
+        Used only for chart labels; it must not change the underlying report
+        totals used by `/bulanan` or `/grafik`.
+    """
+    # Prepare value for the next step.
     value = float(amount or 0)
+    # Prepare abs value for the next step.
     abs_value = abs(value)
     sign = "-" if value < 0 else ""
+    # Handle the case where abs_value >= 1_000_000.
     if abs_value >= 1_000_000:
         return f"{sign}{abs_value / 1_000_000:.1f}jt".replace(".0jt", "jt")
+    # Handle the case where abs_value >= 1_000.
     if abs_value >= 1_000:
         return f"{sign}{abs_value / 1_000:.0f}k"
     return f"{sign}{abs_value:.0f}"
 
 
+# Define transaction day for callers in this flow.
 def transaction_day(txn: dict) -> int | None:
-    """Extract the day number from a transaction date.
+    """Extract the day-of-month from a transaction row.
 
     Args:
-        txn: Transaction row with a `date` value in `YYYY-MM-DD` format.
+        txn: Transaction-like dict containing a `date` field in `YYYY-MM-DD`
+            format.
 
     Returns:
-        Day of month as an integer, or `None` when the date is invalid.
+        Day number from `1` to `31`, or `None` when the date is missing or
+        invalid.
+
+    Side effects:
+        None. Invalid input is ignored instead of raising so chart generation
+        can continue.
+
+    Flow constraints:
+        This helper is read-only and must not normalize or write transaction
+        dates back to Google Sheets.
     """
     raw = str((txn or {}).get("date", "") or "").strip()
+    # Run this operation in a guarded block so failures can be handled.
     try:
         return int(raw.split("-")[2])
+    # Handle an expected failure from the guarded operation above.
     except Exception:
+        # Return None to the caller.
         return None
 
 
+# Define monthly day count for callers in this flow.
 def monthly_day_count(month_label: str) -> int:
-    """Return the number of days in a `YYYY-MM` month label.
+    """Return the number of days represented by a `YYYY-MM` month label.
 
     Args:
         month_label: Month string such as `2026-06`.
 
     Returns:
-        Integer day count for the month. Invalid input falls back to `31` so
-        chart generation can still return a safe placeholder or rough series.
+        Integer day count for the requested month. Invalid input falls back to
+        `31` so a chart can still render a safe placeholder.
+
+    Side effects:
+        None.
+
+    Flow constraints:
+        The fallback is only for rendering tolerance; command handlers still own
+        user-facing month validation.
     """
+    # Run this operation in a guarded block so failures can be handled.
     try:
         year, month = [int(x) for x in str(month_label or "").split("-", 1)]
+        # Return monthrange(year, month)[1] to the caller.
         return monthrange(year, month)[1]
+    # Handle an expected failure from the guarded operation above.
     except Exception:
+        # Return 31 to the caller.
         return 31
 
 
+# Define daily net expense series for callers in this flow.
 def daily_net_expense_series(report: dict) -> list[float]:
-    """Build daily net expense values for a monthly report.
+    """Build daily net expense values from a monthly report.
 
     Args:
-        report: Monthly report dict containing enriched `transactions`.
+        report: Monthly report dict from `get_monthly_report`, expected to
+            contain `month` and an iterable `transactions` list.
 
     Returns:
-        List of daily net expense totals, one value per day in the month.
+        List of daily net expense totals. The list length follows the target
+        month and each item is a float rupiah amount for that day.
+
+    Side effects:
+        None. This helper only reads report data.
+
+    Flow constraints:
+        Expense values use `get_chart_effective_expense_amount` so charts stay
+        consistent with net-expense monthly summaries.
     """
     days = monthly_day_count((report or {}).get("month", ""))
+    # Prepare values for the next step.
     values = [0.0 for _ in range(days)]
     for txn in (report or {}).get("transactions", []) or []:
         if str((txn or {}).get("type", "")).strip().lower() != "expense":
+            # Skip the rest of this loop iteration after handling this case.
             continue
+        # Prepare day for the next step.
         day = transaction_day(txn)
+        # Handle the case where day is None or day < 1 or day > days.
         if day is None or day < 1 or day > days:
+            # Skip the rest of this loop iteration after handling this case.
             continue
-        values[day - 1] += get_effective_expense_amount(txn)
+        # Run this statement as part of the current workflow.
+        values[day - 1] += get_chart_effective_expense_amount(txn)
+    # Return values to the caller.
     return values
 
 
+# Define category net expense items for callers in this flow.
 def category_net_expense_items(report: dict, limit: int = 8) -> list[tuple[str, float, float]]:
-    """Return category rows as `(category, net, gross)` tuples.
+    """Return category totals sorted by net expense.
 
     Args:
-        report: Monthly report dict with `by_category` and `by_category_gross`.
-        limit: Maximum number of categories to return.
+        report: Monthly report dict containing `by_category` for net totals and
+            optional `by_category_gross` for gross comparison labels.
+        limit: Maximum number of category rows to return.
 
     Returns:
-        Sorted category rows using net expense as the sort key.
+        List of `(category, net_amount, gross_amount)` tuples sorted descending
+        by `net_amount`.
+
+    Side effects:
+        None.
+
+    Flow constraints:
+        Sorting must use net expense so `/bulanan` and `/grafik` do not mix net
+        and gross ranking behavior.
     """
     by_category = (report or {}).get("by_category") or {}
     by_category_gross = (report or {}).get("by_category_gross") or {}
+    # Open a multi-line structure for the values below.
     rows = [
+        # Run this statement as part of the current workflow.
         (str(category), float(net or 0), float(by_category_gross.get(category, net) or 0))
+        # Process each category, net in the current collection.
         for category, net in by_category.items()
+        # Handle the case where float(net or 0) > 0.
         if float(net or 0) > 0
+    # Close the structure that was opened above.
     ]
+    # Return sorted(rows, key=lambda row: row[1], reverse=True)[:limit] to the caller.
     return sorted(rows, key=lambda row: row[1], reverse=True)[:limit]
 
 
-PNG_WIDTH = 980
-PNG_HEIGHT = 520
-PNG_BACKGROUND = (255, 255, 255)
-PNG_TEXT = (17, 24, 39)
-PNG_MUTED = (107, 114, 128)
-PNG_GRID = (229, 231, 235)
-PNG_AXIS = (31, 41, 55)
-PNG_COLORS = [
-    (37, 99, 235),
-    (220, 38, 38),
-    (22, 163, 74),
-    (245, 158, 11),
-    (124, 58, 237),
-    (8, 145, 178),
-    (219, 39, 119),
-    (75, 85, 99),
-]
-
-
-# Minimal 5x7 bitmap font for chart labels. This keeps PNG output dependency-free.
-FONT_5X7 = {
-    " ": ["000", "000", "000", "000", "000", "000", "000"],
-    "!": ["010", "010", "010", "010", "010", "000", "010"],
-    "?": ["11110", "00001", "00001", "00110", "00100", "00000", "00100"],
-    ".": ["000", "000", "000", "000", "000", "000", "010"],
-    ",": ["000", "000", "000", "000", "000", "010", "100"],
-    ":": ["000", "010", "000", "000", "010", "000", "000"],
-    "-": ["00000", "00000", "00000", "11111", "00000", "00000", "00000"],
-    "/": ["00001", "00010", "00100", "01000", "10000", "00000", "00000"],
-    "%": ["11001", "11010", "00100", "01000", "10110", "00110", "00000"],
-    "(": ["001", "010", "100", "100", "100", "010", "001"],
-    ")": ["100", "010", "001", "001", "001", "010", "100"],
-    "&": ["01100", "10010", "10100", "01000", "10101", "10010", "01101"],
-    "+": ["00000", "00100", "00100", "11111", "00100", "00100", "00000"],
-    "0": ["01110", "10001", "10011", "10101", "11001", "10001", "01110"],
-    "1": ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
-    "2": ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
-    "3": ["11110", "00001", "00001", "01110", "00001", "00001", "11110"],
-    "4": ["00010", "00110", "01010", "10010", "11111", "00010", "00010"],
-    "5": ["11111", "10000", "10000", "11110", "00001", "00001", "11110"],
-    "6": ["00110", "01000", "10000", "11110", "10001", "10001", "01110"],
-    "7": ["11111", "00001", "00010", "00100", "01000", "01000", "01000"],
-    "8": ["01110", "10001", "10001", "01110", "10001", "10001", "01110"],
-    "9": ["01110", "10001", "10001", "01111", "00001", "00010", "11100"],
-    "A": ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
-    "B": ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
-    "C": ["01110", "10001", "10000", "10000", "10000", "10001", "01110"],
-    "D": ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
-    "E": ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
-    "F": ["11111", "10000", "10000", "11110", "10000", "10000", "10000"],
-    "G": ["01110", "10001", "10000", "10111", "10001", "10001", "01110"],
-    "H": ["10001", "10001", "10001", "11111", "10001", "10001", "10001"],
-    "I": ["01110", "00100", "00100", "00100", "00100", "00100", "01110"],
-    "J": ["00111", "00010", "00010", "00010", "10010", "10010", "01100"],
-    "K": ["10001", "10010", "10100", "11000", "10100", "10010", "10001"],
-    "L": ["10000", "10000", "10000", "10000", "10000", "10000", "11111"],
-    "M": ["10001", "11011", "10101", "10101", "10001", "10001", "10001"],
-    "N": ["10001", "11001", "10101", "10011", "10001", "10001", "10001"],
-    "O": ["01110", "10001", "10001", "10001", "10001", "10001", "01110"],
-    "P": ["11110", "10001", "10001", "11110", "10000", "10000", "10000"],
-    "Q": ["01110", "10001", "10001", "10001", "10101", "10010", "01101"],
-    "R": ["11110", "10001", "10001", "11110", "10100", "10010", "10001"],
-    "S": ["01111", "10000", "10000", "01110", "00001", "00001", "11110"],
-    "T": ["11111", "00100", "00100", "00100", "00100", "00100", "00100"],
-    "U": ["10001", "10001", "10001", "10001", "10001", "10001", "01110"],
-    "V": ["10001", "10001", "10001", "10001", "10001", "01010", "00100"],
-    "W": ["10001", "10001", "10001", "10101", "10101", "10101", "01010"],
-    "X": ["10001", "10001", "01010", "00100", "01010", "10001", "10001"],
-    "Y": ["10001", "10001", "01010", "00100", "00100", "00100", "00100"],
-    "Z": ["11111", "00001", "00010", "00100", "01000", "10000", "11111"],
-}
-
-
-class PngCanvas:
-    """Tiny RGB canvas used to draw finance charts into PNG bytes.
+# Define load matplotlib pyplot for callers in this flow.
+def _load_matplotlib_pyplot():
+    """Load matplotlib with the non-interactive PNG backend.
 
     Args:
-        width: Pixel width of the output image.
-        height: Pixel height of the output image.
-        background: RGB tuple used to initialize every pixel.
-
-    Methods accept integer coordinates in image pixels. Drawing outside the
-    canvas is clipped, so chart generation can keep simple coordinate math.
-    """
-
-    def __init__(self, width: int = PNG_WIDTH, height: int = PNG_HEIGHT, background: tuple[int, int, int] = PNG_BACKGROUND):
-        self.width = int(width)
-        self.height = int(height)
-        self.pixels = bytearray(background * (self.width * self.height))
-
-    def set_pixel(self, x: int, y: int, color: tuple[int, int, int]) -> None:
-        """Set one pixel when the coordinate is inside the canvas."""
-        if x < 0 or y < 0 or x >= self.width or y >= self.height:
-            return
-        offset = (int(y) * self.width + int(x)) * 3
-        self.pixels[offset:offset + 3] = bytes(color)
-
-    def fill_rect(self, x: int, y: int, width: int, height: int, color: tuple[int, int, int]) -> None:
-        """Draw a filled rectangle clipped to the image boundary."""
-        x0 = max(0, int(x))
-        y0 = max(0, int(y))
-        x1 = min(self.width, int(x + width))
-        y1 = min(self.height, int(y + height))
-        if x1 <= x0 or y1 <= y0:
-            return
-        row = bytes(color) * (x1 - x0)
-        for yy in range(y0, y1):
-            offset = (yy * self.width + x0) * 3
-            self.pixels[offset:offset + len(row)] = row
-
-    def draw_line(self, x0: float, y0: float, x1: float, y1: float, color: tuple[int, int, int], *, width: int = 1) -> None:
-        """Draw a line with Bresenham-style integer stepping."""
-        x0_i, y0_i, x1_i, y1_i = int(round(x0)), int(round(y0)), int(round(x1)), int(round(y1))
-        dx = abs(x1_i - x0_i)
-        sx = 1 if x0_i < x1_i else -1
-        dy = -abs(y1_i - y0_i)
-        sy = 1 if y0_i < y1_i else -1
-        err = dx + dy
-        radius = max(0, int(width) // 2)
-        while True:
-            for yy in range(y0_i - radius, y0_i + radius + 1):
-                for xx in range(x0_i - radius, x0_i + radius + 1):
-                    self.set_pixel(xx, yy, color)
-            if x0_i == x1_i and y0_i == y1_i:
-                break
-            e2 = 2 * err
-            if e2 >= dy:
-                err += dy
-                x0_i += sx
-            if e2 <= dx:
-                err += dx
-                y0_i += sy
-
-    def fill_circle(self, cx: int, cy: int, radius: int, color: tuple[int, int, int]) -> None:
-        """Draw a filled circle for points or pie center labels."""
-        r2 = int(radius) * int(radius)
-        for y in range(int(cy) - int(radius), int(cy) + int(radius) + 1):
-            for x in range(int(cx) - int(radius), int(cx) + int(radius) + 1):
-                if (x - int(cx)) ** 2 + (y - int(cy)) ** 2 <= r2:
-                    self.set_pixel(x, y, color)
-
-    def draw_text(self, x: float, y: float, text: str, *, scale: int = 2, color: tuple[int, int, int] = PNG_TEXT, anchor: str = "start") -> None:
-        """Draw uppercase bitmap text with optional start/middle/end anchoring."""
-        clean = str(text or "").upper()
-        scale = max(1, int(scale or 1))
-        width = text_pixel_width(clean, scale=scale)
-        x_pos = int(round(x))
-        if anchor == "middle":
-            x_pos -= width // 2
-        elif anchor == "end":
-            x_pos -= width
-        for char in clean:
-            glyph = FONT_5X7.get(char, FONT_5X7["?"])
-            glyph_w = max(len(row) for row in glyph)
-            for row_index, row in enumerate(glyph):
-                for col_index, bit in enumerate(row):
-                    if bit != "1":
-                        continue
-                    self.fill_rect(
-                        x_pos + col_index * scale,
-                        int(round(y)) + row_index * scale,
-                        scale,
-                        scale,
-                        color,
-                    )
-            x_pos += (glyph_w + 1) * scale
-
-    def to_png_bytes(self) -> bytes:
-        """Encode the canvas as PNG bytes using the standard PNG scanline format."""
-        raw = bytearray()
-        stride = self.width * 3
-        for y in range(self.height):
-            raw.append(0)
-            start = y * stride
-            raw.extend(self.pixels[start:start + stride])
-        return b"".join([
-            b"\x89PNG\r\n\x1a\n",
-            png_chunk(b"IHDR", struct.pack(">IIBBBBB", self.width, self.height, 8, 2, 0, 0, 0)),
-            png_chunk(b"IDAT", zlib.compress(bytes(raw), 9)),
-            png_chunk(b"IEND", b""),
-        ])
-
-
-def png_chunk(chunk_type: bytes, data: bytes) -> bytes:
-    """Build one PNG chunk with CRC.
-
-    Args:
-        chunk_type: Four-byte PNG chunk name, for example `b"IHDR"`.
-        data: Raw chunk payload bytes.
+        None.
 
     Returns:
-        Serialized PNG chunk bytes.
+        Imported `matplotlib.pyplot` module configured to use the `Agg`
+        backend.
+
+    Side effects:
+        Imports matplotlib and sets its backend before importing pyplot.
+
+    Flow constraints:
+        This helper is lazy so importing bot modules does not require a display
+        server and does not initialize plotting unless a chart is requested.
     """
-    return (
-        struct.pack(">I", len(data))
-        + chunk_type
-        + data
-        + struct.pack(">I", zlib.crc32(chunk_type + data) & 0xFFFFFFFF)
+    # Import matplotlib for this module's local operations.
+    import matplotlib
+
+    # The Telegram bot runs headless, so force a file-rendering backend.
+    matplotlib.use("Agg")
+    # Import matplotlib so this module can use its helpers.
+    from matplotlib import pyplot as plt
+
+    # Return plt to the caller.
+    return plt
+
+
+# Define configure matplotlib style for callers in this flow.
+def _configure_matplotlib_style(plt) -> None:
+    """Apply the shared visual style for finance chart figures.
+
+    Args:
+        plt: Imported `matplotlib.pyplot` module.
+
+    Returns:
+        None.
+
+    Side effects:
+        Updates matplotlib runtime style parameters for charts generated in the
+        current process.
+
+    Flow constraints:
+        The font stack intentionally uses common professional sans-serif fonts
+        and avoids decorative fonts so chart output stays readable in Telegram.
+    """
+    # Open a multi-line structure for the values below.
+    plt.rcParams.update(
+        # Open a multi-line structure for the values below.
+        {
+            "font.family": "sans-serif",
+            "font.sans-serif": CHART_FONT_FAMILY,
+            "axes.edgecolor": CHART_GRID,
+            "axes.labelcolor": CHART_MUTED,
+            "axes.titlecolor": CHART_TEXT,
+            "xtick.color": CHART_MUTED,
+            "ytick.color": CHART_MUTED,
+            "text.color": CHART_TEXT,
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+        # Close the structure that was opened above.
+        }
+    # Close the structure that was opened above.
     )
 
 
-def text_pixel_width(text: str, *, scale: int = 2) -> int:
-    """Return bitmap text width in pixels for the built-in chart font."""
-    total = 0
-    for char in str(text or "").upper():
-        glyph = FONT_5X7.get(char, FONT_5X7["?"])
-        total += (max(len(row) for row in glyph) + 1) * int(scale or 1)
-    return max(0, total - int(scale or 1))
+# Define format axis rupiah for callers in this flow.
+def _format_axis_rupiah(value: float, _position: int | None = None) -> str:
+    """Format matplotlib axis tick values as compact rupiah labels.
+
+    Args:
+        value: Numeric tick value supplied by matplotlib.
+        _position: Optional tick index supplied by matplotlib and ignored by
+            this formatter.
+
+    Returns:
+        Compact rupiah string suitable for y-axis ticks.
+
+    Side effects:
+        None.
+
+    Flow constraints:
+        This formatter only affects chart display; it must not alter report
+        calculations.
+    """
+    # Return compact_rupiah(float(value or 0)) to the caller.
+    return compact_rupiah(float(value or 0))
 
 
+# Define finalize figure to png bytes for callers in this flow.
+def _finalize_figure_to_png_bytes(fig, plt) -> bytes:
+    """Serialize a matplotlib figure into PNG bytes and close it.
+
+    Args:
+        fig: Matplotlib figure object to serialize.
+        plt: Imported `matplotlib.pyplot` module used to close the figure.
+
+    Returns:
+        PNG image bytes ready to send as a Telegram document or write to disk.
+
+    Side effects:
+        Renders the figure into memory and closes the matplotlib figure to avoid
+        accumulating open figures in the bot process.
+
+    Flow constraints:
+        The function writes only to an in-memory buffer; file output is handled
+        separately by `write_monthly_chart_png`.
+    """
+    # Prepare buffer for the next step.
+    buffer = BytesIO()
+    # Run this statement as part of the current workflow.
+    fig.tight_layout(pad=1.2)
+    fig.savefig(buffer, format="png", dpi=CHART_DPI, bbox_inches="tight", facecolor="white")
+    # Run this statement as part of the current workflow.
+    plt.close(fig)
+    # Return buffer.getvalue() to the caller.
+    return buffer.getvalue()
+
+
+# Define truncate label for callers in this flow.
 def truncate_label(value: str, max_chars: int) -> str:
-    """Shorten chart labels without breaking chart layout."""
+    """Shorten chart labels while keeping category names recognizable.
+
+    Args:
+        value: Raw label text, usually a category name.
+        max_chars: Maximum label length before adding an ellipsis.
+
+    Returns:
+        Original label when it fits, otherwise a shortened label ending in
+        `...`.
+
+    Side effects:
+        None.
+
+    Flow constraints:
+        This only changes chart display text. It must not change category names
+        stored in reports or Google Sheets.
+    """
     text = str(value or "-").strip() or "-"
+    # Handle the case where len(text) <= max_chars.
     if len(text) <= max_chars:
+        # Return text to the caller.
         return text
     return text[: max(1, max_chars - 3)].rstrip() + "..."
 
 
-def draw_chart_header(canvas: PngCanvas, title: str, subtitle: str = "") -> None:
-    """Draw a consistent chart title and subtitle."""
-    canvas.draw_text(40, 38, title, scale=3, color=PNG_TEXT)
-    if subtitle:
-        canvas.draw_text(40, 72, subtitle, scale=2, color=PNG_MUTED)
-
-
+# Define build empty chart png bytes for callers in this flow.
 def build_empty_chart_png_bytes(title: str, message: str) -> bytes:
-    """Build a PNG chart placeholder when no plottable data exists.
+    """Build a PNG placeholder when a chart has no plottable data.
 
     Args:
-        title: Chart title shown at the top of the PNG.
-        message: Empty-state text shown below the title.
+        title: Chart title shown at the top of the placeholder.
+        message: User-facing empty-state message.
 
     Returns:
-        Complete PNG file bytes.
+        PNG bytes generated by matplotlib.
+
+    Side effects:
+        Imports matplotlib lazily and renders a figure in memory.
+
+    Flow constraints:
+        This function is read-only and must not write Google Sheets data or
+        create transactions.
     """
-    canvas = PngCanvas()
-    draw_chart_header(canvas, title)
-    canvas.draw_text(40, 100, message, scale=2, color=PNG_MUTED)
-    return canvas.to_png_bytes()
+    # Prepare plt for the next step.
+    plt = _load_matplotlib_pyplot()
+    # Run this statement as part of the current workflow.
+    _configure_matplotlib_style(plt)
+    # Run this statement as part of the current workflow.
+    fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
+
+    # Keep empty-state charts clean and readable inside Telegram preview.
+    ax.axis("off")
+    ax.text(0.02, 0.88, title, fontsize=17, weight="semibold", transform=ax.transAxes)
+    # Run this statement as part of the current workflow.
+    ax.text(0.02, 0.76, message, fontsize=11, color=CHART_MUTED, transform=ax.transAxes)
+    # Return _finalize_figure_to_png_bytes(fig, plt) to the caller.
+    return _finalize_figure_to_png_bytes(fig, plt)
 
 
+# Define build monthly timeseries png bytes for callers in this flow.
 def build_monthly_timeseries_png_bytes(report: dict) -> bytes:
     """Build a monthly PNG line chart of daily net expense.
 
@@ -354,159 +456,261 @@ def build_monthly_timeseries_png_bytes(report: dict) -> bytes:
         report: Monthly report dict from `get_monthly_report`.
 
     Returns:
-        PNG bytes showing daily net expense across the month.
+        PNG bytes containing a daily time-series chart.
+
+    Side effects:
+        Imports matplotlib lazily and renders a figure in memory.
+
+    Flow constraints:
+        Values are net expenses, not gross expenses, so this chart must remain
+        consistent with `/bulanan` net-expense totals.
     """
     month_label = (report or {}).get("month", "-")
+    # Prepare values for the next step.
     values = daily_net_expense_series(report)
-    max_value = max(values or [0])
     title = f"Time Series Pengeluaran Net - {month_label}"
-    if max_value <= 0:
+    # Handle the case where max(values or [0]) <= 0.
+    if max(values or [0]) <= 0:
         return build_empty_chart_png_bytes(title, "Belum ada pengeluaran net untuk periode ini.")
 
-    canvas = PngCanvas()
-    left, right, top, bottom = 80, 40, 96, 76
-    plot_w = PNG_WIDTH - left - right
-    plot_h = PNG_HEIGHT - top - bottom
-    max_axis = max_value * 1.15
+    # Prepare plt for the next step.
+    plt = _load_matplotlib_pyplot()
+    # Run this statement as part of the current workflow.
+    _configure_matplotlib_style(plt)
+    # Run this statement as part of the current workflow.
+    fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
+    # Prepare days for the next step.
+    days = list(range(1, len(values) + 1))
 
-    def x_pos(index: int) -> float:
-        """Map day index to x coordinate."""
-        if len(values) <= 1:
-            return float(left)
-        return left + (index / (len(values) - 1)) * plot_w
+    # Draw both a line and a subtle fill so the trend is visible on mobile.
+    ax.plot(days, values, color=CHART_COLORS[0], linewidth=2.4, marker="o", markersize=3.6)
+    # Run this statement as part of the current workflow.
+    ax.fill_between(days, values, color=CHART_COLORS[0], alpha=0.08)
+    ax.set_title(title, loc="left", fontsize=15, weight="semibold", pad=14)
+    # Open a multi-line structure for the values below.
+    ax.text(
+        # Include this value in the surrounding collection or call.
+        0,
+        # Include this value in the surrounding collection or call.
+        1.01,
+        "Basis: pengeluaran net setelah piutang split bill/talangan",
+        # Prepare fontsize for the next step.
+        fontsize=9,
+        # Prepare color for the next step.
+        color=CHART_MUTED,
+        # Prepare transform for the next step.
+        transform=ax.transAxes,
+    # Close the structure that was opened above.
+    )
+    ax.set_xlabel("Tanggal")
+    ax.set_ylabel("Pengeluaran net")
+    # Run this statement as part of the current workflow.
+    ax.yaxis.set_major_formatter(_format_axis_rupiah)
+    ax.grid(axis="y", color=CHART_GRID, linewidth=0.8)
+    ax.spines[["top", "right"]].set_visible(False)
+    # Run this statement as part of the current workflow.
+    ax.set_xlim(1, max(days))
+    # Run this statement as part of the current workflow.
+    ax.set_ylim(bottom=0)
+    # Open a multi-line structure for the values below.
+    ax.text(
+        # Include this value in the surrounding collection or call.
+        0,
+        # Include this value in the surrounding collection or call.
+        -0.18,
+        f"Total net: {compact_rupiah(sum(values))}",
+        # Prepare fontsize for the next step.
+        fontsize=9,
+        # Prepare color for the next step.
+        color=CHART_MUTED,
+        # Prepare transform for the next step.
+        transform=ax.transAxes,
+    # Close the structure that was opened above.
+    )
+    # Return _finalize_figure_to_png_bytes(fig, plt) to the caller.
+    return _finalize_figure_to_png_bytes(fig, plt)
 
-    def y_pos(value: float) -> float:
-        """Map rupiah amount to y coordinate."""
-        return top + plot_h - (float(value or 0) / max_axis) * plot_h
 
-    draw_chart_header(canvas, title, "Basis: pengeluaran net setelah piutang split bill/talangan")
-    for step in range(5):
-        value = max_axis * step / 4
-        y = y_pos(value)
-        canvas.draw_line(left, y, PNG_WIDTH - right, y, PNG_GRID)
-        canvas.draw_text(left - 12, y - 7, compact_rupiah(value), scale=1, color=PNG_MUTED, anchor="end")
-
-    canvas.draw_line(left, PNG_HEIGHT - bottom, PNG_WIDTH - right, PNG_HEIGHT - bottom, PNG_AXIS, width=2)
-    canvas.draw_line(left, top, left, PNG_HEIGHT - bottom, PNG_AXIS, width=2)
-
-    last_point = None
-    for index, value in enumerate(values):
-        point = (x_pos(index), y_pos(value))
-        if last_point is not None:
-            canvas.draw_line(last_point[0], last_point[1], point[0], point[1], PNG_COLORS[0], width=3)
-        if value > 0:
-            canvas.fill_circle(int(round(point[0])), int(round(point[1])), 4, PNG_COLORS[0])
-        last_point = point
-
-    days = len(values)
-    for day in sorted({1, 7, 14, 21, 28, days}):
-        if 1 <= day <= days:
-            x = x_pos(day - 1)
-            canvas.draw_line(x, PNG_HEIGHT - bottom, x, PNG_HEIGHT - bottom + 5, PNG_MUTED)
-            canvas.draw_text(x, PNG_HEIGHT - bottom + 14, str(day), scale=1, color=PNG_MUTED, anchor="middle")
-
-    canvas.draw_text(PNG_WIDTH / 2, PNG_HEIGHT - 30, "Tanggal", scale=2, color=PNG_MUTED, anchor="middle")
-    canvas.draw_text(40, PNG_HEIGHT - 30, f"Total net: {compact_rupiah(sum(values))}", scale=2, color=PNG_MUTED)
-    return canvas.to_png_bytes()
-
-
+# Define build monthly bar png bytes for callers in this flow.
 def build_monthly_bar_png_bytes(report: dict) -> bytes:
-    """Build a monthly PNG bar chart by net expense category.
+    """Build a monthly PNG horizontal bar chart by net expense category.
 
     Args:
-        report: Monthly report dict with `by_category` and `by_category_gross`.
+        report: Monthly report dict containing net category totals and optional
+            gross category totals.
 
     Returns:
-        PNG bytes. Bars are sorted by net expense, with gross shown in
-        parentheses when it differs from net.
+        PNG bytes containing category bars sorted by net expense.
+
+    Side effects:
+        Imports matplotlib lazily and renders a figure in memory.
+
+    Flow constraints:
+        Category order is based on net expense. Gross values are shown only as
+        context in labels when they differ from net values.
     """
     month_label = (report or {}).get("month", "-")
+    # Prepare rows for the next step.
     rows = category_net_expense_items(report, limit=8)
     title = f"Bar Chart Pengeluaran Net - {month_label}"
+    # Handle the missing or empty rows case.
     if not rows:
         return build_empty_chart_png_bytes(title, "Belum ada kategori pengeluaran net untuk periode ini.")
 
-    canvas = PngCanvas()
-    draw_chart_header(canvas, title, "Basis: kategori diurutkan berdasarkan pengeluaran net")
+    # Prepare plt for the next step.
+    plt = _load_matplotlib_pyplot()
+    # Run this statement as part of the current workflow.
+    _configure_matplotlib_style(plt)
+    # Run this statement as part of the current workflow.
+    fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
+    # Prepare categories for the next step.
+    categories = [truncate_label(row[0], 28) for row in rows]
+    # Prepare net values for the next step.
+    net_values = [row[1] for row in rows]
+    # Prepare colors for the next step.
+    colors = [CHART_COLORS[index % len(CHART_COLORS)] for index, _row in enumerate(rows)]
 
-    left, right, top = 250, 70, 108
-    bar_h, gap = 28, 19
-    chart_w = PNG_WIDTH - left - right
-    max_value = max(row[1] for row in rows)
-    for index, (category, net, gross) in enumerate(rows):
-        y = top + index * (bar_h + gap)
-        color = PNG_COLORS[index % len(PNG_COLORS)]
-        bar_w = int(round((net / max_value) * chart_w)) if max_value else 0
+    # Reverse for horizontal bar display so the largest item appears at the top.
+    bar_positions = list(range(len(rows)))
+    # Run this statement as part of the current workflow.
+    ax.barh(bar_positions, list(reversed(net_values)), color=list(reversed(colors)), height=0.58)
+    # Run this statement as part of the current workflow.
+    ax.set_yticks(bar_positions, list(reversed(categories)))
+    ax.set_title(title, loc="left", fontsize=15, weight="semibold", pad=14)
+    # Open a multi-line structure for the values below.
+    ax.text(
+        # Include this value in the surrounding collection or call.
+        0,
+        # Include this value in the surrounding collection or call.
+        1.01,
+        "Basis: kategori diurutkan berdasarkan pengeluaran net",
+        # Prepare fontsize for the next step.
+        fontsize=9,
+        # Prepare color for the next step.
+        color=CHART_MUTED,
+        # Prepare transform for the next step.
+        transform=ax.transAxes,
+    # Close the structure that was opened above.
+    )
+    # Run this statement as part of the current workflow.
+    ax.xaxis.set_major_formatter(_format_axis_rupiah)
+    ax.grid(axis="x", color=CHART_GRID, linewidth=0.8)
+    ax.spines[["top", "right", "left"]].set_visible(False)
+    ax.tick_params(axis="y", length=0)
+
+    # Process each position, row in the current collection.
+    for position, row in zip(bar_positions, reversed(rows)):
+        # Prepare net for the next step.
+        net = row[1]
+        # Prepare gross for the next step.
+        gross = row[2]
+        # Prepare amount for the next step.
         amount = compact_rupiah(net)
+        # Handle the case where abs(net - gross) > 0.0001.
         if abs(net - gross) > 0.0001:
             amount = f"{amount} ({compact_rupiah(gross)})"
-        canvas.draw_text(left - 14, y + 7, truncate_label(category, 24), scale=2, color=PNG_TEXT, anchor="end")
-        canvas.fill_rect(left, y, max(1, bar_w), bar_h, color)
-        canvas.draw_text(left + bar_w + 10, y + 7, amount, scale=2, color=PNG_TEXT)
+        ax.text(net, position, f"  {amount}", va="center", fontsize=9, color=CHART_TEXT)
 
-    return canvas.to_png_bytes()
+    # Run this statement as part of the current workflow.
+    ax.set_xlim(right=max(net_values) * 1.18)
+    # Return _finalize_figure_to_png_bytes(fig, plt) to the caller.
+    return _finalize_figure_to_png_bytes(fig, plt)
 
 
+# Define build monthly pie png bytes for callers in this flow.
 def build_monthly_pie_png_bytes(report: dict) -> bytes:
-    """Build a monthly PNG pie chart by net expense category.
+    """Build a monthly PNG donut chart by net expense category.
 
     Args:
-        report: Monthly report dict with net category totals.
+        report: Monthly report dict containing net category totals.
 
     Returns:
-        PNG bytes showing category share from total net expense.
+        PNG bytes showing each category share from total net expense.
+
+    Side effects:
+        Imports matplotlib lazily and renders a figure in memory.
+
+    Flow constraints:
+        Shares are calculated from net expense totals only. The chart is
+        read-only and must not modify category or transaction data.
     """
     month_label = (report or {}).get("month", "-")
+    # Prepare rows for the next step.
     rows = category_net_expense_items(report, limit=7)
     title = f"Pie Chart Kategori Net - {month_label}"
+    # Prepare total for the next step.
     total = sum(row[1] for row in rows)
+    # Handle the case where total <= 0.
     if total <= 0:
         return build_empty_chart_png_bytes(title, "Belum ada kategori pengeluaran net untuk periode ini.")
 
-    canvas = PngCanvas()
-    draw_chart_header(canvas, title, "Basis: share kategori dari total pengeluaran net")
-    cx, cy, radius = 300, 290, 155
-    cumulative = []
-    cursor = -pi / 2
-    for row in rows:
-        angle = (row[1] / total) * 2 * pi
-        cumulative.append(cursor + angle)
-        cursor += angle
+    # Prepare plt for the next step.
+    plt = _load_matplotlib_pyplot()
+    # Run this statement as part of the current workflow.
+    _configure_matplotlib_style(plt)
+    # Run this statement as part of the current workflow.
+    fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
+    # Prepare labels for the next step.
+    labels = [truncate_label(row[0], 24) for row in rows]
+    # Prepare values for the next step.
+    values = [row[1] for row in rows]
+    # Prepare colors for the next step.
+    colors = [CHART_COLORS[index % len(CHART_COLORS)] for index, _row in enumerate(rows)]
 
-    for y in range(cy - radius, cy + radius + 1):
-        for x in range(cx - radius, cx + radius + 1):
-            dx = x - cx
-            dy = y - cy
-            if dx * dx + dy * dy > radius * radius:
-                continue
-            angle = atan2(dy, dx)
-            while angle < -pi / 2:
-                angle += 2 * pi
-            segment_index = 0
-            for idx, end_angle in enumerate(cumulative):
-                if angle <= end_angle:
-                    segment_index = idx
-                    break
-            canvas.set_pixel(x, y, PNG_COLORS[segment_index % len(PNG_COLORS)])
-
-    canvas.fill_circle(cx, cy, 62, PNG_BACKGROUND)
-    canvas.draw_text(cx, cy - 10, compact_rupiah(total), scale=3, color=PNG_TEXT, anchor="middle")
-    canvas.draw_text(cx, cy + 22, "total net", scale=2, color=PNG_MUTED, anchor="middle")
-
-    for index, (category, net, _) in enumerate(rows):
-        legend_y = 145 + index * 40
-        color = PNG_COLORS[index % len(PNG_COLORS)]
-        pct = (net / total) * 100 if total else 0
-        canvas.fill_rect(560, legend_y - 14, 18, 18, color)
-        canvas.draw_text(
-            590,
-            legend_y - 11,
-            f"{truncate_label(category, 24)} - {compact_rupiah(net)} ({pct:.1f}%)",
-            scale=2,
-            color=PNG_TEXT,
-        )
-
-    return canvas.to_png_bytes()
+    # Donut layout keeps the total visible without crowding category labels.
+    wedges, _texts, autotexts = ax.pie(
+        # Include this value in the surrounding collection or call.
+        values,
+        # Prepare labels for the next step.
+        labels=None,
+        autopct=lambda pct: f"{pct:.1f}%" if pct >= 4 else "",
+        # Prepare colors for the next step.
+        colors=colors,
+        # Prepare startangle for the next step.
+        startangle=90,
+        # Prepare counterclock for the next step.
+        counterclock=False,
+        wedgeprops={"width": 0.42, "edgecolor": "white", "linewidth": 1.4},
+        textprops={"fontsize": 8.5, "color": CHART_TEXT},
+    # Close the structure that was opened above.
+    )
+    # Process each autotext in the current collection.
+    for autotext in autotexts:
+        autotext.set_weight("semibold")
+    ax.text(0, 0.04, compact_rupiah(total), ha="center", va="center", fontsize=15, weight="semibold")
+    ax.text(0, -0.12, "total net", ha="center", va="center", fontsize=9, color=CHART_MUTED)
+    ax.set_title(title, loc="left", fontsize=15, weight="semibold", pad=14)
+    # Open a multi-line structure for the values below.
+    ax.text(
+        # Include this value in the surrounding collection or call.
+        -1.18,
+        # Include this value in the surrounding collection or call.
+        1.1,
+        "Basis: share kategori dari total pengeluaran net",
+        # Prepare fontsize for the next step.
+        fontsize=9,
+        # Prepare color for the next step.
+        color=CHART_MUTED,
+    # Close the structure that was opened above.
+    )
+    legend_labels = [f"{label} - {compact_rupiah(value)}" for label, value in zip(labels, values)]
+    # Open a multi-line structure for the values below.
+    ax.legend(
+        # Include this value in the surrounding collection or call.
+        wedges,
+        # Include this value in the surrounding collection or call.
+        legend_labels,
+        loc="center left",
+        # Prepare bbox to anchor for the next step.
+        bbox_to_anchor=(1.0, 0.5),
+        # Prepare frameon for the next step.
+        frameon=False,
+        # Prepare fontsize for the next step.
+        fontsize=9,
+    # Close the structure that was opened above.
+    )
+    # Return _finalize_figure_to_png_bytes(fig, plt) to the caller.
+    return _finalize_figure_to_png_bytes(fig, plt)
 
 
 def build_monthly_chart_png_bytes(report: dict, chart_type: str = "timeseries") -> bytes:
@@ -514,38 +718,68 @@ def build_monthly_chart_png_bytes(report: dict, chart_type: str = "timeseries") 
 
     Args:
         report: Monthly report dict from `get_monthly_report`.
-        chart_type: One of `timeseries`, `bar`, or `pie`.
+        chart_type: Chart selector string. Supported values are `timeseries`,
+            `line`, `bar`, `barchart`, `pengeluaran`, `pie`, `piechart`, and
+            `kategori`.
 
     Returns:
-        Complete PNG file bytes.
+        Complete PNG file bytes for the requested chart. Unknown chart types
+        fall back to the time-series chart.
+
+    Side effects:
+        Imports matplotlib lazily through the selected chart builder.
+
+    Flow constraints:
+        This function is read-only and must never write transactions, balances,
+        debt data, or category data.
     """
     normalized = str(chart_type or "timeseries").strip().lower()
     if normalized in {"bar", "barchart", "pengeluaran"}:
+        # Return build_monthly_bar_png_bytes(report) to the caller.
         return build_monthly_bar_png_bytes(report)
     if normalized in {"pie", "piechart", "kategori"}:
+        # Return build_monthly_pie_png_bytes(report) to the caller.
         return build_monthly_pie_png_bytes(report)
+    # Return build_monthly_timeseries_png_bytes(report) to the caller.
     return build_monthly_timeseries_png_bytes(report)
 
 
 def write_monthly_chart_png(report: dict, chart_type: str = "timeseries") -> str:
-    """Write a monthly PNG chart to a temporary file.
+    """Write a monthly chart PNG to a temporary file.
 
     Args:
         report: Monthly report dict from `get_monthly_report`.
-        chart_type: One of `timeseries`, `bar`, or `pie`.
+        chart_type: Chart selector string accepted by
+            `build_monthly_chart_png_bytes`.
 
     Returns:
-        Absolute path to the generated `.png` file. Caller owns cleanup.
+        Absolute path to the generated `.png` file. The caller is responsible
+        for deleting the temporary file after sending it.
+
+    Side effects:
+        Creates one temporary `.png` file on local disk. It does not write to
+        Google Sheets or mutate bot state.
+
+    Flow constraints:
+        File output exists only to satisfy Telegram document sending. All report
+        calculations must already be complete before this function is called.
     """
     month_label = str((report or {}).get("month") or "month").replace("/", "-")
     normalized = str(chart_type or "timeseries").strip().lower()
+    # Prepare png bytes for the next step.
     png_bytes = build_monthly_chart_png_bytes(report, normalized)
+    # Open a multi-line structure for the values below.
     handle = tempfile.NamedTemporaryFile(
         mode="wb",
         suffix=f"-{month_label}-{normalized}.png",
         prefix="finance-chart-",
+        # Prepare delete for the next step.
         delete=False,
+    # Close the structure that was opened above.
     )
+    # Use a managed resource so it is closed after this operation.
     with handle:
+        # Run this statement as part of the current workflow.
         handle.write(png_bytes)
+    # Return str(Path(handle.name).resolve()) to the caller.
     return str(Path(handle.name).resolve())

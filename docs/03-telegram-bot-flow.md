@@ -50,6 +50,22 @@ catat utang ke Budi 200k
 
 This flow is intentionally separate from normal borrowing syntax such as `saya pinjam 100k ke Budi`, because normal borrowing means money entered an account and the bot must ask for the account.
 
+## Debt settlement shortcut flow
+
+`/debt_settle Nama` settles all active debts for that person after preview confirmation. The bot calculates the cashflow amount from the net position:
+
+```text
+/debt_settle Raka
+-> collect all active debt rows for Raka
+-> calculate net as total receivable - total payable
+-> auto-fill amount with abs(net)
+-> ask for account if net needs cashflow
+-> show final preview with Simpan and Batal
+-> write debt settlement only after Simpan
+```
+
+`/debt_settle Nama 1-3` works the same way, but only for numbered debt rows from the latest `/hutang Nama` detail output. Explicit `amount=... account=...` remains supported for manual settlement amounts. If selected debt is net impas, the bot settles the debt rows after confirmation without saving a zero-amount cashflow transaction.
+
 ## Reporting and chart flow
 
 Daily, weekly, monthly, account, and transaction-list summaries use net expense as the primary expense basis. Gross expense remains available for display as `net (gross)` when receivable shares from split bill or talangan make the values different.
@@ -70,7 +86,7 @@ Daily, weekly, monthly, account, and transaction-list summaries use net expense 
 /grafik pie 2026-06
 ```
 
-The line chart shows daily net expense, the bar chart ranks category net expense, and the pie chart shows category share from total net expense. Chart files are generated as PNG documents.
+The line chart shows daily net expense, the bar chart ranks category net expense, and the pie chart shows category share from total net expense. Chart files are generated as PNG documents with matplotlib using a clean sans-serif font stack.
 
 ## Important rule
 
