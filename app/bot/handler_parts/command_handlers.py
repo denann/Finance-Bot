@@ -4,6 +4,10 @@
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
+# Import pathlib so /manual can resolve docs relative to the project root.
+from pathlib import Path
+# Import modular help content so /help stays short and topic-based.
+from app.bot.handler_parts.help_content import build_help_text
 # Import app.bot.handler_parts.transaction_flow so this module can use its helpers.
 from app.bot.handler_parts.transaction_flow import build_pending_expense_confirm_preview, edit_or_continue_keyboard, preview_action_keyboard, preview_action_question
 # Import app.bot.handler_parts.state_utils so this module can use its helpers.
@@ -279,6 +283,17 @@ async def quickstart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Return control to the caller.
         return
 
+    await update.message.reply_text(
+        "🚀 *Quickstart Finance Bot*\n\n"
+        "1. Catat transaksi: `beli kopi 20k dari Cash`\n"
+        "2. Cek saldo: `/saldo`\n"
+        "3. Cek laporan: `/bulanan`\n"
+        "4. Cek utang/piutang: `/hutang`\n"
+        "5. Baca panduan: `/help` atau `/manual`",
+        parse_mode="Markdown",
+    )
+    return
+
     # Prepare accounts for the next step.
     accounts = get_all_accounts()
     # Prepare account names for the next step.
@@ -526,256 +541,51 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Return control to the caller.
         return
 
-    # Open a multi-line structure for the values below.
-    text = (
-        "📖 *Panduan Penggunaan Finance Bot*\n\n"
-        "`/start` — ringkasan fitur utama bot\n"
-        "`/quickstart` — panduan langkah awal untuk user baru\n"
-        "`/help` — panduan lengkap ini\n"
-        "Gunakan tombol *Batal* untuk membatalkan wizard/preview yang sedang aktif.\n\n"
+    topic = " ".join(context.args or []).strip()
+    await reply_long_markdown(update, build_help_text(topic))
+    return
 
-        "*A. Cara Input Utama*\n"
-        "Bot bisa menerima 1 transaksi, banyak transaksi sekaligus, foto struk/QRIS, atau command.\n\n"
+async def manual_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send the generated Finance Bot manual PDF.
 
-        "*1. Catat Pengeluaran*\n"
-        "`beli kopi 25rb`\n"
-        "`makan siang 35k`\n"
-        "`bayar listrik 150.000 dari BRI`\n"
-        "`jajan bakso 20k dari Cash`\n\n"
+    Args:
+        update: Telegram Update object supplied by python-telegram-bot.
+        context: Telegram callback context for this command. It is accepted for
+            handler compatibility and is not mutated by this read-only flow.
 
-        "*2. Catat Pemasukan*\n"
-        "`gaji masuk 8 juta ke BRI`\n"
-        "`freelance project 500rb ke DANA`\n"
-        "`dapet bonus 1 juta`\n\n"
+    Returns:
+        `None` after sending the PDF or a fallback message.
 
-        "*3. Transfer Antar Rekening*\n"
-        "`transfer gopay 200rb dari BRI`\n"
-        "`top up dana dari bri 500rb`\n"
-        "`isi GoPay 100k dari Cash`\n\n"
+    Side effects:
+        Sends `docs/help_manual.pdf` as a Telegram document when the file exists.
 
-        "*4. Multi Input*\n"
-        "Bisa tulis beberapa transaksi dalam satu pesan, dipisah enter, titik koma, atau kalimat natural.\n"
-        "Contoh:\n"
-        "`beli kopi 10k`\n"
-        "`beli nasi 20k`\n"
-        "`Dimas bayar hutang 20k kemarin`\n\n"
-        "Contoh satu baris:\n"
-        "`beli kopi 10k; beli nasi 20k; Budi minjem 50k`\n"
-        "`beli kopi 10k minjem Joko 50k`\n\n"
+    Flow constraints:
+        Keep this read-only. Do not generate the PDF inside the bot process, do
+        not write to Google Sheets, and do not hardcode absolute local paths.
+    """
+    # Handle the missing or empty is_authorized(update) case.
+    if not is_authorized(update):
+        # Wait for reject_unauthorized before continuing this flow.
+        await reject_unauthorized(update)
+        # Return control to the caller.
+        return
 
-        "*5. Rekening Opsional untuk Data Historis*\n"
-        "Kalau transaksi sudah berlalu dan Anda tidak mau mengubah saldo rekening, pilih tombol:\n"
-        "`Sudah berlalu / jangan ubah saldo`\n"
-        "Contoh:\n"
-        "`Beli tissue 10k dibagi 4 sama Raka Fajar Bagas`\n"
-        "Debt/split bill tetap tercatat, tapi saldo rekening tidak berubah.\n\n"
+    manual_path = Path(__file__).resolve().parents[3] / "docs" / "help_manual.pdf"
+    # Show a safe fallback if the generated manual file is not present.
+    if not manual_path.exists():
+        await update.message.reply_text(
+            "❌ Manual PDF belum tersedia. Silakan hubungi admin atau generate ulang file manual.",
+            parse_mode="Markdown",
+        )
+        # Return control to the caller.
+        return
 
-        "*B. Utang, Piutang, Split Bill*\n\n"
-        "*6. Utang/Piutang Biasa*\n"
-        "`hutang ke Budi 500rb` — Anda punya utang ke Budi\n"
-        "`catat utang ke Budi 200k` — catat utang tanpa menambah saldo rekening\n"
-        "`minjem uang Maya 220k` — Anda punya utang ke Maya\n"
-        "`Budi minjem 300rb` — Budi punya utang ke Anda / piutang Anda\n"
-        "`piutang ke Dimas 31100` — Dimas punya utang ke Anda\n"
-        "`saya berutang ke Dimas 20k` — Anda punya utang ke Dimas\n"
-        "`Dimas berutang 50k` — piutang Anda ke Dimas\n"
-        "`Budi bayar 100rb` — pembayaran piutang dari Budi\n"
-        "`bayar hutang Budi 100rb` — pembayaran utang Anda ke Budi\n\n"
-
-        "*7. Talangin / Ditalangin*\n"
-        "`saya talangin Raka beli nasi kuning 12k` — uang Anda keluar, jadi piutang Raka\n"
-        "`saya ditalangin Bagas beli nasi uduk 10k` — utang Anda ke Bagas tanpa cashflow rekening\n"
-        "`saya nitip Raka beli nasi kuning 12k` — sama seperti ditalangin\n"
-        "`ditalangin nasi uduk sama Bagas 10k kemarin` — Bagas menalangi Anda\n"
-        "`ditalangin Bagas beli minyak 46k dibagi 4 sama Bagas Fajar Raka` — PTPT: Anda hutang full 46k ke Bagas, lalu Bagas/Fajar/Raka masing-masing hutang share ke Anda\n\n"
-
-        "*8. Split Bill*\n"
-        "`Ayam dcelup 26k bagi 2 sama Raka`\n"
-        "`Beli tissue 10k dibagi 4 sama Raka Fajar Bagas`\n"
-        "`Beli token 500k dibagi 4 sama Raka:100% Fajar:80% Bagas:100%`\n"
-        "`Beli token 500k dibagi 4 sama Raka 125k Fajar 100k Bagas 125k`\n"
-        "Tanda `:` opsional. Kalau belum dibayar, bagian teman masuk piutang.\n\n"
-
-        "*9. Kompensasi / Potong Silang Hutang-Piutang*\n"
-        "Dipakai kalau tidak ada uang keluar/masuk rekening, tapi saldo hutang-piutang berubah.\n"
-        "`potong piutang Dimas 20k buat badminton`\n"
-        "`kompensasi piutang Dimas 20k karena badminton`\n"
-        "`saya berutang ke Dimas 20k potong dari piutang`\n"
-        "Tetap masuk sheet `transactions` sebagai fact table, tapi saldo rekening tidak berubah.\n\n"
-
-        "*10. Kelola Debt*\n"
-        "`/hutang` — ringkasan utang/piutang aktif per orang\n"
-        "`/hutang Maya` — detail rincian aktif Maya + debt ID\n"
-        "`/debt_void 1` — batalkan rincian dari detail terakhir\n"
-        "`/debt_void Maya` — batalkan semua debt aktif Maya setelah konfirmasi\n"
-        "`/debt_void Maya 1` — batalkan rincian nomor 1 milik Maya\n"
-        "`/debt_edit 1 nominal 100k` — edit nominal rincian\n"
-        "`/debt_edit 1 nama Budi` — edit nama orang\n"
-        "`/debt_edit 1 tipe piutang` — ubah arah debt\n"
-        "`/debt_settle Raka` — settle semua debt aktif Raka pakai nominal net otomatis setelah preview\n"
-        "`/debt_settle Raka 1-17` — settle nomor 1-17 dari output terakhir `/hutang Raka` pakai nominal net otomatis\n"
-        "`/debt_settle Raka 1-17 amount=337063 account=DANA` — settle hanya nomor 1-17, debt lain tidak disentuh\n"
-        "`Raka bayar hutang 337063 untuk debt 1-17` — versi natural dari settle debt terpilih\n"
-        "Nomor `1-17` wajib berasal dari detail terakhir `/hutang nama`. Jika terakhir buka `/hutang Bagas`, bot akan menolak settle untuk Raka.\n"
-        "Jika amount lebih besar dari net debt terpilih, bot memberi warning dan pilihan: anggap bonus/lunas atau catat sebagai hutang lawan arah.\n"
-        "Pembayaran global seperti `Raka bayar hutang 373063` juga dicek terhadap posisi net: piutang - utang Anda. Jadi overpaid tidak lagi dihitung dari satu arah saja.\n"
-        "Detail `/hutang nama` dikelompokkan per tanggal dibuat, menampilkan debt ID full, dan tidak auto-settle tanpa perintah Anda.\n\n"
-
-        "*C. Laporan, Budget, Koreksi Data*\n\n"
-        "*11. Laporan*\n"
-        "`/saldo` — saldo semua rekening\n"
-        "`/set_saldo` — lihat nama rekening yang tersedia di sheet accounts\n"
-        "`/set_saldo DANA 500k` — set saldo rekening tertentu dengan preview konfirmasi\n"
-        "`/rekening Cash` — list transaksi lengkap rekening Cash bulan ini\n"
-        "`/rekening Cash 2026-06` — list transaksi lengkap rekening bulan tertentu\n"
-        "`/rekening Cash all` — seluruh transaksi rekening Cash\n"
-        "`/harian` — ringkasan hari ini\n"
-        "`/harian 2026-06-01` — ringkasan tanggal tertentu\n"
-        "`/harian Food & Beverage` — list transaksi kategori hari ini\n"
-        "`/harian rekening Cash` — ringkasan hari ini khusus rekening Cash\n"
-        "`/mingguan` — ringkasan minggu ini\n"
-        "`/mingguan 2026-06-01` — ringkasan minggu yang memuat tanggal itu\n"
-        "`/mingguan Bills & Utilities` — list transaksi kategori minggu ini\n"
-        "`/mingguan rekening Dana` — ringkasan minggu ini khusus rekening Dana\n"
-        "`/bulanan` — ringkasan bulan ini + insight Gemini + grafik time series\n"
-        "`/bulanan 2026-06` — ringkasan bulan tertentu + insight Gemini + grafik time series\n"
-        "`/bulanan Food & Beverage` — list transaksi kategori bulan ini\n"
-        "`/bulanan rekening Cash` — ringkasan bulan ini khusus rekening Cash\n"
-        "`/bulanan 2026-06 rekening Cash` — ringkasan rekening bulan tertentu\n"
-        "`/bulanan 2026-06 Food & Beverage rekening Cash` — list kategori + rekening bulan tertentu\n"
-        "`/grafik` — grafik time series pengeluaran net bulan ini\n"
-        "`/grafik 2026-06` — grafik time series pengeluaran net bulan tertentu\n"
-        "`/grafik line 2026-06` — sama seperti `/grafik 2026-06`, eksplisit time series harian\n"
-        "`/grafik bar 2026-06` — bar chart pengeluaran net per kategori\n"
-        "`/grafik pie 2026-06` — pie chart kategori berdasarkan pengeluaran net\n"
-        "Tipe grafik yang didukung: `line`/`timeseries`, `bar`, dan `pie`. Jika bulan tidak ditulis, bot memakai bulan berjalan.\n"
-        "Report utama menampilkan tren vs periode sebelumnya, termasuk tren per kategori. Jika periode sebelumnya belum ada data, bot tampilkan `~`.\n"
-        "Nominal dan ranking pengeluaran memakai basis net; jika ada piutang aktif ditampilkan sebagai `Net (Gross)`, misalnya `Rp16.000 (Rp32.000)`.\n"
-        "`/cari kopi` — cari transaksi dengan keyword kopi\n\n"
-
-        "*12. Lihat & Koreksi Transaksi*\n"
-        "`/last` — lihat 10 transaksi terakhir, urut tanggal terbaru\n"
-        "`/last 20` — lihat 20 transaksi terakhir\n"
-        "`/transaksi` — list transaksi bulan ini\n"
-        "`/transaksi 2026-06` — list transaksi bulan tertentu\n"
-        "`/transaksi bulan lalu` — list transaksi bulan sebelumnya\n"
-        "`/transaksi Food & Beverage 2026-06` — list transaksi kategori bulan tertentu\n"
-        "`/transaksi rekening Cash` — list transaksi Cash bulan ini\n"
-        "`/transaksi rekening Cash 2026-06` — list transaksi Cash bulan tertentu\n"
-        "`/transaksi rekening Cash bulan lalu` — list transaksi Cash bulan sebelumnya\n"
-        "`/transaksi rekening Cash all` — seluruh transaksi Cash\n"
-        "Output `/transaksi` dikelompokkan per tanggal terbaru ke terlama dan otomatis mengirim grafik time series PNG sesuai transaksi yang ditampilkan.\n"
-        "`/last today`, `/last week`, `/last month`, `/last 2026-06`\n"
-        "Output `/last` juga otomatis mengirim grafik time series PNG dari transaksi yang tampil.\n"
-        "`/delete_txn 1`, `/delete_txn 1 3 5`, `/delete_txn 1-4`\n"
-        "`/edit_txn 2 amount=15000`\n"
-        "`/edit_txn 2 desc=Kopi susu`\n"
-        "`/edit_txn 2 account=BRI category=Food & Beverage`\n"
-        "Bulk edit juga bisa dengan paste beberapa baris `/edit_txn` sekaligus setelah `/last`, `/transaksi`, atau `/cari`. Bot akan kasih preview Simpan/Batal.\n"
-        "`/edit_txn 1 category=\"Household & Supplies\" desc=\"Galon\"`\n"
-        "`/edit_txn 2 category=\"Food & Beverage\"`\n"
-        "`/edit_txn txn_id amount=500k dibagi 4 sama Raka:125k Bagas:125k Fajar:100k`\n"
-        "`/edit_txn 2 bayar_hutang Raka` — ubah transaksi jadi pembayaran utang ke Raka\n"
-        "`/edit_txn 2 bayar_piutang Raka` — ubah transaksi jadi pembayaran piutang dari Raka\n"
-        "Jika transaksi punya `hutang_id`, `/delete_txn` akan mencoba void debt terkait otomatis.\n\n"
-
-        "*13. Pending Expense / Rencana Pengeluaran*\n"
-        "Pending expense dipakai untuk pengeluaran yang akan ada, tapi belum dibayar. Tidak mengubah saldo dan belum masuk pengeluaran aktual.\n"
-        "`/pending` — lihat pending expense bulan ini\n"
-        "`/pending 2026-07` — lihat pending bulan tertentu\n"
-        "`/pending bulan depan` — lihat pending bulan depan\n"
-        "`/pending all` — lihat semua pending aktif\n"
-        "`/pending tanpa tanggal` — lihat pending yang tanggalnya belum pasti\n"
-        "`/pending_add bayar wifi 285k tgl 30 dari BRI` — preview pending dengan tanggal pasti\n"
-        "`pending beli token 500k` — preview pending tanpa tanggal pasti\n"
-        "`rencana beli sepatu 300k bulan depan` — tambah pending dengan bulan, tanggal belum pasti\n"
-        "`nanti perlu bayar wisuda 750k` — preview pending natural tanpa command\n"
-        "`nanti perlu service motor 300k tgl 30` — pending natural dengan tanggal pasti\n"
-        "`perlu 750k buat bayar wisuda` — pending natural tanpa tanggal pasti\n"
-        "`/pending_paid pending_id BRI` — ubah pending menjadi transaksi aktual\n"
-        "`/pending_cancel pending_id` — batalkan pending expense\n\n"
-
-        "*14. Budget*\n"
-        "`/budget` — lihat budget bulan berjalan\n"
-        "`/budget 2026-06` — lihat budget bulan tertentu\n"
-        "`/budget_history` — lihat daftar bulan yang punya budget\n"
-        "`budget makan 1.5 juta` — otomatis map ke Food & Beverage\n"
-        "`budget jajan 500rb` — buat budget custom Jajan\n"
-        "`budget transport 300rb 2026-07` — set budget bulan tertentu\n"
-        "Catatan: `/budget` memakai realisasi bersih. Jika ada split bill, output tampil sebagai Bersih (Gross).\n\n"
-
-        "*15. Kategori*\n"
-        "`/kategori` — lihat daftar kategori, tipe, symbol, dan aliases\n"
-        "`/add_kategori` — tambah kategori baru dengan wizard\n"
-        "`/add_kategori Belanja Online` — langsung isi nama kategori, lalu pilih tipe\n"
-        "`/edit_kategori` — edit tipe, symbol, dan aliases kategori existing\n"
-        "Saat tambah kategori, bot akan tanya nama, tipe `expense`/`income`, symbol, generate aliases via Gemini, lalu tampilkan preview sebelum save.\n"
-        "Saat edit aliases, ketik daftar dipisah koma, `auto` untuk generate ulang via Gemini, atau `sama` untuk mempertahankan. Perubahan tetap lewat preview sebelum save.\n\n"
-
-        "*16. Export, Recurring, Health*\n"
-        "`/download_data`, `/download_data today`, `/download_data week`, `/download_data 2026-06`\n"
-        "`/recurring` — lihat transaksi rutin\n"
-        "`/recurring_add name=Netflix type=expense amount=65000 category=Entertainment account=DANA frequency=monthly day=5 description=\"Langganan Netflix\"`\n"
-        "`/recurring_edit rec_xxx amount=300k day=20 account=DANA` — edit recurring dengan format key=value\n"
-        "`/recurring_run`, `/recurring_off rec_xxx`\n"
-        "Recurring otomatis muncul sebagai reminder dengan tombol `Sudah bayar`. Klik tombol itu untuk mencatat transaksi dan menghentikan notifikasi sampai periode berikutnya.\n"
-        "`/health` — cek status bot, env, Google Sheets, dan sheet utama\n\n"
-
-        "*D. Net Worth & Aset*\n\n"
-        "*17. Net Worth*\n"
-        "`/networth` — lihat kekayaan bersih dari saldo rekening + aset aktif\n"
-        "`/networth_snapshot` — simpan snapshot net worth hari ini\n"
-        "`/networth_history` — lihat riwayat snapshot\n\n"
-
-        "*18. Aset*\n"
-        "`/assets` — lihat daftar aset aktif\n"
-        "`/asset_add` — tambah aset mode tanya-jawab/guided input\n"
-        "Format utama:\n"
-        "`/asset_add Laptop`\n"
-        "`catet aset hp 10 juta`\n"
-        "`tambah aset laptop 8 juta`\n"
-        "Dalam mode guided, bot akan tanya nama aset, jumlah/unit, harga beli, tanggal beli, harga saat ini, kategori, dan deskripsi.\n"
-        "Tanggal beli boleh dikosongkan dengan mengetik `lewati`, `kosong`, atau `-`.\n"
-        "Setiap step punya tombol `Batal`.\n"
-        "`/asset_update asset_id unit_price=2420000`\n"
-        "`/asset_update asset_id harga_beli=2559000 tanggal_beli=2026-06-10`\n"
-        "`/asset_update asset_id amount=9000000`\n"
-        "`/asset_off asset_id`\n\n"
-
-        "*E. Input Gambar & Analisis Gemini/RAG*\n\n"
-        "*19. Input Gambar / Struk*\n"
-        "Kirim foto struk, nota, QRIS, atau screenshot transaksi.\n"
-        "Bot membaca gambar dengan Gemini, lalu menampilkan preview sebelum disimpan.\n"
-        "Caption opsional: `pakai BSI`, `ini pemasukan`, `total aja`.\n\n"
-
-        "*20. Analisis Gemini / RAG Finance*\n"
-        "Bagian ini read-only: bot mengambil data relevan dari Google Sheets, menghitung angka pakai Python, lalu Gemini menjelaskan insight.\n"
-        "`/insight` — monthly narrative report bulan ini\n"
-        "`/insight 2026-06` — insight bulan tertentu\n"
-        "`/ask bulan ini boros di mana?` — tanya jawab finansial natural\n"
-        "`/ask kapan terakhir saya beli kopi?` — tanya transaksi spesifik\n"
-        "`/ask budget makan aman gak?` — budget assistant\n"
-        "`/audit` — deteksi anomali + data quality checker\n"
-        "`/coach` — financial coach ringan\n"
-        "`/coach gimana biar nabung 2 juta?`\n\n"
-
-        "Contoh pertanyaan natural tanpa command:\n"
-        "`bulan ini boros di mana?`\n"
-        "`ada transaksi aneh bulan ini?`\n"
-        "`budget saya aman gak?`\n"
-        "`kasih saran pengeluaran bulan ini`\n\n"
-
-        "*Catatan penting:*\n"
-        "• Fitur inti mengubah data, fitur Gemini/RAG hanya membaca dan memberi insight.\n"
-        "• Sheet `transactions` dipakai sebagai fact table utama, termasuk debt-only dan debt offset.\n"
-        "• Untuk `/delete_txn` dan `/edit_txn`, jalankan `/last` dulu.\n"
-        "• Data yang dikirim ke Gemini adalah ringkasan relevan, bukan seluruh spreadsheet mentah.\n"
-        "• `/ask` memakai session history terbatas agar paham pertanyaan lanjutan; history hilang jika bot restart."
-    # Close the structure that was opened above.
-    )
-
-    # Wait for reply_long_markdown before continuing this flow.
-    await reply_long_markdown(update, text)
+    # Send the PDF as a document without mutating any finance data.
+    with manual_path.open("rb") as file_obj:
+        await update.message.reply_document(
+            document=InputFile(file_obj, filename="help_manual.pdf"),
+            caption="📖 Manual lengkap Finance Bot.",
+        )
 
 
 # Define add session chat history for callers in this flow.
