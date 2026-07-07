@@ -96,5 +96,7 @@ SHEET_RECURRING_LOGS = "recurring_logs"
 # Keep this section separated from the surrounding flow.
 SHEET_ASSETS = "assets"
 # Keep this section separated from the surrounding flow.
+SHEET_NET_WORTH_SNAPSHOTS = "net_worth_snapshots"
+# Keep this section separated from the surrounding flow.
 SHEET_PENDING_EXPENSES = "pending_expenses"
 # Keep this section separated from the surrounding flow.
