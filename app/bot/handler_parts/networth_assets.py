@@ -348,6 +348,165 @@ def parse_asset_extra_fields(extra_parts: list[str]) -> dict:
     return result
 
 
+def parse_add_key_value_args(args: list[str], item_type: str) -> dict:
+    """Parse one-line add commands that use the project-wide `key=value` style.
+
+    Args:
+        args: Command arguments after `/asset_add` or `/liability_add`. Values
+            may be quoted, for example `name="Laptop Kerja" amount=8jt`.
+        item_type: Supported value is `asset` or `liability`.
+
+    Returns:
+        Dict shaped like `parse_pipe_add_args`, ready for preview or service
+        calls. Asset dicts include `name`, `amount`, `category`,
+        `description`, optional unit fields, purchase metadata, and
+        `needs_unit_price`.
+
+    Side effects:
+        None.
+
+    Flow constraints:
+        Keep old pipe and guided input compatible. This helper only standardizes
+        structured one-line add commands and does not write to Google Sheets.
+    """
+    raw = " ".join(args or []).strip()
+    if not raw:
+        raise ValueError("Format kosong. Contoh: `/asset_add name=Botol amount=100k category=Barang`")
+
+    # Preserve quoted values and collect continuation words until the next key=value token.
+    try:
+        tokens = shlex.split(raw)
+    except Exception:
+        tokens = raw.split()
+
+    values = {}
+    i = 0
+    while i < len(tokens):
+        token = str(tokens[i] or "").strip()
+        if "=" not in token:
+            raise ValueError(f"Format `{token}` salah. Gunakan field=value.")
+
+        field, value = token.split("=", 1)
+        field = field.strip().lower()
+        value_parts = [value.strip()] if value.strip() else []
+        i += 1
+
+        while i < len(tokens) and "=" not in str(tokens[i] or ""):
+            continuation = str(tokens[i] or "").strip()
+            if continuation:
+                value_parts.append(continuation)
+            i += 1
+
+        value = " ".join(value_parts).strip()
+        if not field or not value:
+            raise ValueError(f"Format `{token}` salah. Field dan value wajib diisi.")
+        values[field] = value
+
+    if item_type == "asset":
+        # Map user-facing field aliases into the internal asset preview shape.
+        name = values.get("name") or values.get("nama")
+        if not name:
+            raise ValueError("Field `name` wajib diisi. Contoh: `/asset_add name=Laptop amount=8jt`")
+
+        category = values.get("category") or values.get("kategori") or "Other Asset"
+        description = values.get("description") or values.get("desc") or values.get("deskripsi") or ""
+        quantity_raw = values.get("quantity") or values.get("qty") or values.get("jumlah")
+        unit = values.get("unit") or values.get("satuan") or ""
+        current_raw = (
+            values.get("current_value")
+            or values.get("current_price")
+            or values.get("amount")
+            or values.get("value")
+            or values.get("nilai")
+            or values.get("nominal")
+        )
+        unit_price_raw = (
+            values.get("unit_price")
+            or values.get("price_per_unit")
+            or values.get("harga_per_unit")
+            or values.get("harga_satuan")
+            or values.get("harga_sekarang")
+            or values.get("price")
+            or values.get("harga")
+        )
+        purchase_price_raw = (
+            values.get("purchase_price")
+            or values.get("purchase_price_per_unit")
+            or values.get("buy_price")
+            or values.get("harga_beli")
+            or values.get("modal")
+        )
+        purchase_date = (
+            values.get("purchase_date")
+            or values.get("buy_date")
+            or values.get("tanggal_beli")
+            or values.get("tgl_beli")
+            or ""
+        )
+
+        quantity = float(str(quantity_raw).replace(",", ".")) if quantity_raw not in [None, ""] else None
+        current_value = parse_human_amount(current_raw) if current_raw else 0
+        price_per_unit = parse_human_amount(unit_price_raw) if unit_price_raw else None
+        purchase_price = parse_human_amount(purchase_price_raw) if purchase_price_raw else None
+
+        if quantity not in [None, ""] or unit:
+            if not quantity or quantity <= 0:
+                raise ValueError("Field `quantity` harus lebih dari 0 untuk aset satuan.")
+            if not str(unit).strip():
+                raise ValueError("Field `unit` wajib diisi untuk aset satuan.")
+            if not price_per_unit and current_value > 0:
+                price_per_unit = current_value / float(quantity)
+            name, category = guess_asset_category_and_name(str(name), str(category))
+            asset_type = "gold" if ("emas" in str(name).lower() or str(category).lower() in ["gold", "emas"]) else "unit"
+            return {
+                "name": name,
+                "amount": float(quantity) * float(price_per_unit or 0) if price_per_unit else None,
+                "category": category,
+                "description": description,
+                "asset_type": asset_type,
+                "quantity": quantity,
+                "unit": str(unit).strip(),
+                "price_source": "manual",
+                "price_per_unit": price_per_unit,
+                "purchase_price_per_unit": purchase_price,
+                "purchase_date": purchase_date,
+                "needs_unit_price": not bool(price_per_unit),
+            }
+
+        if current_value <= 0:
+            raise ValueError("Field `amount` wajib lebih dari 0. Contoh: `/asset_add name=Laptop amount=8jt`")
+
+        name, category = guess_asset_category_and_name(str(name), str(category))
+        return {
+            "name": name,
+            "amount": current_value,
+            "category": category,
+            "description": description,
+            "asset_type": values.get("asset_type") or values.get("type") or "manual",
+            "quantity": None,
+            "unit": "",
+            "price_source": "",
+            "price_per_unit": None,
+            "purchase_price_per_unit": purchase_price,
+            "purchase_date": purchase_date,
+            "needs_unit_price": False,
+        }
+
+    if item_type == "liability":
+        name = values.get("name") or values.get("nama")
+        amount = parse_human_amount(values.get("amount") or values.get("balance") or values.get("nominal"))
+        if not name or amount <= 0:
+            raise ValueError("Format liability: `/liability_add name=Paylater amount=1200000 category=Paylater`")
+        return {
+            "name": name,
+            "amount": amount,
+            "category": values.get("category") or values.get("kategori") or "Other Liability",
+            "description": values.get("description") or values.get("desc") or values.get("deskripsi") or "",
+        }
+
+    raise ValueError(f"Tipe add tidak dikenal: `{item_type}`")
+
+
 def format_asset_gain_lines(asset: dict, indent: str = "   ") -> list[str]:
     """Format data into a readable display for asset gain lines."""
     # Prepare gain for the next step.
@@ -862,6 +1021,7 @@ def build_networth_text(summary: dict) -> str:
     # Open a multi-line structure for the values below.
     lines.append(
         "\nCommand:\n"
+        "`/asset_add name=Laptop amount=8jt category=Electronics`\n"
         "`/asset_add Laptop`\n"
         "`/asset_update asset_id amount=nominal`\n"
         "`/asset_off asset_id`\n"
@@ -1822,13 +1982,15 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         raw_arg = " ".join(command_args).strip()
-        if "|" not in raw_arg:
+        if "|" in raw_arg:
+            data = parse_pipe_add_args(command_args, "asset")
+        elif "=" in raw_arg:
+            data = parse_add_key_value_args(command_args, "asset")
+        else:
             start_asset_add_flow(context, {"name": raw_arg}, step="quantity")
             await send_asset_add_step_prompt(update, context, "quantity", {"name": raw_arg})
             # Return control to the caller.
             return
-
-        data = parse_pipe_add_args(command_args, "asset")
 
         if data.get("needs_unit_price"):
             context.user_data["pending_asset_price"] = data
@@ -1862,7 +2024,8 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Gagal tambah aset.\n\n"
             f"{str(e)}\n\n"
             "Contoh:\n"
-            "`/asset_add Laptop`\n"
+            "`/asset_add name=Laptop amount=8jt category=Electronics desc=\"Laptop kerja\"`\n"
+            "`/asset_add name=\"Emas Antam\" quantity=10 unit=gram price=1.5jt category=Emas`\n"
             "`/asset_add Laptop`\n"
             "`catet aset hp 10 juta`\n"
             "`tambah aset laptop 8 juta`",
@@ -1897,7 +2060,8 @@ async def liability_add_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        data = parse_pipe_add_args(context.args, "liability")
+        raw_arg = " ".join(context.args or []).strip()
+        data = parse_pipe_add_args(context.args, "liability") if "|" in raw_arg else parse_add_key_value_args(context.args, "liability")
 
         # Open a multi-line structure for the values below.
         liability = add_liability(
@@ -1927,7 +2091,7 @@ async def liability_add_handler(update: Update, context: ContextTypes.DEFAULT_TY
             "❌ Gagal tambah liabilitas.\n\n"
             f"{str(e)}\n\n"
             "Contoh:\n"
-            "`/liability_add Paylater | 1200000 | Paylater | Cicilan aktif`",
+            "`/liability_add name=Paylater amount=1200000 category=Paylater desc=\"Cicilan aktif\"`",
             parse_mode="Markdown",
         # Close the structure that was opened above.
         )
