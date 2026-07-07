@@ -1107,6 +1107,41 @@ def _tokenize_command_args(raw: str) -> list[str]:
         return str(raw or "").replace("|", " ").split()
 
 
+# Define recurring command args from update for callers in this flow.
+def _recurring_command_args_from_update(update: Update, context: ContextTypes.DEFAULT_TYPE, command_name: str) -> list[str]:
+    """Read recurring command arguments from the original Telegram message.
+
+    Args:
+        update: Telegram update that may come from `CommandHandler` or the
+            fallback regex `MessageHandler`.
+        context: Telegram callback context. `context.args` is used only when
+            the original text does not contain the requested slash command.
+        command_name: Slash command without `/`, for example `recurring_add`.
+
+    Returns:
+        A list suitable for the existing recurring parser. When possible the
+        function returns the raw command tail as a single item so quoted values
+        such as `category="Bills & Utilities"` remain intact.
+
+    Side effects:
+        None. This helper only reads the incoming message and context.
+
+    Flow constraints:
+        Keep recurring add/edit parsing preview-before-save; this helper must
+        not save recurring rules or mutate Google Sheets.
+    """
+    message = getattr(update, "message", None)
+    text = str(getattr(message, "text", "") or "").strip()
+    pattern = rf"^/{re.escape(command_name)}(?:@\w+)?(?:\s+(.*))?$"
+    match = re.match(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+    # Prefer the original command tail so shell-like quotes survive fallback routing.
+    if match:
+        raw_tail = str(match.group(1) or "").strip()
+        return [raw_tail] if raw_tail else []
+    # Fall back to python-telegram-bot command args for normal CommandHandler calls.
+    return list(getattr(context, "args", None) or [])
+
+
 # Define normalize recurring key values for callers in this flow.
 def _normalize_recurring_key_values(values: dict) -> dict:
     """Normalize recurring key=value fields into recurring service keys."""
@@ -1555,19 +1590,21 @@ async def recurring_add_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Handle the missing or empty context.args case.
-        if not context.args:
+        # Read args from the original text so fallback routing keeps quoted values intact.
+        command_args = _recurring_command_args_from_update(update, context, "recurring_add")
+        # Start the wizard when the command has no inline arguments.
+        if not command_args:
             # Run this statement as part of the current workflow.
             start_recurring_add_flow(context)
             await send_recurring_add_step_prompt(update, context, "name", {})
             # Return control to the caller.
             return
 
-        raw_arg = " ".join(context.args).strip()
+        raw_arg = " ".join(command_args).strip()
 
         if "=" in raw_arg:
             # Prepare data for the next step.
-            data = parse_recurring_add_args(context.args)
+            data = parse_recurring_add_args(command_args)
             data["account"] = _resolve_recurring_account(data.get("account"))
             context.user_data["pending_recurring_confirm"] = data
             # Run this statement as part of the current workflow.
@@ -1591,7 +1628,7 @@ async def recurring_add_handler(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
         # Prepare partial for the next step.
-        partial = _partial_recurring_data_from_args(context.args)
+        partial = _partial_recurring_data_from_args(command_args)
         # Prepare missing step for the next step.
         missing_step = _next_missing_recurring_step(partial)
 
@@ -1610,7 +1647,7 @@ async def recurring_add_handler(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
         # Prepare data for the next step.
-        data = parse_recurring_add_args(context.args)
+        data = parse_recurring_add_args(command_args)
         data["account"] = _resolve_recurring_account(data.get("account"))
         context.user_data["pending_recurring_confirm"] = data
         # Run this statement as part of the current workflow.
