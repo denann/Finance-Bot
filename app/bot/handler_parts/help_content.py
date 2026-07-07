@@ -38,15 +38,15 @@ Tombol *Batal* bisa membatalkan wizard atau preview aktif.
 `/ask` — tanya finance ke AI
 
 *Help detail*
-`/help input`
-`/help debt`
-`/help laporan`
-`/help transaksi`
-`/help pending`
-`/help budget`
-`/help aset`
-`/help recurring`
-`/help ai`"""
+`/help input` — cara catat pengeluaran, pemasukan, transfer, multi input, dan data historis
+`/help debt` — utang/piutang, talangin, ditalangin, split bill, potong silang, dan settle debt
+`/help laporan` — saldo, set saldo, rekening, harian, mingguan, bulanan, dan grafik
+`/help transaksi` — lihat, cari, edit, hapus, dan bulk edit transaksi
+`/help pending` — rencana pengeluaran, pending ID, paid, dan cancel pending
+`/help budget` — set budget, histori budget, realisasi bersih, dan Bersih (Gross)
+`/help aset` — net worth, asset add/update/off, guided input, dan asset ID
+`/help recurring` — export data, transaksi rutin, reminder, run, edit, dan off
+`/help ai` — input gambar, Gemini/RAG, ask, insight, audit, dan coach"""
 
 UNKNOWN_TOPIC_TEXT = """❌ Topik help belum dikenal.
 
