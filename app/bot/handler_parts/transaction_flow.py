@@ -2138,6 +2138,70 @@ def build_single_short_summary(parsed: dict) -> str:
     return "\n".join(lines)
 
 
+# Define build single split bill final summary for callers in this flow.
+def build_single_split_bill_final_summary(parsed: dict, account_label: str | None = None) -> str:
+    """Build the compact final save preview for one split bill transaction.
+
+    Args:
+        parsed: Parsed single transaction that already has `split_bill` status
+            and an account decision. Expected keys include `type`, `amount`,
+            `category`, `account`, `description`, and nested `split_bill`.
+        account_label: Optional display label from the selected rekening
+            callback. When omitted, the function falls back to `parsed.account`.
+
+    Returns:
+        Markdown text with the final split bill summary, category summary, and
+        account delta summary. This function only formats text and never writes
+        to Google Sheets.
+
+    Flow constraints:
+        Use this only after split bill status and rekening are selected, so the
+        next button row can be `Simpan / Edit dulu / Batal`.
+    """
+    # Read split metadata defensively because older pending sessions may not carry every key.
+    split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else {}
+    split_bill = split_bill or {}
+    # Calculate the split amounts that must stay visible before the final save.
+    total_paid = float(split_bill.get("total_amount", parsed.get("amount", 0)) or 0)
+    user_share = float(split_bill.get("user_share_amount", split_bill.get("share_amount", 0)) or 0)
+    total_receivable = float(split_bill.get("total_receivable", 0) or 0)
+    # Show the friend names so the receivable context is clear in the compact preview.
+    person_names = split_bill.get("person_names") or [split_bill.get("person_name")]
+    people_text = ", ".join(str(name) for name in person_names if str(name or "").strip()) or "-"
+    # Convert the stored status into the same wording used by the detailed split preview.
+    status = str(split_bill.get("status") or "").strip().lower()
+    status_label = "belum dibayar / masuk piutang" if status == "unpaid" else "sudah dibayar"
+    # Prefer the freshly selected account label so skip-account display stays accurate.
+    account = account_label or parsed.get("account") or "-"
+
+    # Keep the final split preview compact like other final batch confirmations.
+    lines = ["🧾 *Ringkasan split bill:*"]
+    lines.append("• Total item: *1*")
+    lines.append("• Transaksi: *1 item*")
+    lines.append(f"• Expense: *{format_rupiah(float(parsed.get('amount', 0) or 0))}*")
+    lines.append(f"• Rekening: {md_safe(account)}")
+    lines.append(f"• Status split: *{md_safe(status_label)}*")
+    lines.append(f"• Total dibayar: *{format_rupiah(total_paid)}*")
+    lines.append(f"• Bagian kamu: *{format_rupiah(user_share)}*")
+    if total_receivable:
+        lines.append(f"• Piutang aktif: *{format_rupiah(total_receivable)}*")
+    lines.append(f"• Teman: {md_safe(people_text)}")
+
+    # Reuse mixed summary helpers so category and account totals stay consistent.
+    mixed_like_items = [{"kind": "transaction", "parsed": parsed, "raw": parsed.get("raw_input", "")}]
+    category_summary = build_mixed_category_summary(mixed_like_items)
+    # Add the category block when the transaction has a reportable category.
+    if category_summary:
+        lines.extend(["", category_summary])
+
+    account_summary = build_account_delta_summary_from_transaction_items(mixed_like_items)
+    # Add account impact so the user sees the balance effect before confirming save.
+    if account_summary:
+        lines.extend(["", account_summary])
+
+    return "\n".join(lines)
+
+
 # Define build single account prompt for callers in this flow.
 def build_single_account_prompt(parsed: dict, preview_text: str | None = None) -> str:
     """Build the rekening selection prompt for a single transaction.
@@ -3278,6 +3342,17 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
     parsed = apply_preview_edit_updates_to_parsed(parsed, updates)
     context.user_data["pending_parsed"] = parsed
     context.user_data.pop("pending_preview_edit", None)
+
+    if parsed.get("split_bill") and not split_bill_needs_decision(parsed) and needs_account(parsed):
+        # Return split bill edits to the detailed preview before asking for rekening.
+        preview = build_preview(parsed)
+        await reply_update_safely(
+            update,
+            f"✅ Preview sudah diupdate.\n\n{preview}\n\n{preview_action_question(False)}",
+            parse_mode="Markdown",
+            reply_markup=preview_action_keyboard("single", False),
+        )
+        return True
 
     # Handle the case where needs_account(parsed).
     if needs_account(parsed):

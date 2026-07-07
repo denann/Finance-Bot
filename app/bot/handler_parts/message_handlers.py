@@ -9,6 +9,7 @@ from app.bot.handler_parts.common_imports import *
 from app.bot.handler_parts.common_imports import _safe_float_for_display
 # Import app.bot.handler_parts.state_utils so this module can use its helpers.
 from app.bot.handler_parts.state_utils import BULK_EDIT_CATEGORY_DECISION_KEY, EDIT_CATEGORY_CHOICE_KEY
+from app.services.chart_service import write_transaction_timeseries_png
 
 # Import app.bot.handler_parts.networth_assets so this module can use its helpers.
 from app.bot.handler_parts.networth_assets import (
@@ -2436,6 +2437,55 @@ def build_transaction_filter_title(base_title: str, category_filter: str | None 
     return base_title
 
 
+# Handle the asynchronous send transaction timeseries chart workflow.
+async def send_transaction_timeseries_chart(update: Update, transactions: list[dict], title: str) -> None:
+    """Send an automatic PNG time-series chart for transaction list commands.
+
+    Args:
+        update: Telegram update used to send the PNG as a document.
+        transactions: Transaction rows already displayed by `/transaksi` or
+            `/last`.
+        title: The same user-facing title used by the transaction list output.
+
+    Returns:
+        None. Failures are reported as a warning message after the transaction
+        list, without blocking the list output itself.
+
+    Side effects:
+        Creates a temporary PNG file, sends it through Telegram, and deletes the
+        file afterward. It does not write to Google Sheets.
+
+    Flow constraints:
+        The chart must represent the displayed rows only, so filtered
+        transaction outputs receive filtered time-series charts.
+    """
+    chart_path = ""
+    # Keep chart generation separate from the text list so list output remains primary.
+    try:
+        chart_path = write_transaction_timeseries_png(transactions, f"Time Series - {title}")
+        filename = "grafik-transaksi-timeseries.png"
+        caption = (
+            f"📈 Grafik time series: {title}\n"
+            "Basis angka: pengeluaran net dari transaksi yang ditampilkan."
+        )
+        # Open the generated file only while Telegram sends the document.
+        with open(chart_path, "rb") as file_obj:
+            await update.message.reply_document(
+                document=InputFile(file_obj, filename=filename),
+                caption=caption,
+            )
+    # Report chart-only failures without changing transaction list behavior.
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Transaksi sudah terkirim, tapi grafik time series gagal dibuat: {str(e)}")
+    # Remove the temporary PNG after successful send or chart failure.
+    finally:
+        if chart_path:
+            try:
+                os.remove(chart_path)
+            except OSError:
+                pass
+
+
 # Define build transaksi prefixed period arg for callers in this flow.
 def _build_transaksi_prefixed_period_arg(first: str, rest: str, mode: str) -> str | None:
     """Build the data structure or message text for transaksi prefixed period arg."""
@@ -2699,6 +2749,8 @@ async def transaksi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["last_txn_map"] = last_map
     # Wait for reply_long_markdown before continuing this flow.
     await reply_long_markdown(update, build_transactions_full_text(transactions, title, account_filter))
+    # Send the matching read-only time-series chart after the transaction list.
+    await send_transaction_timeseries_chart(update, transactions, title)
 
 
 # Handle the asynchronous last handler workflow.
@@ -2820,6 +2872,8 @@ async def last_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Wait for reply_long_markdown before continuing this flow.
     await reply_long_markdown(update, build_last_transactions_text(transactions, title))
+    # Send the matching read-only time-series chart after the transaction list.
+    await send_transaction_timeseries_chart(update, transactions, title)
 
 
 # Handle the asynchronous delete txn handler workflow.

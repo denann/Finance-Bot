@@ -99,6 +99,8 @@ from app.bot.handler_parts.transaction_flow import (
     # Include this value in the surrounding collection or call.
     build_single_account_prompt,
     # Include this value in the surrounding collection or call.
+    build_single_split_bill_final_summary,
+    # Include this value in the surrounding collection or call.
     parse_preview_direct_field_update,
     # Include this value in the surrounding collection or call.
     build_single_short_summary,
@@ -3009,6 +3011,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         short_summary = build_single_short_summary(parsed)
         if str(parsed.get("parsed_by") or "").strip() == "meal_split":
             preview = build_meal_split_final_summary(parsed, "transaction")
+        elif parsed.get("split_bill"):
+            # Keep single split bill final confirmation compact after rekening selection.
+            preview = build_single_split_bill_final_summary(parsed, account_label=account_label)
         # Handle the fallback path after earlier conditions are skipped.
         else:
             # Prepare preview for the next step.
