@@ -46,6 +46,8 @@ Long receipt and multi-input previews are split into multiple Telegram messages 
 
 For paid split bills, the saved expense should use the user's net share. For unpaid split bills, the saved expense uses the gross paid amount and creates receivable records. Split bill inputs use the same multi-step review pattern as other multi inputs: detailed preview first, account selection second, compact final summary last.
 
+If the user edits a single split bill preview after choosing paid/unpaid status, the bot returns to the detailed split bill preview instead of jumping directly to the account picker. The user can review the updated split values, then continue to the account picker. After the account is selected, the final confirmation stays compact and shows split-specific totals such as total paid, user's share, active receivable, category summary, and account impact.
+
 ## Debt
 
 Debt-related flows also go through preview so the user can confirm before the bot changes balances or debt records.

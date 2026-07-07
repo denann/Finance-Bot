@@ -230,6 +230,153 @@ def daily_net_expense_series(report: dict) -> list[float]:
     return values
 
 
+# Define transaction net expense series for callers in this flow.
+def transaction_net_expense_series(transactions: list[dict]) -> list[tuple[str, float]]:
+    """Build daily net expense points from an arbitrary transaction list.
+
+    Args:
+        transactions: Transaction dictionaries from `/transaksi`, `/last`, or
+            another read-only list command. Each row may contain `date`, `type`,
+            `amount`, and receivable adjustment fields.
+
+    Returns:
+        A list of `(date_label, net_expense)` tuples sorted by date ascending.
+        Only expense rows contribute to the value; income and transfers stay out
+        of the expense time series.
+
+    Side effects:
+        None. This helper only reads transaction dictionaries and does not write
+        to Google Sheets or mutate bot state.
+
+    Flow constraints:
+        The net expense amount must use `get_chart_effective_expense_amount` so
+        automatic `/transaksi` and `/last` charts stay aligned with report
+        summaries that use net expense.
+    """
+    # Collect daily totals before sorting so repeated dates become one point.
+    daily_totals: dict[str, float] = {}
+    # Process each transaction row from the displayed list.
+    for txn in transactions or []:
+        txn_type = str((txn or {}).get("type", "") or "").strip().lower()
+        # Ignore non-expense rows because this chart answers spending over time.
+        if txn_type != "expense":
+            continue
+        date_label = str((txn or {}).get("date", "") or "Tanpa tanggal").strip() or "Tanpa tanggal"
+        # Add net expense for the date so split bill receivables do not inflate the chart.
+        daily_totals[date_label] = daily_totals.get(date_label, 0.0) + get_chart_effective_expense_amount(txn)
+
+    # Return points sorted chronologically by the ISO-like date label.
+    return [(date_label, daily_totals[date_label]) for date_label in sorted(daily_totals)]
+
+
+# Define build transaction timeseries png bytes for callers in this flow.
+def build_transaction_timeseries_png_bytes(transactions: list[dict], title: str = "Time Series Transaksi") -> bytes:
+    """Build a PNG time-series chart from displayed transaction rows.
+
+    Args:
+        transactions: Transaction dictionaries that were already selected for
+            a user-facing list such as `/transaksi` or `/last`.
+        title: Human-readable chart title shown at the top of the figure.
+
+    Returns:
+        PNG image bytes containing a date-based net expense time series.
+
+    Side effects:
+        Imports matplotlib lazily and renders one in-memory figure.
+
+    Flow constraints:
+        This helper is read-only and must represent exactly the passed rows, so
+        filtered transaction lists produce filtered charts.
+    """
+    # Build the exact series that should match the transaction list output.
+    points = transaction_net_expense_series(transactions)
+    # Show a clean placeholder instead of failing when the list has no expenses.
+    if not points or max(value for _date_label, value in points) <= 0:
+        return build_empty_chart_png_bytes(title, "Belum ada pengeluaran net pada transaksi yang ditampilkan.")
+
+    # Prepare matplotlib only after confirming that a real chart is needed.
+    plt = _load_matplotlib_pyplot()
+    # Apply the shared finance chart style before creating axes.
+    _configure_matplotlib_style(plt)
+    # Create a wide figure that remains readable in Telegram preview.
+    fig, ax = plt.subplots(figsize=CHART_FIGSIZE)
+    # Split labels and values so matplotlib can plot them directly.
+    labels = [date_label for date_label, _value in points]
+    values = [value for _date_label, value in points]
+    # Use numeric x positions so long dates can be rotated safely.
+    x_positions = list(range(1, len(points) + 1))
+
+    # Draw the time series with markers so sparse transaction days remain visible.
+    ax.plot(x_positions, values, color=CHART_COLORS[0], linewidth=2.4, marker="o", markersize=4.0)
+    # Add a subtle fill to make the spending trend easier to read on mobile.
+    ax.fill_between(x_positions, values, color=CHART_COLORS[0], alpha=0.08)
+    ax.set_title(title, loc="left", fontsize=15, weight="semibold", pad=14)
+    ax.text(
+        0,
+        1.01,
+        "Basis: pengeluaran net dari transaksi yang ditampilkan",
+        fontsize=9,
+        color=CHART_MUTED,
+        transform=ax.transAxes,
+    )
+    ax.set_xlabel("Tanggal transaksi")
+    ax.set_ylabel("Pengeluaran net")
+    ax.yaxis.set_major_formatter(_format_axis_rupiah)
+    ax.grid(axis="y", color=CHART_GRID, linewidth=0.8)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_ylim(bottom=0)
+    ax.set_xticks(x_positions)
+    # Rotate date labels to prevent overlap on longer `/last` outputs.
+    ax.set_xticklabels(labels, rotation=35, ha="right")
+    ax.text(
+        0,
+        -0.26,
+        f"Total net: {compact_rupiah(sum(values))}",
+        fontsize=10,
+        color=CHART_MUTED,
+        transform=ax.transAxes,
+    )
+    fig.tight_layout()
+    # Return PNG bytes and close the figure to avoid accumulating resources.
+    return _finalize_figure_to_png_bytes(fig, plt)
+
+
+# Define write transaction timeseries png for callers in this flow.
+def write_transaction_timeseries_png(transactions: list[dict], title: str = "Time Series Transaksi") -> str:
+    """Write a transaction-list time series chart PNG to a temporary file.
+
+    Args:
+        transactions: Transaction dictionaries that were shown to the user.
+        title: Human-readable chart title used inside the PNG.
+
+    Returns:
+        Absolute path to the generated `.png` file. The caller must delete it
+        after sending it to Telegram.
+
+    Side effects:
+        Creates one temporary PNG file on local disk. It does not write to
+        Google Sheets or mutate finance records.
+
+    Flow constraints:
+        This file output exists only for Telegram document sending in read-only
+        list commands such as `/transaksi` and `/last`.
+    """
+    # Render the chart into bytes before opening a temporary file.
+    png_bytes = build_transaction_timeseries_png_bytes(transactions, title)
+    # Create a temporary PNG path that Telegram can read as a document.
+    handle = tempfile.NamedTemporaryFile(
+        mode="wb",
+        suffix="-transactions-timeseries.png",
+        prefix="finance-chart-",
+        delete=False,
+    )
+    # Use a managed file handle so the file is flushed and closed before sending.
+    with handle:
+        handle.write(png_bytes)
+    # Return the absolute path so callers can send and clean up the file.
+    return str(Path(handle.name).resolve())
+
+
 # Define category net expense items for callers in this flow.
 def category_net_expense_items(report: dict, limit: int = 8) -> list[tuple[str, float, float]]:
     """Return category totals sorted by net expense.
