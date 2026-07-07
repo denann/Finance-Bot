@@ -1150,6 +1150,7 @@ def _normalize_recurring_key_values(values: dict) -> dict:
         "type": "txn_type",
         "txn_type": "txn_type",
         "jenis": "txn_type",
+        "amount": "amount",
         "nominal": "amount",
         "harga": "amount",
         "category": "category",
