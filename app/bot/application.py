@@ -336,6 +336,12 @@ def register_handlers(telegram_app: Application) -> Application:
     # This prevents commands such as /set_saldo from being parsed as normal expenses.
     add_message(filters.Regex(r"(?i)^/(set_saldo|saldo_set|set_balance)(?:@\w+)?(?:\s|$)"), set_saldo_handler)
     add_message(filters.Regex(r"(?i)^/quickstart(?:@\w+)?(?:\s|$)"), quickstart_handler)
+    # Route recurring slash commands explicitly if CommandHandler misses underscore commands.
+    add_message(filters.Regex(r"(?i)^/recurring_add(?:@\w+)?(?:\s|$)"), recurring_add_handler)
+    add_message(filters.Regex(r"(?i)^/recurring_run(?:@\w+)?(?:\s|$)"), recurring_run_handler)
+    add_message(filters.Regex(r"(?i)^/recurring_edit(?:@\w+)?(?:\s|$)"), recurring_edit_handler)
+    add_message(filters.Regex(r"(?i)^/recurring_off(?:@\w+)?(?:\s|$)"), recurring_off_handler)
+    add_message(filters.Regex(r"(?i)^/recurring(?:@\w+)?(?:\s|$)"), recurring_handler)
 
     # Generic handlers stay at the end so specific commands are processed first.
     add_message(filters.COMMAND, unknown_command_handler)
