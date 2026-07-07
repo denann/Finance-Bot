@@ -210,20 +210,24 @@ def extract_amount_from_text(text: str) -> int | None:
 
 # Define apply split operation for callers in this flow.
 def apply_split_operation(text: str, base_amount: int) -> int:
-    """Coordinate the apply split operation logic in the NLP/parser layer.
+    """Return the user-paid amount after applying explicit split-bill wording.
 
     Args:
-        text: Raw text input to parse, normalize, validate, or display.
-        base_amount: Input value supplied by the caller; accepted shape follows the function signature and local validation.
+        text: Raw Indonesian finance input that may contain split words such as
+            `dibagi 4`, `patungan`, `split`, or shorthand `/4`.
+        base_amount: Positive integer amount already extracted from `text`.
 
     Returns:
-        `int` value as defined by the function signature.
+        Integer amount to store for the main transaction. For explicit split
+        phrases this may be divided by the detected participant count. For
+        normal non-split inputs it returns `base_amount` unchanged.
 
     Side effects:
-        None beyond the side effects already performed by the existing implementation.
+        None.
 
     Flow constraints:
-        Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
+        Do not treat normal expenses, pending expenses, debts, or recurring
+        amounts as split bills unless an explicit split marker is present.
     """
     # Prepare text lower for the next step.
     text_lower = text.lower()
@@ -319,3 +323,5 @@ def apply_split_operation(text: str, base_amount: int) -> int:
                 continue
 
     # Keep this section separated from the surrounding flow.
+    # Keep normal non-split amounts unchanged after all split patterns are checked.
+    return base_amount
