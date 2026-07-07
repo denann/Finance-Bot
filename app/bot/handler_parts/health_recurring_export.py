@@ -1149,14 +1149,17 @@ def _normalize_recurring_key_values(values: dict) -> dict:
     aliases = {
         "type": "txn_type",
         "txn_type": "txn_type",
+        "tipe": "txn_type",
         "jenis": "txn_type",
         "amount": "amount",
         "nominal": "amount",
+        "jumlah": "amount",
         "harga": "amount",
         "category": "category",
         "kategori": "category",
         "account": "account",
         "rekening": "account",
+        "akun": "account",
         "frequency": "frequency",
         "freq": "frequency",
         "jadwal": "frequency",
@@ -1389,8 +1392,10 @@ async def recurring_edit_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     # Run this operation in a guarded block so failures can be handled.
     try:
+        # Read args from the original text so fallback routing keeps quoted values intact.
+        command_args = _recurring_command_args_from_update(update, context, "recurring_edit")
         # Run this statement as part of the current workflow.
-        rule_id, updates = parse_recurring_edit_args(context.args)
+        rule_id, updates = parse_recurring_edit_args(command_args)
 
         # Prepare result for the next step.
         result = edit_recurring_rule(rule_id, updates)

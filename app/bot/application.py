@@ -335,7 +335,17 @@ def register_handlers(telegram_app: Application) -> Application:
     # Fallback guard for slash commands that may not be caught by CommandHandler in some runtimes.
     # This prevents commands such as /set_saldo from being parsed as normal expenses.
     add_message(filters.Regex(r"(?i)^/(set_saldo|saldo_set|set_balance)(?:@\w+)?(?:\s|$)"), set_saldo_handler)
+    add_message(filters.Regex(r"(?i)^/set_budget(?:@\w+)?(?:\s|$)"), set_budget_handler)
     add_message(filters.Regex(r"(?i)^/quickstart(?:@\w+)?(?:\s|$)"), quickstart_handler)
+    # Route pending and asset slash commands explicitly if CommandHandler misses underscore commands.
+    add_message(filters.Regex(r"(?i)^/pending_add(?:@\w+)?(?:\s|$)"), pending_add_handler)
+    add_message(filters.Regex(r"(?i)^/pending_paid(?:@\w+)?(?:\s|$)"), pending_paid_handler)
+    add_message(filters.Regex(r"(?i)^/pending_cancel(?:@\w+)?(?:\s|$)"), pending_cancel_handler)
+    add_message(filters.Regex(r"(?i)^/asset_add(?:@\w+)?(?:\s|$)"), asset_add_handler)
+    add_message(filters.Regex(r"(?i)^/asset_update(?:@\w+)?(?:\s|$)"), asset_update_handler)
+    add_message(filters.Regex(r"(?i)^/asset_off(?:@\w+)?(?:\s|$)"), asset_off_handler)
+    add_message(filters.Regex(r"(?i)^/networth_snapshot(?:@\w+)?(?:\s|$)"), networth_snapshot_handler)
+    add_message(filters.Regex(r"(?i)^/networth_history(?:@\w+)?(?:\s|$)"), networth_history_handler)
     # Route recurring slash commands explicitly if CommandHandler misses underscore commands.
     add_message(filters.Regex(r"(?i)^/recurring_add(?:@\w+)?(?:\s|$)"), recurring_add_handler)
     add_message(filters.Regex(r"(?i)^/recurring_run(?:@\w+)?(?:\s|$)"), recurring_run_handler)

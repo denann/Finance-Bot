@@ -716,7 +716,8 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/download_data`, `/download_data today`, `/download_data week`, `/download_data 2026-06`\n"
         "`/recurring` — lihat transaksi rutin\n"
         "`/recurring_add name=Netflix type=expense amount=65000 category=Entertainment account=DANA frequency=monthly day=5 description=\"Langganan Netflix\"`\n"
-        "`/recurring_run`, `/recurring_edit ...`, `/recurring_off ...`\n"
+        "`/recurring_edit rec_xxx amount=300k day=20 account=DANA` — edit recurring dengan format key=value\n"
+        "`/recurring_run`, `/recurring_off rec_xxx`\n"
         "Recurring otomatis muncul sebagai reminder dengan tombol `Sudah bayar`. Klik tombol itu untuk mencatat transaksi dan menghentikan notifikasi sampai periode berikutnya.\n"
         "`/health` — cek status bot, env, Google Sheets, dan sheet utama\n\n"
 

@@ -734,6 +734,39 @@ def parse_pipe_update_args(args: list[str], command_name: str) -> tuple[str, dic
     return record_id, updates
 
 
+# Define command args from update for callers in this flow.
+def _command_args_from_update(update: Update, context: ContextTypes.DEFAULT_TYPE, command_name: str) -> list[str]:
+    """Read slash command arguments from the original Telegram message.
+
+    Args:
+        update: Telegram update from `CommandHandler` or fallback regex routing.
+        context: Telegram callback context. `context.args` is used when the
+            original message text does not match the requested command.
+        command_name: Slash command without `/`, for example `asset_update`.
+
+    Returns:
+        Command arguments as a list. When reading from the original text, the
+        command tail is returned as one item so quoted key=value text remains
+        intact for downstream parsers.
+
+    Side effects:
+        None. This helper only reads the incoming Telegram update.
+
+    Flow constraints:
+        Keep asset flows preview-before-save and do not mutate Google Sheets.
+    """
+    message = getattr(update, "message", None)
+    text = str(getattr(message, "text", "") or "").strip()
+    pattern = rf"^/{re.escape(command_name)}(?:@\w+)?(?:\s+(.*))?$"
+    match = re.match(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+    # Prefer the original command tail so quoted values survive fallback routing.
+    if match:
+        raw_tail = str(match.group(1) or "").strip()
+        return [raw_tail] if raw_tail else []
+    # Fall back to context args for normal CommandHandler calls.
+    return list(getattr(context, "args", None) or [])
+
+
 # Define short networth id for callers in this flow.
 def short_networth_id(record_id: str) -> str:
     """Coordinate the short networth id logic in the Telegram handler layer.
@@ -1778,22 +1811,24 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Handle the missing or empty context.args case.
-        if not context.args:
+        # Read args from the original text so fallback routing keeps quoted values intact.
+        command_args = _command_args_from_update(update, context, "asset_add")
+        # Start the wizard when the command has no inline arguments.
+        if not command_args:
             # Run this statement as part of the current workflow.
             start_asset_add_flow(context)
             await send_asset_add_step_prompt(update, context, "name", {})
             # Return control to the caller.
             return
 
-        raw_arg = " ".join(context.args).strip()
+        raw_arg = " ".join(command_args).strip()
         if "|" not in raw_arg:
             start_asset_add_flow(context, {"name": raw_arg}, step="quantity")
             await send_asset_add_step_prompt(update, context, "quantity", {"name": raw_arg})
             # Return control to the caller.
             return
 
-        data = parse_pipe_add_args(context.args, "asset")
+        data = parse_pipe_add_args(command_args, "asset")
 
         if data.get("needs_unit_price"):
             context.user_data["pending_asset_price"] = data
@@ -1924,7 +1959,9 @@ async def asset_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        asset_id, updates = parse_pipe_update_args(context.args, "asset_update")
+        # Read args from the original text so fallback routing keeps quoted values intact.
+        command_args = _command_args_from_update(update, context, "asset_update")
+        asset_id, updates = parse_pipe_update_args(command_args, "asset_update")
         # Prepare result for the next step.
         result = update_asset(asset_id, updates)
 
