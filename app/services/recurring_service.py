@@ -3,6 +3,8 @@
 
 # Import calendar for this module's local operations.
 import calendar
+# Import re for this module's amount and date parsing helpers.
+import re
 # Import uuid for this module's local operations.
 import uuid
 # Import datetime so this module can use its helpers.
@@ -182,6 +184,57 @@ def safe_float(value) -> float:
     # Handle an expected failure from the guarded operation above.
     except Exception:
         # Return 0.0 to the caller.
+        return 0.0
+
+
+# Define parse recurring amount value for callers in this flow.
+def parse_recurring_amount_value(value) -> float:
+    """Parse recurring amount input for add and edit flows.
+
+    Args:
+        value: Numeric value or user-facing amount text. Supported examples
+            include `75000`, `300k`, `65rb`, `1.5 juta`, and `1,5jt`.
+
+    Returns:
+        Parsed rupiah amount as a float. Invalid values return `0.0`.
+
+    Side effects:
+        None. This helper only parses an amount and never writes to Sheets.
+
+    Flow constraints:
+        Keep `/recurring_add` and `/recurring_edit` consistent with help
+        examples that use `amount=...` and Indonesian shorthand units.
+    """
+    # Preserve numeric service inputs from internal callers.
+    if isinstance(value, (int, float)):
+        return float(value or 0)
+
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return 0.0
+
+    # Read common Indonesian amount units before removing text.
+    multiplier = 1
+    if re.search(r"\b(jt|juta)\b", raw):
+        multiplier = 1_000_000
+    elif re.search(r"\b(rb|ribu|k)\b", raw):
+        multiplier = 1_000
+
+    # Keep decimals for shorthand units, but treat plain numbers as rupiah.
+    number_text = re.sub(r"\b(jt|juta|rb|ribu|k)\b", "", raw).strip()
+    if multiplier != 1:
+        number_text = number_text.replace(",", ".")
+        number_text = re.sub(r"[^0-9.]", "", number_text)
+        if number_text.count(".") > 1:
+            first, *rest = number_text.split(".")
+            number_text = first + "." + "".join(rest)
+    else:
+        number_text = re.sub(r"[^0-9]", "", number_text)
+
+    # Return zero on invalid values so callers can raise their existing errors.
+    try:
+        return float(number_text or 0) * multiplier
+    except Exception:
         return 0.0
 
 
@@ -456,7 +509,7 @@ def add_recurring_rule(
     day_of_month = normalize_day_of_month(day_of_month)
 
     # Prepare amount for the next step.
-    amount = safe_float(amount)
+    amount = parse_recurring_amount_value(amount)
 
     # Handle the case where amount <= 0.
     if amount <= 0:
@@ -789,18 +842,11 @@ def normalize_recurring_edit_value(field: str, value):
         return clean
 
     if field == "amount":
-        clean = value.replace(".", "").replace(",", "")
-        # Run this operation in a guarded block so failures can be handled.
-        try:
-            # Prepare amount for the next step.
-            amount = float(clean)
-        # Handle an expected failure from the guarded operation above.
-        except Exception:
-            raise ValueError("Amount harus angka. Contoh: `75000`.")
+        amount = parse_recurring_amount_value(value)
 
         # Handle the case where amount <= 0.
         if amount <= 0:
-            raise ValueError("Amount harus lebih dari 0.")
+            raise ValueError("Amount harus lebih dari 0. Contoh: `75000`, `300k`, atau `1.5 juta`.")
 
         # Return amount to the caller.
         return amount
