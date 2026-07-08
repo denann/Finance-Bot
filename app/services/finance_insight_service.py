@@ -81,6 +81,7 @@ AVAILABLE_COMMANDS_FOR_AI = [
     "/ask",
     "/audit",
     "/coach",
+    "/privacy",
 # Close the structure that was opened above.
 ]
 

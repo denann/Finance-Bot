@@ -92,6 +92,8 @@ from app.bot.handlers import (
     # Include this value in the surrounding collection or call.
     manual_handler,
     # Include this value in the surrounding collection or call.
+    privacy_handler,
+    # Include this value in the surrounding collection or call.
     quickstart_handler,
     # Include this value in the surrounding collection or call.
     set_saldo_handler,
@@ -255,6 +257,7 @@ def register_handlers(telegram_app: Application) -> Application:
     add_command("batal", cancel_handler)
     add_command("help", help_handler)
     add_command("manual", manual_handler)
+    add_command("privacy", privacy_handler)
     add_command("examples", examples_handler)
     add_command("contoh", examples_handler)
     add_command("health", health_handler)
@@ -341,6 +344,7 @@ def register_handlers(telegram_app: Application) -> Application:
     add_message(filters.Regex(r"(?i)^/set_budget(?:@\w+)?(?:\s|$)"), set_budget_handler)
     add_message(filters.Regex(r"(?i)^/quickstart(?:@\w+)?(?:\s|$)"), quickstart_handler)
     add_message(filters.Regex(r"(?i)^/manual(?:@\w+)?(?:\s|$)"), manual_handler)
+    add_message(filters.Regex(r"(?i)^/privacy(?:@\w+)?(?:\s|$)"), privacy_handler)
     # Route pending and asset slash commands explicitly if CommandHandler misses underscore commands.
     add_message(filters.Regex(r"(?i)^/pending_add(?:@\w+)?(?:\s|$)"), pending_add_handler)
     add_message(filters.Regex(r"(?i)^/pending_paid(?:@\w+)?(?:\s|$)"), pending_paid_handler)

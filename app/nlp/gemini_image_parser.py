@@ -24,6 +24,8 @@ from app.services.resolver_service import (
     resolve_account_for_parser,
 # Close the structure that was opened above.
 )
+# Import privacy redaction so captions do not pass credential-like text to Gemini.
+from app.services.privacy_service import redact_sensitive_text
 
 
 # Image parsing note: receipt output still goes through preview before saving.
@@ -104,8 +106,26 @@ def clean_gemini_json(raw_text: str) -> str:
 
 
 def build_image_prompt(caption: str = "") -> str:
-    """Build the data structure or message text for image prompt."""
+    """Build the Gemini Vision prompt for receipt or transaction images.
+
+    Args:
+        caption: Optional Telegram caption supplied with the image. The caption
+            may contain account hints such as `pakai BSI` or parsing hints such
+            as `total aja`.
+
+    Returns:
+        Prompt text that asks Gemini Vision to return transaction JSON only.
+
+    Side effects:
+        Reads category and account names through resolver helpers so the prompt
+        can use valid project values. It does not write data or call Gemini.
+
+    Flow constraints:
+        Redact credential-like text from the caption before prompting. The image
+        result must still go through preview-before-save in the Telegram flow.
+    """
     today = datetime.now().strftime("%Y-%m-%d")
+    safe_caption = redact_sensitive_text(caption)
 
     expense_categories = get_valid_categories("expense")
     income_categories = get_valid_categories("income")
@@ -121,7 +141,7 @@ Jangan pakai markdown.
 Jangan pakai backtick.
 
 Hari ini: {today}
-Caption user jika ada: {caption or "-"}
+Caption user jika ada: {safe_caption or "-"}
 
 Kategori pengeluaran valid:
 {", ".join(expense_categories)}
@@ -143,35 +163,36 @@ ATURAN MODE OUTPUT:
 4. Kalau user menulis caption seperti "total aja", "satu transaksi", "jangan detail", "rekap total", atau gambar hanya menampilkan total tanpa rincian item, kembalikan SATU transaksi saja dengan amount = total akhir.
 5. Kalau gambar jelas berisi beberapa transaksi terpisah dari screenshot mutasi/bank/e-wallet, kembalikan beberapa item sesuai baris transaksi dan isi receipt.is_receipt false.
 6. Jangan membuat item dari dashboard/grafik/non-transaksi. Fokus hanya ke area struk/nota/mutasi yang berisi transaksi uang.
+7. Jika caption atau gambar berisi credential/token/API key/service account JSON/private key/env value, jangan transkrip credential itu ke output. Abaikan bagian credential dan hanya parse transaksi finance yang jelas.
 
 ATURAN NOMINAL DAN DESKRIPSI:
-7. Untuk itemized receipt, amount setiap item = total baris item, bukan harga satuan, jika total baris terlihat.
+8. Untuk itemized receipt, amount setiap item = total baris item, bukan harga satuan, jika total baris terlihat.
    Contoh "4.000 Kg x 12.500 Rp 50.000.000" -> amount 50000000.
-8. Kalau hanya terlihat harga satuan dan kuantitas, hitung amount = quantity x unit_price.
-9. Simpan quantity dan unit_price jika terbaca. Jika tidak terbaca, gunakan quantity 1 dan unit_price sama dengan amount.
-10. Jangan menjumlahkan ulang semua item menjadi transaksi tambahan jika kamu sudah mengembalikan itemized rows.
-11. Gunakan total akhir hanya untuk validasi, bukan sebagai item tambahan, kecuali mode satu transaksi.
-12. Description untuk itemized receipt = nama barang/jasa saja, maksimal 50 karakter.
-13. Subject untuk itemized receipt = nama toko/merchant kalau terlihat; kalau tidak terlihat, isi dari nama barang.
-14. Catatan boleh berisi info pendek seperti nama toko, nomor struk, qty x harga satuan, atau metode bayar.
-15. Jika tanggal di gambar terbaca, gunakan tanggal itu. Kalau tidak ada, gunakan {today}.
-16. Jika rekening/metode bayar terlihat dan cocok dengan rekening valid, isi account. Jika tidak yakin, account null.
-17. Untuk screenshot transfer antar rekening sendiri, type boleh "transfer" jika rekening asal dan tujuan sama-sama rekening valid.
-18. Kalau transfer ke orang/toko dan bukan antar rekening sendiri, itu expense.
-19. parsed_by selalu "gemini_image".
-20. Jika gambar tidak berisi transaksi keuangan yang jelas, balas items kosong.
+9. Kalau hanya terlihat harga satuan dan kuantitas, hitung amount = quantity x unit_price.
+10. Simpan quantity dan unit_price jika terbaca. Jika tidak terbaca, gunakan quantity 1 dan unit_price sama dengan amount.
+11. Jangan menjumlahkan ulang semua item menjadi transaksi tambahan jika kamu sudah mengembalikan itemized rows.
+12. Gunakan total akhir hanya untuk validasi, bukan sebagai item tambahan, kecuali mode satu transaksi.
+13. Description untuk itemized receipt = nama barang/jasa saja, maksimal 50 karakter.
+14. Subject untuk itemized receipt = nama toko/merchant kalau terlihat; kalau tidak terlihat, isi dari nama barang.
+15. Catatan boleh berisi info pendek seperti nama toko, nomor struk, qty x harga satuan, atau metode bayar.
+16. Jika tanggal di gambar terbaca, gunakan tanggal itu. Kalau tidak ada, gunakan {today}.
+17. Jika rekening/metode bayar terlihat dan cocok dengan rekening valid, isi account. Jika tidak yakin, account null.
+18. Untuk screenshot transfer antar rekening sendiri, type boleh "transfer" jika rekening asal dan tujuan sama-sama rekening valid.
+19. Kalau transfer ke orang/toko dan bukan antar rekening sendiri, itu expense.
+20. parsed_by selalu "gemini_image".
+21. Jika gambar tidak berisi transaksi keuangan yang jelas, balas items kosong.
 
 ATURAN RECEIPT.EXTRA_CHARGES:
-21. Gunakan label "Service" untuk biaya layanan/service charge.
-22. Gunakan label "PPN" untuk pajak/tax/restaurant tax.
-23. Gunakan label "Diskon" untuk discount/promo/potongan dan set is_discount true.
-24. Extra charge amount selalu angka positif. Diskon tetap positif tetapi is_discount true.
+22. Gunakan label "Service" untuk biaya layanan/service charge.
+23. Gunakan label "PPN" untuk pajak/tax/restaurant tax.
+24. Gunakan label "Diskon" untuk discount/promo/potongan dan set is_discount true.
+25. Extra charge amount selalu angka positif. Diskon tetap positif tetapi is_discount true.
 
 ATURAN KATEGORI:
-25. Makanan, minuman, restoran, sembako, bahan makanan, beras, minyak, gula, mie masuk "Food & Beverage" kecuali caption menyebut untuk bisnis/stok toko.
-26. Belanja barang umum masuk "Shopping".
-27. Tagihan/token/listrik/air/internet masuk "Bills & Utilities".
-28. Kalau tidak yakin, expense pakai "Other Expense".
+26. Makanan, minuman, restoran, sembako, bahan makanan, beras, minyak, gula, mie masuk "Food & Beverage" kecuali caption menyebut untuk bisnis/stok toko.
+27. Belanja barang umum masuk "Shopping".
+28. Tagihan/token/listrik/air/internet masuk "Bills & Utilities".
+29. Kalau tidak yakin, expense pakai "Other Expense".
 
 Balas HANYA JSON murni dengan format:
 {{

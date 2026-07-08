@@ -13,6 +13,8 @@ import os
 from app.config import GEMINI_API_KEY
 # Import app.nlp.gemini_langchain_client so this module can use its helpers.
 from app.nlp.gemini_langchain_client import generate_text_with_gemini
+# Import privacy sanitizer so Gemini never receives credential-like context fields.
+from app.services.privacy_service import sanitize_ai_context
 # Import app.services.finance_insight_service so this module can use its helpers.
 from app.services.finance_insight_service import deterministic_audit_text, deterministic_monthly_text
 
@@ -52,10 +54,34 @@ def _json_dumps(data: dict) -> str:
 
 
 def build_finance_insight_prompt(mode: str, context: dict, question: str = "") -> str:
-    """Build the data structure or message text for finance insight prompt."""
+    """Build the Gemini prompt for finance insight features.
+
+    Args:
+        mode: Insight mode such as `ask`, `audit`, `coach`,
+            `monthly_insight`, or `monthly_auto`.
+        context: Structured finance context built from Google Sheets summaries,
+            compact transactions, budget status, debt summary, and available
+            commands. The context must not contain credentials, and this helper
+            applies a final sanitizer before JSON serialization.
+        question: Optional user question for `/ask`, `/coach`, or natural AI
+            finance questions.
+
+    Returns:
+        A complete Indonesian prompt string for Gemini.
+
+    Side effects:
+        None. This helper does not call Gemini and does not read or write
+        Google Sheets.
+
+    Flow constraints:
+        Only send relevant finance context. Remove credential-like keys and
+        redact token/private-key patterns before embedding context in the
+        prompt.
+    """
     # Prepare mode label for the next step.
     mode_label = MODE_LABELS.get(mode, mode)
-    question_line = question or context.get("question") or "-"
+    sanitized_context = sanitize_ai_context(context or {})
+    question_line = sanitize_ai_context(question or sanitized_context.get("question") or "-")
 
     if mode == "monthly_auto":
         length_rule = "Jawab sangat ringkas: maksimal 5 bullet. Fokus ke driver utama, budget risk, dan 1 saran."
@@ -97,7 +123,8 @@ Aturan wajib:
 22. Untuk proyeksi lintas bulan, jelaskan basis hitung secara sederhana: periode data yang tersedia, rata-rata harian atau rata-rata bulanan jika ada, lalu estimasi sampai target waktu. Jika konteks tidak menyediakan transaksi lintas bulan, jangan mengarang bulan kosong; pakai data tersedia sebagai baseline sementara.
 23. Kalau data quality issues ada tetapi bukan inti pertanyaan, taruh sebagai catatan singkat di akhir, bukan mendominasi jawaban.
 24. Jawaban `/ask` harus terasa menjawab pertanyaan user dulu. Hindari template panjang kalau user hanya minta angka perkiraan.
-25. Format output wajib rapi untuk Telegram:
+25. Jangan meminta, menampilkan, menebak, atau menyimpan credential seperti token Telegram, Gemini API key, service account JSON, private key, `.env`, atau akses spreadsheet. Jika konteks berisi placeholder `[REDACTED]`, abaikan sebagai credential yang sengaja disensor.
+26. Format output wajib rapi untuk Telegram:
     - Jangan pakai `**bold**`. Jika butuh penekanan, pakai `*bold*`.
     - Jangan pakai nested bullet yang terlalu dalam. Maksimal 2 level.
     - Gunakan bullet `•`, bukan `*   ` atau `-`.
@@ -106,7 +133,7 @@ Aturan wajib:
     - Jangan terlalu panjang. Prioritaskan 3-5 poin yang paling penting.
 
 Konteks JSON:
-{_json_dumps(context)}
+{_json_dumps(sanitized_context)}
 """.strip()
 
 

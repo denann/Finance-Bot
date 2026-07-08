@@ -24,6 +24,8 @@ from app.services.resolver_service import (
     resolve_account_for_parser,
 # Close the structure that was opened above.
 )
+# Import privacy redaction so parser prompts do not forward credential-like text.
+from app.services.privacy_service import redact_sensitive_text
 
 
 GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"))
@@ -75,8 +77,28 @@ def get_valid_accounts() -> list[str]:
 
 # Define build prompt for callers in this flow.
 def build_prompt(user_input: str) -> str:
-    """Build the data structure or message text for prompt."""
+    """Build the Gemini draft parser prompt for one natural transaction input.
+
+    Args:
+        user_input: Raw Telegram text that local parsing could not confidently
+            handle. It should be a transaction-like sentence, not a slash
+            command.
+
+    Returns:
+        Prompt text that asks Gemini to return one normalized transaction JSON
+        object.
+
+    Side effects:
+        Reads valid account and category names through resolver helpers. It does
+        not call Gemini, write Google Sheets, or mutate parser state.
+
+    Flow constraints:
+        Redact credential-like text before embedding user input in the prompt.
+        Gemini output is only a draft and must still go through preview or
+        clarification before any save.
+    """
     today = datetime.now().strftime("%Y-%m-%d")
+    safe_user_input = redact_sensitive_text(user_input)
 
     expense_categories = get_valid_categories("expense")
     income_categories = get_valid_categories("income")
@@ -139,9 +161,10 @@ Aturan parsing:
 11. tipe_pengeluaran hanya diisi jika type = "expense". Jika type bukan expense, isi "".
 12. date format YYYY-MM-DD. Interpretasi "kemarin", "tadi", "minggu lalu" dari hari ini.
 13. parsed_by selalu "gemini".
+14. Jika input berisi credential/token/API key/service account JSON/private key/env value, jangan transkrip credential itu ke output. Abaikan bagian credential dan hanya parse transaksi finance yang jelas.
 
 Input user:
-"{user_input}"
+"{safe_user_input}"
 
 Balas HANYA JSON dengan format berikut:
 {{
