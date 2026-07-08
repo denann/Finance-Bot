@@ -161,6 +161,11 @@ KNOWN_COMMANDS = {
         "destructive": False,
     # Close the structure that was opened above.
     },
+    "privacy": {
+        "description": "Lihat ringkasan data privacy dan keamanan credential.",
+        "destructive": False,
+    # Close the structure that was opened above.
+    },
     "quickstart": {
         "description": "Panduan langkah awal untuk user baru.",
         "destructive": False,
@@ -427,6 +432,8 @@ COMMAND_ALIASES = {
     "export": "export",
     "download_data": "download_data",
     "download": "download_data",
+    "privacy": "privacy",
+    "privasi": "privacy",
     # laporan
     "hari": "harian",
     "hariini": "harian",

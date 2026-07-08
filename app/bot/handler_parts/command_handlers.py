@@ -16,6 +16,8 @@ from app.bot.handler_parts.state_utils import clear_pending_flow_state, describe
 from app.services.resolver_service import resolve_account_name
 # Import app.services.chart_service so this module can use its helpers.
 from app.services.chart_service import write_monthly_chart_png
+# Import privacy notice builder for the read-only /privacy command.
+from app.services.privacy_service import build_privacy_notice_text
 
 
 # Handle the asynchronous start handler workflow.
@@ -586,6 +588,38 @@ async def manual_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             document=InputFile(file_obj, filename="help_manual.pdf"),
             caption="📖 Manual lengkap Finance Bot.",
         )
+<<<<<<< HEAD
+=======
+
+
+async def privacy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send the Finance Bot data privacy notice.
+
+    Args:
+        update: Telegram Update object supplied by python-telegram-bot for the
+            `/privacy` command.
+        context: Telegram context supplied by the framework. The handler keeps
+            the standard signature but does not read or mutate user state.
+
+    Returns:
+        `None` after sending the privacy message.
+
+    Side effects:
+        Sends one Telegram message. It does not read Google Sheets, write Google
+        Sheets, call Gemini, export files, or store new privacy data.
+
+    Flow constraints:
+        Keep the command read-only. Do not add a Batal button because the output
+        does not open a wizard, preview, or confirmation flow.
+    """
+    if not is_authorized(update):
+        # Keep privacy details visible only to the configured bot user.
+        await reject_unauthorized(update)
+        return
+
+    # Send informational text only; no pending state is created.
+    await update.message.reply_text(build_privacy_notice_text(), parse_mode="Markdown")
+>>>>>>> codex/jelaskan-proyek-ini
 
 
 # Define add session chat history for callers in this flow.

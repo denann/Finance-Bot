@@ -121,6 +121,7 @@ Rules:
 - No emoji, no symbols, no hashtags, no amounts, no full sentences.
 - Avoid overly broad aliases such as uang, bayar, transaksi, masuk, keluar, biaya, income, expense.
 - Do not include aliases that would usually belong to the opposite transaction type.
+- Never ask for or output credentials, tokens, API keys, service account JSON, private keys, env values, or spreadsheet access details.
 """.strip()
 
     # Low temperature keeps alias suggestions stable and conservative.

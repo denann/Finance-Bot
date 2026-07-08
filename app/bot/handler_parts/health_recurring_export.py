@@ -1853,6 +1853,28 @@ def build_export_caption(export_result: dict) -> str:
     # Close the structure that was opened above.
     )
 
+
+def build_export_privacy_warning() -> str:
+    """Build the short privacy warning shown before sending an export file.
+
+    Args:
+        None.
+
+    Returns:
+        Telegram Markdown text warning that CSV export contains personal
+        finance data.
+
+    Side effects:
+        None. The helper only returns static text and does not create, read, or
+        modify export files.
+
+    Flow constraints:
+        Keep the export file format unchanged. This warning is informational and
+        does not open a confirmation flow, so it does not need a Batal button.
+    """
+    return "File export berisi data finance pribadi. Simpan dan bagikan dengan hati-hati."
+
+
 # Handle the asynchronous export handler workflow.
 async def export_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the asynchronous export handler flow in the Telegram handler layer.
@@ -1925,6 +1947,9 @@ async def export_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # Run this statement as part of the current workflow.
         write_transactions_to_csv(records, file_path)
+
+        # Warn before sending the sensitive finance export file.
+        await update.message.reply_text(build_export_privacy_warning(), parse_mode="Markdown")
 
         with open(file_path, "rb") as f:
             # Wait for update.message.reply_document before continuing this flow.
@@ -2043,8 +2068,9 @@ async def scheduled_export_transactions(bot, chat_id: int, period=None):
                 caption=(
                     "⏰ *Auto Export Data Finance*\n"
                     "Jadwal: 23:55 WIB\n\n"
-                    # Run this statement as part of the current workflow.
-                    f"{build_export_caption(export_result)}"
+                    # Include the same sensitivity note used by manual exports.
+                    f"{build_export_caption(export_result)}\n\n"
+                    f"{build_export_privacy_warning()}"
                 # Close the structure that was opened above.
                 ),
                 parse_mode="Markdown",

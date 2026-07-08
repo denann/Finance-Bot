@@ -12,6 +12,7 @@ The core idea is simple: users can write everyday finance inputs such as `beli k
 - [Features](#features)
 - [Tech Stack](#tech-stack)
 - [System Architecture](#system-architecture)
+- [Data & Privacy](#data--privacy)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Project Structure](#project-structure)
@@ -40,6 +41,7 @@ The core idea is simple: users can write everyday finance inputs such as `beli k
 | Reporting | Monthly charts | Sends PNG line, bar, or pie charts for monthly net expense trends and category breakdowns. |
 | Net worth | Assets and snapshots | Tracks assets and creates net worth snapshots over time. |
 | AI insight | Ask, audit, coach, insight | Uses Gemini to explain finance data based on structured context from Google Sheets. |
+| Privacy | Privacy notice and export warning | Explains data flow, Google Sheets storage, Telegram I/O, Gemini usage boundaries, and sensitive export handling. |
 | Deployment | Polling-first setup | Runs locally with `python main.py` or 24/7 on Wispbyte without requiring webhook setup. |
 
 ## Tech Stack
@@ -67,6 +69,21 @@ First, the transaction flow: Telegram input is parsed by local rules or Gemini f
 Second, the AI insight flow: commands such as `/ask`, `/audit`, `/coach`, and `/insight` build a structured finance context from Google Sheets before Gemini generates the response.
 
 The LLM is not the final decision maker. Business logic stays in Python, while AI helps interpret input, read images, extract receipt details, and explain data.
+
+## Data & Privacy
+
+Finance Bot processes personal finance data: Telegram chat input, receipt or transaction images, transactions, account balances, categories, budgets, debts, receivables, pending expenses, recurring rules, assets, reports, charts, and export files.
+
+The main finance data is stored in Google Sheets. Telegram is the input and output channel for messages, previews, reports, charts, and exported files. Exported CSV files are sensitive because they contain personal finance records, so they should be stored and shared carefully.
+
+Gemini is used only for AI-related features: finance insight, ask/audit/coach, image parsing, parser drafts, and category aliases. The bot sends relevant finance context for those features, not credentials. Prompt builders include guards so Telegram tokens, Gemini API keys, service account JSON, private keys, `.env` values, and spreadsheet access details should not be sent to Gemini.
+
+Users must protect their own credentials and access:
+
+- Keep `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, `.env`, and service account JSON private.
+- Share the Google Spreadsheet only with the intended service account and trusted users.
+- Do not send credential screenshots or service account files to the bot chat.
+- Use `/privacy` in Telegram to see the user-facing privacy summary.
 
 ## Installation
 
@@ -480,6 +497,16 @@ Expense totals, Top 3 expenses, category ranking, and percentage contribution us
 /coach
 /insight
 ```
+
+### Data privacy
+
+```text
+/privacy
+/help privacy
+/download_data 2026-06
+```
+
+`/privacy` explains what data the bot processes, where data is stored, how Telegram and Gemini are used, and what credentials the user must protect. `/download_data` and `/export` send a warning before the CSV because export files contain personal finance data.
 
 ## Project Structure
 
