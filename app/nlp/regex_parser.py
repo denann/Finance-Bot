@@ -533,9 +533,9 @@ def parse_debt_input(text: str) -> dict | None:
             # Close the structure that was opened above.
             }, text)
 
-    # Open a multi-line structure for the values below.
+    # Match explicit user debt payments even when the user omits "saya".
     self_pays_debt_match = re.search(
-        r"^\s*(?:saya|aku|gw|gue|gua)\s+"
+        r"^\s*(?:(?:saya|aku|gw|gue|gua)\s+)?"
         r"(?:bayar|byr|melunasi|lunasin|lunasi|nyicil|cicil)\s+"
         r"(?:hutang|utang|debt|cicilan)\s+"
         r"(?:ke|sama)?\s*"
