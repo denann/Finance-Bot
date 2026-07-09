@@ -14,15 +14,10 @@ from app.config import GEMINI_API_KEY
 from app.nlp.gemini_langchain_client import generate_text_with_gemini
 # Import app.services.resolver_service so this module can use its helpers.
 from app.services.resolver_service import (
-    # Include this value in the surrounding collection or call.
     ensure_category_for_transaction,
-    # Include this value in the surrounding collection or call.
     get_account_names_from_sheet,
-    # Include this value in the surrounding collection or call.
     get_category_names_from_sheet,
-    # Include this value in the surrounding collection or call.
     resolve_account_for_parser,
-# Close the structure that was opened above.
 )
 # Import privacy redaction so parser prompts do not forward credential-like text.
 from app.services.privacy_service import redact_sensitive_text
@@ -31,13 +26,11 @@ from app.services.privacy_service import redact_sensitive_text
 GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"))
 
 
-# Open a multi-line structure for the values below.
 VALID_CATEGORIES = [
     "Food & Beverage", "Transport", "Bills & Utilities", "Shopping",
     "Health", "Entertainment", "Education", "Personal Care",
     "Kos & Utilities", "Zakat & Sedekah", "Investasi", "Other Expense",
     "Salary", "Freelance", "Investment Return", "Other Income",
-# Close the structure that was opened above.
 ]
 
 VALID_ACCOUNTS = ["Cash", "BRI", "BSI", "DANA", "GoPay"]
@@ -45,37 +38,31 @@ VALID_ACCOUNTS = ["Cash", "BRI", "BSI", "DANA", "GoPay"]
 VALID_SPENDING_TYPES = ["Bulanan", "Harian", "Darurat", "Keinginan"]
 
 
-# Define get valid categories for callers in this flow.
+# Helper for get valid categories.
 def get_valid_categories(transaction_type: str | None = None) -> list[str]:
     """Get valid categories from sheet with static fallback."""
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Prepare names for the next step.
         names = get_category_names_from_sheet(transaction_type)
     # Handle an expected failure from the guarded operation above.
     except Exception:
-        # Prepare names for the next step.
         names = []
-    # Return names or list(VALID_CATEGORIES) to the caller.
     return names or list(VALID_CATEGORIES)
 
 
-# Define get valid accounts for callers in this flow.
+# Helper for get valid accounts.
 def get_valid_accounts() -> list[str]:
     """Get valid accounts from sheet with static fallback."""
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Prepare names for the next step.
         names = get_account_names_from_sheet()
     # Handle an expected failure from the guarded operation above.
     except Exception:
-        # Prepare names for the next step.
         names = []
-    # Return names or list(VALID_ACCOUNTS) to the caller.
     return names or list(VALID_ACCOUNTS)
 
 
-# Define build prompt for callers in this flow.
+# Helper for build prompt.
 def build_prompt(user_input: str) -> str:
     """Build the Gemini draft parser prompt for one natural transaction input.
 
@@ -102,7 +89,7 @@ def build_prompt(user_input: str) -> str:
 
     expense_categories = get_valid_categories("expense")
     income_categories = get_valid_categories("income")
-    # Prepare valid accounts for the next step.
+    # Extract valid accounts for validation.
     valid_accounts = get_valid_accounts()
 
     return f"""
@@ -183,7 +170,7 @@ Balas HANYA JSON dengan format berikut:
 """.strip()
 
 
-# Define clean gemini json for callers in this flow.
+# Helper for clean gemini json.
 def clean_gemini_json(raw_text: str) -> str:
     """Coordinate the clean gemini json logic in the NLP/parser layer.
 
@@ -199,22 +186,21 @@ def clean_gemini_json(raw_text: str) -> str:
     Flow constraints:
         Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
     """
-    # Prepare raw text for the next step.
+    # Prepare raw text from the incoming input.
     raw_text = raw_text.strip()
 
     if raw_text.startswith("```"):
         raw_text = raw_text.split("```")[1]
         if raw_text.startswith("json"):
-            # Prepare raw text for the next step.
+            # Prepare raw text from the incoming input.
             raw_text = raw_text[4:]
-        # Prepare raw text for the next step.
+        # Prepare raw text from the incoming input.
         raw_text = raw_text.strip()
 
-    # Return raw_text to the caller.
     return raw_text
 
 
-# Define parse with gemini for callers in this flow.
+# Helper for parse with gemini.
 def parse_with_gemini(user_input: str) -> dict | None:
     """Parse caller input for the parse with gemini workflow in the NLP/parser layer.
 
@@ -232,59 +218,45 @@ def parse_with_gemini(user_input: str) -> dict | None:
     """
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Prepare prompt for the next step.
         prompt = build_prompt(user_input)
-        # Handle the missing or empty GEMINI_API_KEY case.
+        # Validate missing GEMINI API KEY before continuing.
         if not GEMINI_API_KEY:
-            # Return None to the caller.
             return None
 
-        # Open a multi-line structure for the values below.
         response_text = generate_text_with_gemini(
-            # Include this value in the surrounding collection or call.
             prompt,
-            # Prepare model name for the next step.
             model_name=GEMINI_TEXT_MODEL,
-            # Prepare temperature for the next step.
             temperature=0.0,
-        # Close the structure that was opened above.
         )
 
-        # Handle the missing or empty response_text case.
+        # Validate missing response text before continuing.
         if not response_text:
-            # Return None to the caller.
             return None
 
-        # Prepare raw text for the next step.
+        # Prepare raw text from the incoming input.
         raw_text = clean_gemini_json(response_text)
-        # Prepare parsed for the next step.
         parsed = json.loads(raw_text)
 
         required_fields = ["type", "amount", "category", "date"]
-        # Process each field in the current collection.
+        # Iterate through each field.
         for field in required_fields:
-            # Handle the case where field not in parsed.
             if field not in parsed:
-                # Return None to the caller.
                 return None
 
         if parsed["type"] not in ["expense", "income", "transfer"]:
-            # Return None to the caller.
             return None
 
         parsed["amount"] = int(parsed["amount"])
         if parsed["amount"] <= 0:
-            # Return None to the caller.
             return None
 
         if parsed["type"] == "transfer":
             parsed["category"] = None
-        # Handle the fallback path after earlier conditions are skipped.
+        # Use the fallback path when no earlier branch matched.
         else:
             parsed["category"] = ensure_category_for_transaction(
                 parsed.get("category"),
                 parsed.get("type"),
-            # Close the structure that was opened above.
             )
 
         parsed["account"] = resolve_account_for_parser(parsed.get("account"))
@@ -300,20 +272,17 @@ def parse_with_gemini(user_input: str) -> dict | None:
         parsed["catatan"] = parsed.get("catatan") or ""
         parsed["parsed_by"] = "gemini"
 
-        # Return parsed to the caller.
         return parsed
 
     # Handle an expected failure from the guarded operation above.
     except json.JSONDecodeError:
-        # Return None to the caller.
         return None
     # Handle an expected failure from the guarded operation above.
     except Exception:
-        # Return None to the caller.
         return None
 
 
-# Define parse with pending fallback for callers in this flow.
+# Helper for parse with pending fallback.
 def parse_with_pending_fallback(user_input: str) -> dict:
     """Parse caller input for the parse with pending fallback workflow in the NLP/parser layer.
 
@@ -329,12 +298,10 @@ def parse_with_pending_fallback(user_input: str) -> dict:
     Flow constraints:
         Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
     """
-    # Prepare result for the next step.
+    # Build result for the response flow.
     result = parse_with_gemini(user_input)
 
-    # Handle the case where result is None.
     if result is None:
-        # Return { to the caller.
         return {
             "type": "pending",
             "raw_input": user_input,
@@ -348,7 +315,6 @@ def parse_with_pending_fallback(user_input: str) -> dict:
             "catatan": "",
             "tipe_pengeluaran": "",
             "date": datetime.now().strftime("%Y-%m-%d"),
-        # Close the structure that was opened above.
         }
 
     # Keep this section separated from the surrounding flow.

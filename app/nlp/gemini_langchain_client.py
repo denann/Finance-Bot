@@ -27,7 +27,7 @@ DEFAULT_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash")
 DEFAULT_INSIGHT_MODEL = os.getenv("GEMINI_INSIGHT_MODEL", "gemini-2.5-flash")
 
 
-# Define require api key for callers in this flow.
+# Helper for require api key.
 def _require_api_key() -> str:
     """Coordinate the require api key logic in the NLP/parser layer.
 
@@ -43,16 +43,15 @@ def _require_api_key() -> str:
     Flow constraints:
         Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
     """
-    # Handle the missing or empty GEMINI_API_KEY case.
+    # Validate missing GEMINI API KEY before continuing.
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY belum tersedia.")
-    # Return GEMINI_API_KEY to the caller.
     return GEMINI_API_KEY
 
 
 # Apply this decorator before the callable is registered or executed.
 @lru_cache(maxsize=32)
-# Define get gemini llm for callers in this flow.
+# Helper for get gemini llm.
 def get_gemini_llm(model_name: str, temperature: float = 0.0) -> ChatGoogleGenerativeAI:
     """Retrieve data needed by the get gemini llm workflow in the NLP/parser layer.
 
@@ -69,61 +68,45 @@ def get_gemini_llm(model_name: str, temperature: float = 0.0) -> ChatGoogleGener
     Flow constraints:
         Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
     """
-    # Return ChatGoogleGenerativeAI( to the caller.
     return ChatGoogleGenerativeAI(
-        # Prepare model for the next step.
         model=model_name,
-        # Prepare google api key for the next step.
         google_api_key=_require_api_key(),
-        # Prepare temperature for the next step.
         temperature=temperature,
-    # Close the structure that was opened above.
     )
 
 
-# Define extract text for callers in this flow.
+# Helper for extract text.
 def _extract_text(response: Any) -> str:
     """Extract the required part of input for text."""
     content = getattr(response, "content", "")
 
-    # Handle the case where isinstance(content, str).
     if isinstance(content, str):
-        # Return content.strip() to the caller.
         return content.strip()
 
-    # Handle the case where isinstance(content, list).
     if isinstance(content, list):
-        # Run this statement as part of the current workflow.
         parts: list[str] = []
-        # Process each item in the current collection.
+        # Iterate through each item.
         for item in content:
-            # Handle the case where isinstance(item, str).
             if isinstance(item, str):
-                # Update parts with the current value.
+                # Append the current value to parts.
                 parts.append(item)
-            # Handle the alternate case where isinstance(item, dict).
+            # Fall back when isinstance(item, dict).
             elif isinstance(item, dict):
                 text = item.get("text") or item.get("content") or ""
-                # Handle the case where text.
                 if text:
-                    # Update parts with the current value.
+                    # Append the current value to parts.
                     parts.append(str(text))
         return "\n".join(parts).strip()
 
     return str(content or "").strip()
 
 
-# Define generate text with gemini for callers in this flow.
+# Helper for generate text with gemini.
 def generate_text_with_gemini(
-    # Include this value in the surrounding collection or call.
     prompt: str,
-    # Include this value in the surrounding collection or call.
     *,
-    # Include this value in the surrounding collection or call.
     model_name: str | None = None,
-    # Include this value in the surrounding collection or call.
     temperature: float = 0.0,
-# Close the structure that was opened above.
 ) -> str:
     """Coordinate the generate text with gemini logic in the NLP/parser layer.
 
@@ -141,15 +124,12 @@ def generate_text_with_gemini(
     Flow constraints:
         Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
     """
-    # Prepare llm for the next step.
     llm = get_gemini_llm(model_name or DEFAULT_TEXT_MODEL, float(temperature))
-    # Prepare response for the next step.
     response = llm.invoke([HumanMessage(content=prompt)])
-    # Return _extract_text(response) to the caller.
     return _extract_text(response)
 
 
-# Define make data url for callers in this flow.
+# Helper for make data url.
 def _make_data_url(image_bytes: bytes, mime_type: str) -> str:
     """Coordinate the make data url logic in the NLP/parser layer.
 
@@ -170,20 +150,14 @@ def _make_data_url(image_bytes: bytes, mime_type: str) -> str:
     return f"data:{mime_type or 'image/jpeg'};base64,{encoded}"
 
 
-# Define generate text from image with gemini for callers in this flow.
+# Helper for generate text from image with gemini.
 def generate_text_from_image_with_gemini(
-    # Include this value in the surrounding collection or call.
     prompt: str,
-    # Include this value in the surrounding collection or call.
     image_bytes: bytes,
-    # Include this value in the surrounding collection or call.
     *,
     mime_type: str = "image/jpeg",
-    # Include this value in the surrounding collection or call.
     model_name: str | None = None,
-    # Include this value in the surrounding collection or call.
     temperature: float = 0.0,
-# Close the structure that was opened above.
 ) -> str:
     """Coordinate the generate text from image with gemini logic in the NLP/parser layer.
 
@@ -203,41 +177,32 @@ def generate_text_from_image_with_gemini(
     Flow constraints:
         Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
     """
-    # Handle the missing or empty image_bytes case.
+    # Validate missing image bytes before continuing.
     if not image_bytes:
         raise ValueError("File gambar kosong atau gagal dibaca.")
 
-    # Prepare llm for the next step.
     llm = get_gemini_llm(model_name or DEFAULT_IMAGE_MODEL, float(temperature))
-    # Prepare data url for the next step.
     data_url = _make_data_url(image_bytes, mime_type)
 
     # Format standar LangChain multimodal.
     content = [
         {"type": "text", "text": prompt},
         {"type": "image_url", "image_url": data_url},
-    # Close the structure that was opened above.
     ]
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Prepare response for the next step.
         response = llm.invoke([HumanMessage(content=content)])
-        # Return _extract_text(response) to the caller.
         return _extract_text(response)
     # Handle an expected failure from the guarded operation above.
     except Exception as first_error:
-        # Parser rule note for an Indonesian finance input edge case.
         alt_content = [
             {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": data_url}},
-        # Close the structure that was opened above.
         ]
         # Run this operation in a guarded block so failures can be handled.
         try:
-            # Prepare response for the next step.
             response = llm.invoke([HumanMessage(content=alt_content)])
-            # Return _extract_text(response) to the caller.
             return _extract_text(response)
         # Handle an expected failure from the guarded operation above.
         except Exception:

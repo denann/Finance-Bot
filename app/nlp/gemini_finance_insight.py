@@ -21,7 +21,6 @@ from app.services.finance_insight_service import deterministic_audit_text, deter
 
 GEMINI_INSIGHT_MODEL = os.getenv("GEMINI_INSIGHT_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
 
-# Open a multi-line structure for the values below.
 MODE_LABELS = {
     "monthly_auto": "Insight otomatis setelah laporan bulanan",
     "monthly_insight": "Monthly narrative report",
@@ -29,11 +28,10 @@ MODE_LABELS = {
     "audit": "Deteksi anomali dan data quality checker",
     "budget_assistant": "Budget assistant",
     "coach": "Financial coach ringan",
-# Close the structure that was opened above.
 }
 
 
-# Define json dumps for callers in this flow.
+# Helper for json dumps.
 def _json_dumps(data: dict) -> str:
     """Coordinate the json dumps logic in the NLP/parser layer.
 
@@ -49,7 +47,6 @@ def _json_dumps(data: dict) -> str:
     Flow constraints:
         Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
     """
-    # Return json.dumps(data, ensure_ascii=False, indent=2, default=str) to the caller.
     return json.dumps(data, ensure_ascii=False, indent=2, default=str)
 
 
@@ -78,7 +75,6 @@ def build_finance_insight_prompt(mode: str, context: dict, question: str = "") -
         redact token/private-key patterns before embedding context in the
         prompt.
     """
-    # Prepare mode label for the next step.
     mode_label = MODE_LABELS.get(mode, mode)
     sanitized_context = sanitize_ai_context(context or {})
     question_line = sanitize_ai_context(question or sanitized_context.get("question") or "-")
@@ -89,7 +85,7 @@ def build_finance_insight_prompt(mode: str, context: dict, question: str = "") -
         length_rule = "Jawab ringkas, natural, dan actionable. Jika tidak ada issues/anomalies, jawab tenang seperti: ✅ Tidak ada anomali bulan ini. Data transaksi bulan ini terlihat cukup aman."
     elif mode == "coach":
         length_rule = "Jawab sebagai financial coach ringan: realistis, berbasis angka, tanpa menghakimi. Beri 3-5 aksi konkret."
-    # Handle the fallback path after earlier conditions are skipped.
+    # Use the fallback path when no earlier branch matched.
     else:
         length_rule = "Jawab natural seperti financial assistant pribadi: mulai dari temuan utama, sebut angka paling penting, jelaskan kemungkinan penyebab, lalu beri 2-3 saran praktis. Tetap ringkas."
 
@@ -159,48 +155,34 @@ def generate_finance_insight(mode: str, context: dict, question: str = "") -> st
         Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
     """
     if mode == "audit" and not context.get("data_quality_issues") and not context.get("anomalies"):
-        # Return deterministic_audit_text(context) to the caller.
         return deterministic_audit_text(context)
 
-    # Handle the missing or empty GEMINI_API_KEY case.
+    # Validate missing GEMINI API KEY before continuing.
     if not GEMINI_API_KEY:
         if mode == "audit":
-            # Return deterministic_audit_text(context) to the caller.
             return deterministic_audit_text(context)
         if "monthly" in mode or mode in {"coach", "budget_assistant", "ask"}:
             base = context.get("monthly_context") if "monthly_context" in context else context
-            # Return deterministic_monthly_text(base) to the caller.
             return deterministic_monthly_text(base)
         return "GEMINI_API_KEY belum tersedia, jadi insight AI belum bisa dibuat."
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Prepare prompt for the next step.
         prompt = build_finance_insight_prompt(mode, context, question=question)
-        # Open a multi-line structure for the values below.
         text = generate_text_with_gemini(
-            # Include this value in the surrounding collection or call.
             prompt,
-            # Prepare model name for the next step.
             model_name=GEMINI_INSIGHT_MODEL,
-            # Prepare temperature for the next step.
             temperature=0.25,
-        # Close the structure that was opened above.
         ).strip()
-        # Handle the case where text.
         if text:
-            # Return text to the caller.
             return text
     # Handle an expected failure from the guarded operation above.
     except Exception as e:
         fallback_prefix = f"⚠️ Insight Gemini gagal dibuat: {str(e)}\n\nFallback lokal:\n"
         if mode == "audit":
-            # Return fallback_prefix + deterministic_audit_text(context) to the caller.
             return fallback_prefix + deterministic_audit_text(context)
         base = context.get("monthly_context") if "monthly_context" in context else context
-        # Return fallback_prefix + deterministic_monthly_text(base) to the caller.
         return fallback_prefix + deterministic_monthly_text(base)
 
     base = context.get("monthly_context") if "monthly_context" in context else context
-    # Return deterministic_monthly_text(base) to the caller.
     return deterministic_monthly_text(base)

@@ -7,10 +7,9 @@ import os
 # Import dotenv so this module can use its helpers.
 from dotenv import load_dotenv
 
-# Run this statement as part of the current workflow.
 load_dotenv()
 
-# Define parse int env for callers in this flow.
+# Helper for parse int env.
 def _parse_int_env(name: str, default: int | None = None) -> int | None:
     """Parse caller input for the parse int env workflow in the application layer.
 
@@ -27,14 +26,12 @@ def _parse_int_env(name: str, default: int | None = None) -> int | None:
     Flow constraints:
         Keep behavior compatible with existing callers and avoid unrelated schema or flow changes.
     """
-    # Prepare raw for the next step.
+    # Prepare raw from the incoming input.
     raw = os.getenv(name)
     if raw is None or str(raw).strip() == "":
-        # Return default to the caller.
         return default
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Return int(str(raw).strip()) to the caller.
         return int(str(raw).strip())
     # Handle an expected failure from the guarded operation above.
     except ValueError as exc:
@@ -64,7 +61,6 @@ GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 # Keep this section separated from the surrounding flow.
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "service_account.json")
 
-# Debt flow section
 # Keep this section separated from the surrounding flow.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
