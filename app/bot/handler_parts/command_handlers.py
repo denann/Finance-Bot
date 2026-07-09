@@ -515,8 +515,6 @@ async def manual_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             document=InputFile(file_obj, filename="help_manual.pdf"),
             caption="📖 Manual lengkap Finance Bot.",
         )
-<<<<<<< HEAD
-=======
 
 
 async def privacy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -546,7 +544,6 @@ async def privacy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Send informational text only; no pending state is created.
     await update.message.reply_text(build_privacy_notice_text(), parse_mode="Markdown")
->>>>>>> codex/jelaskan-proyek-ini
 
 
 # Helper for add session chat history.

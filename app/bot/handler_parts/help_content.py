@@ -7,11 +7,6 @@ HELP_TOPICS = (
     "transaksi",
     "pending",
     "budget",
-<<<<<<< HEAD
-    "aset",
-    "recurring",
-    "ai",
-=======
     "kategori",
     "aset",
     "recurring",
@@ -19,21 +14,15 @@ HELP_TOPICS = (
     "privacy",
     "ai",
     "commands",
->>>>>>> codex/jelaskan-proyek-ini
 )
 
 HELP_INDEX_TEXT = """📖 *Panduan Finance Bot*
 
-<<<<<<< HEAD
-Gunakan `/quickstart` untuk panduan awal user baru.
-Gunakan `/manual` untuk PDF panduan lengkap.
-=======
 Finance Bot membantu catat transaksi, saldo, utang/piutang, split bill, budget, aset, recurring, export data, dan insight AI. Semua flow yang menyimpan data memakai preview sebelum simpan.
 
 Gunakan `/quickstart` untuk panduan awal user baru.
 Gunakan `/manual` untuk PDF panduan lengkap.
 Gunakan `/privacy` untuk ringkasan data privacy dan keamanan credential.
->>>>>>> codex/jelaskan-proyek-ini
 Tombol *Batal* bisa membatalkan wizard atau preview aktif.
 
 *Contoh input umum*
@@ -44,29 +33,6 @@ Tombol *Batal* bisa membatalkan wizard atau preview aktif.
 `ayam 26k bagi 2 sama Raka`
 
 *Command utama*
-<<<<<<< HEAD
-`/saldo` — cek saldo rekening
-`/bulanan` — ringkasan bulanan + insight + grafik
-`/grafik` — grafik bulan berjalan
-`/transaksi` — list transaksi
-`/last` — transaksi terakhir
-`/hutang` — utang/piutang aktif
-`/budget` — budget vs realisasi
-`/assets` — aset aktif
-`/pending` — rencana pengeluaran
-`/ask` — tanya finance ke AI
-
-*Help detail*
-`/help input` — cara catat pengeluaran, pemasukan, transfer, multi input, dan data historis
-`/help debt` — utang/piutang, talangin, ditalangin, split bill, potong silang, dan settle debt
-`/help laporan` — saldo, set saldo, rekening, harian, mingguan, bulanan, dan grafik
-`/help transaksi` — lihat, cari, edit, hapus, dan bulk edit transaksi
-`/help pending` — rencana pengeluaran, pending ID, paid, dan cancel pending
-`/help budget` — set budget, histori budget, realisasi bersih, dan Bersih (Gross)
-`/help aset` — net worth, asset add/update/off, guided input, dan asset ID
-`/help recurring` — export data, transaksi rutin, reminder, run, edit, dan off
-`/help ai` — input gambar, Gemini/RAG, ask, insight, audit, dan coach"""
-=======
 `/saldo` - lihat saldo rekening aktif.
 `/bulanan` - ringkasan bulanan, insight Gemini, dan grafik time series.
 `/grafik` - kirim grafik PNG untuk bulan berjalan atau bulan tertentu.
@@ -92,7 +58,6 @@ Tombol *Batal* bisa membatalkan wizard atau preview aktif.
 `/help privacy` - data yang diproses, Google Sheets, Telegram, Gemini, export sensitif, dan credential.
 `/help ai` - input gambar, Gemini/RAG, ask, insight, audit, dan coach.
 `/help commands` - daftar semua command dan alias yang terdaftar."""
->>>>>>> codex/jelaskan-proyek-ini
 
 UNKNOWN_TOPIC_TEXT = """❌ Topik help belum dikenal.
 
@@ -103,11 +68,6 @@ Topik yang tersedia:
 `/help transaksi`
 `/help pending`
 `/help budget`
-<<<<<<< HEAD
-`/help aset`
-`/help recurring`
-`/help ai`"""
-=======
 `/help kategori`
 `/help aset`
 `/help recurring`
@@ -115,16 +75,12 @@ Topik yang tersedia:
 `/help privacy`
 `/help ai`
 `/help commands`"""
->>>>>>> codex/jelaskan-proyek-ini
 
 HELP_TOPIC_TEXTS = {
     "input": """📥 *Help Input*
 
-<<<<<<< HEAD
-=======
 Input natural dipakai untuk mencatat transaksi tanpa format spreadsheet. Bot membaca nominal, tanggal, kategori, rekening, subjek, dan intent, lalu menampilkan preview sebelum data disimpan.
 
->>>>>>> codex/jelaskan-proyek-ini
 *Pengeluaran*
 `beli kopi 25rb`
 `makan siang 35k`
@@ -141,11 +97,8 @@ Input natural dipakai untuk mencatat transaksi tanpa format spreadsheet. Bot mem
 `top up dana dari bri 500rb`
 `isi GoPay 100k dari Cash`
 
-<<<<<<< HEAD
-=======
 Transfer tidak dihitung sebagai expense/income biasa karena hanya memindahkan saldo antar rekening.
 
->>>>>>> codex/jelaskan-proyek-ini
 *Multi input*
 Bisa dipisah enter, titik koma, atau kalimat natural.
 `beli kopi 10k`
@@ -160,11 +113,8 @@ Kalau transaksi sudah berlalu dan saldo tidak mau diubah, pilih tombol `Sudah be
 Transaksi tetap tercatat, tapi saldo rekening tidak berubah.""",
     "debt": """🤝 *Help Debt*
 
-<<<<<<< HEAD
-=======
 Debt dipakai untuk memisahkan utang/piutang dari transaksi biasa. Flow ini menjaga agar pembayaran, talangan, split bill, dan potong silang tidak tercampur dengan expense/income normal.
 
->>>>>>> codex/jelaskan-proyek-ini
 *Utang/piutang biasa*
 `hutang ke Budi 500rb`
 `catat utang ke Budi 200k`
@@ -187,29 +137,18 @@ Debt dipakai untuk memisahkan utang/piutang dari transaksi biasa. Flow ini menja
 `Beli tissue 10k dibagi 4 sama Raka Fajar Bagas`
 `Beli token 500k dibagi 4 sama Raka:100% Fajar:80% Bagas:100%`
 `Beli token 500k dibagi 4 sama Raka 125k Fajar 100k Bagas 125k`
-<<<<<<< HEAD
-Tanda `:` opsional. Kalau belum dibayar, bagian teman masuk piutang.
-=======
 Tanda `:` opsional. Kalau teman belum bayar, bagian teman masuk piutang aktif.
->>>>>>> codex/jelaskan-proyek-ini
 
 *Kompensasi / potong silang*
 `potong piutang Dimas 20k buat badminton`
 `kompensasi piutang Dimas 20k karena badminton`
 `saya berutang ke Dimas 20k potong dari piutang`
-<<<<<<< HEAD
-Saldo rekening tidak berubah.
-=======
 Saldo rekening tidak berubah karena ini hanya mencatat relasi utang/piutang.
->>>>>>> codex/jelaskan-proyek-ini
 
 *Kelola debt*
 `/hutang`
 `/hutang Maya`
-<<<<<<< HEAD
-=======
 `/ringkasan_hutang`
->>>>>>> codex/jelaskan-proyek-ini
 `/debt_void 1`
 `/debt_void Maya`
 `/debt_void Maya 1`
@@ -226,63 +165,6 @@ Jika terakhir membuka `/hutang Bagas`, lalu settle untuk Raka, bot akan menolak.
 Kalau amount lebih besar dari net debt, bot memberi warning.""",
     "laporan": """📊 *Help Laporan*
 
-<<<<<<< HEAD
-`/saldo`
-`/set_saldo`
-`/set_saldo DANA 500k`
-`/set_saldo` hanya mengubah saldo di sheet `accounts` dan tidak membuat row transaksi baru.
-
-`/rekening Cash`
-`/rekening Cash 2026-06`
-`/rekening Cash all`
-
-`/harian`
-`/harian 2026-06-01`
-`/harian Food & Beverage`
-`/harian rekening Cash`
-
-`/mingguan`
-`/mingguan 2026-06-01`
-`/mingguan Bills & Utilities`
-`/mingguan rekening Dana`
-
-`/bulanan`
-`/bulanan 2026-06`
-`/bulanan Food & Beverage`
-`/bulanan rekening Cash`
-`/bulanan 2026-06 rekening Cash`
-`/bulanan 2026-06 Food & Beverage rekening Cash`
-
-`/grafik`
-`/grafik 2026-06`
-`/grafik line 2026-06`
-`/grafik bar 2026-06`
-`/grafik pie 2026-06`
-
-Tipe grafik: `line`/`timeseries`, `bar`, dan `pie`.
-Kalau bulan tidak ditulis, bot memakai bulan berjalan.
-`/bulanan` menampilkan ringkasan, insight Gemini, dan grafik time series.""",
-    "transaksi": """🧾 *Help Transaksi*
-
-`/last`
-`/last 20`
-`/last today`
-`/last week`
-`/last month`
-`/last 2026-06`
-
-`/transaksi`
-`/transaksi 2026-06`
-`/transaksi bulan lalu`
-`/transaksi Food & Beverage 2026-06`
-`/transaksi rekening Cash`
-`/transaksi rekening Cash 2026-06`
-`/transaksi rekening Cash bulan lalu`
-`/transaksi rekening Cash all`
-
-`/cari kopi`
-
-=======
 Laporan dipakai untuk membaca saldo, transaksi per rekening, ringkasan harian/mingguan/bulanan, dan grafik. Command laporan tidak mengubah data kecuali `/set_saldo`.
 
 *Saldo*
@@ -354,15 +236,11 @@ Command transaksi dipakai untuk melihat, mencari, mengedit, atau menghapus trans
 `/cari kopi` - mencari transaksi dengan kata kunci.
 
 *Hapus transaksi*
->>>>>>> codex/jelaskan-proyek-ini
 `/delete_txn 1`
 `/delete_txn 1 3 5`
 `/delete_txn 1-4`
 
-<<<<<<< HEAD
-=======
 *Edit transaksi*
->>>>>>> codex/jelaskan-proyek-ini
 `/edit_txn 2 amount=15000`
 `/edit_txn 2 desc=Kopi susu`
 `/edit_txn 2 account=BRI category=Food & Beverage`
@@ -378,18 +256,6 @@ Jika transaksi punya `hutang_id`, `/delete_txn` akan mencoba void debt terkait o
 Output `/transaksi` dan `/last` otomatis mengirim grafik time series PNG dari transaksi yang tampil.""",
     "pending": """🕒 *Help Pending Expense*
 
-<<<<<<< HEAD
-Pending expense adalah pengeluaran yang akan ada, tapi belum dibayar.
-Pending tidak mengubah saldo dan belum masuk pengeluaran aktual.
-
-`/pending`
-`/pending 2026-07`
-`/pending bulan depan`
-`/pending all`
-`/pending tanpa tanggal`
-
-`/pending_add bayar wifi 285k tgl 30 dari BRI`
-=======
 Pending expense adalah rencana pengeluaran yang belum dibayar. Pending tidak mengubah saldo dan belum masuk pengeluaran aktual sampai ditandai paid.
 
 `/pending` - daftar pending aktif.
@@ -400,38 +266,26 @@ Pending expense adalah rencana pengeluaran yang belum dibayar. Pending tidak men
 
 `/pending_add bayar wifi 285k tgl 30 dari BRI`
 `/rencana bayar wifi 285k tgl 30 dari BRI`
->>>>>>> codex/jelaskan-proyek-ini
 `pending beli token 500k`
 `rencana beli sepatu 300k bulan depan`
 `nanti perlu bayar wisuda 750k`
 `nanti perlu service motor 300k tgl 30`
 `perlu 750k buat bayar wisuda`
 
-<<<<<<< HEAD
-`/pending_paid pending_id BRI`
-`/pending_cancel pending_id`
-=======
 `/pending_paid pending_id BRI` - ubah pending menjadi transaksi aktual dari rekening BRI.
 `/pending_cancel pending_id` - batalkan pending aktif.
->>>>>>> codex/jelaskan-proyek-ini
 
 Gunakan `/pending` untuk melihat `pending_id`.
 `/pending_paid` mengubah pending menjadi transaksi aktual.
 `/pending_cancel` membatalkan pending aktif.""",
     "budget": """🎯 *Help Budget*
 
-<<<<<<< HEAD
-`/budget`
-`/budget 2026-06`
-`/budget_history`
-=======
 Budget dipakai untuk membandingkan batas rencana pengeluaran dengan realisasi bersih. Jika ada split bill, output bisa menampilkan Bersih (Gross) agar nilai pribadi dan nilai transaksi tetap terlihat.
 
 `/budget` - budget bulan berjalan.
 `/budget 2026-06` - budget bulan tertentu.
 `/set_budget` - membuka flow set budget.
 `/budget_history` - histori budget.
->>>>>>> codex/jelaskan-proyek-ini
 
 `budget makan 1.5 juta`
 `budget jajan 500rb`
@@ -439,20 +293,6 @@ Budget dipakai untuk membandingkan batas rencana pengeluaran dengan realisasi be
 
 Budget bisa otomatis map ke kategori.
 Budget juga bisa custom.
-<<<<<<< HEAD
-`/budget` memakai realisasi bersih.
-Jika ada split bill, output tampil sebagai Bersih (Gross).""",
-    "aset": """💼 *Help Aset & Net Worth*
-
-*Net worth*
-`/networth`
-`/networth_snapshot`
-`/networth_history`
-
-*Aset*
-`/assets`
-`/asset_add`
-=======
 `/budget` memakai realisasi pengeluaran bersih, bukan gross.""",
     "kategori": """🏷️ *Help Kategori*
 
@@ -490,7 +330,6 @@ Aset dipakai untuk mencatat nilai aset aktif yang ikut dihitung di net worth. Ne
 *Aset*
 `/assets` - daftar aset aktif dan `asset_id`.
 `/asset_add` - tambah aset lewat wizard.
->>>>>>> codex/jelaskan-proyek-ini
 `/asset_add name=Laptop amount=8jt category=Electronics desc="Laptop kerja"`
 `/asset_add name="Emas Antam" quantity=10 unit=gram price=1.5jt category=Emas`
 `/asset_add Laptop`
@@ -508,11 +347,7 @@ Bot akan menanyakan:
 7. Deskripsi
 
 Tanggal beli boleh dikosongkan dengan `lewati`, `kosong`, atau `-`.
-<<<<<<< HEAD
-Format `key=value` sekarang menjadi format satu baris utama. Mode guided dan natural tetap didukung.
-=======
 Format `key=value` menjadi format satu baris utama. Mode guided dan natural tetap didukung.
->>>>>>> codex/jelaskan-proyek-ini
 
 `/asset_update asset_id unit_price=2420000`
 `/asset_update asset_id harga_beli=2559000 tanggal_beli=2026-06-10`
@@ -522,20 +357,6 @@ Format `key=value` menjadi format satu baris utama. Mode guided dan natural teta
 Gunakan `/assets` untuk melihat `asset_id`.
 `/asset_off` menonaktifkan aset dari daftar aset aktif.
 Aset aktif ikut dihitung dalam `/networth`.""",
-<<<<<<< HEAD
-    "recurring": """🔁 *Help Recurring & Export*
-
-`/download_data`
-`/download_data today`
-`/download_data week`
-`/download_data 2026-06`
-
-`/recurring`
-`/recurring_add name=Netflix type=expense amount=65000 category=Entertainment account=DANA frequency=monthly day=5 description="Langganan Netflix"`
-`/recurring_edit rec_xxx amount=300k day=20 account=DANA`
-`/recurring_run`
-`/recurring_off rec_xxx`
-=======
     "recurring": """🔁 *Help Recurring*
 
 Recurring dipakai untuk transaksi rutin seperti langganan, cicilan, atau pemasukan berulang. Rule recurring tidak langsung menjadi transaksi sampai dijalankan atau ditandai sudah bayar.
@@ -545,20 +366,12 @@ Recurring dipakai untuk transaksi rutin seperti langganan, cicilan, atau pemasuk
 `/recurring_edit rec_xxx amount=300k day=20 account=DANA`
 `/recurring_run` - proses recurring yang jatuh tempo.
 `/recurring_off rec_xxx` - nonaktifkan recurring.
->>>>>>> codex/jelaskan-proyek-ini
 
 Field wajib `/recurring_add`: `name`, `type`, `amount`, `category`, `account`, `frequency`.
 Field opsional: `day`, `description`.
 Frequency yang didukung saat ini: `monthly` atau `bulanan`.
 
 Recurring otomatis muncul sebagai reminder dengan tombol `Sudah bayar`.
-<<<<<<< HEAD
-Klik `Sudah bayar` akan mencatat transaksi dan menghentikan notifikasi sampai periode berikutnya.
-
-`/health` dipakai untuk cek status bot, env, Google Sheets, dan sheet utama.""",
-    "ai": """🤖 *Help AI, Gambar, dan RAG*
-
-=======
 Klik `Sudah bayar` akan mencatat transaksi dan menghentikan notifikasi sampai periode berikutnya.""",
     "export": """📤 *Help Export*
 
@@ -594,7 +407,6 @@ User harus menjaga token Telegram, Gemini API key, service account JSON, `.env`,
 
 AI membantu membaca input gambar dan menjawab pertanyaan finance dari data yang tersedia. AI tidak menjadi final decision maker untuk simpan/edit data; preview dan tombol konfirmasi tetap dipakai.
 
->>>>>>> codex/jelaskan-proyek-ini
 *Input gambar*
 Kirim foto struk, nota, QRIS, atau screenshot transaksi.
 Bot membaca gambar dengan Gemini dan menampilkan preview sebelum disimpan.
@@ -620,8 +432,6 @@ Fitur inti mengubah data. Gemini/RAG hanya membaca dan memberi insight.
 Data yang dikirim ke Gemini adalah ringkasan relevan, bukan seluruh spreadsheet mentah.
 `/ask` memakai session history terbatas agar paham pertanyaan lanjutan.
 History bisa hilang jika bot restart.""",
-<<<<<<< HEAD
-=======
     "commands": """📚 *Daftar Command Lengkap*
 
 *Umum*
@@ -656,7 +466,6 @@ History bisa hilang jika bot restart.""",
 
 *AI*
 `/insight`, `/ask`, `/audit`, `/coach`""",
->>>>>>> codex/jelaskan-proyek-ini
 }
 
 

@@ -2,28 +2,14 @@
 
 from __future__ import annotations
 
-<<<<<<< HEAD
-import textwrap
-from pathlib import Path
-
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
-
-=======
 import re
 import textwrap
 from pathlib import Path
 
->>>>>>> codex/jelaskan-proyek-ini
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SOURCE_PATH = ROOT_DIR / "docs" / "help_manual.md"
 OUTPUT_PATH = ROOT_DIR / "docs" / "help_manual.pdf"
-<<<<<<< HEAD
-
-
-def _format_markdown_line(line: str) -> tuple[str, int, str]:
-=======
 FONT_DIR = ROOT_DIR / "assets" / "fonts"
 A4_SIZE = (8.27, 11.69)
 PAGE_LEFT = 0.08
@@ -39,20 +25,15 @@ LINE_HEIGHTS = {
 
 
 def _format_markdown_line(line: str) -> tuple[str, int, str, int]:
->>>>>>> codex/jelaskan-proyek-ini
     """Convert one Markdown line into plain text plus lightweight style hints.
 
     Args:
         line: One raw line from `docs/help_manual.md`.
 
     Returns:
-<<<<<<< HEAD
-        Tuple of `(text, font_size, font_weight)` for rendering with matplotlib.
-=======
         Tuple of `(text, font_size, font_weight, heading_level)`. The
         `heading_level` is `0` for normal text, `1` for `#`, `2` for `##`, and
         `3` for `###`.
->>>>>>> codex/jelaskan-proyek-ini
 
     Side effects:
         None.
@@ -64,19 +45,6 @@ def _format_markdown_line(line: str) -> tuple[str, int, str, int]:
     """
     clean = line.rstrip()
     if clean.startswith("# "):
-<<<<<<< HEAD
-        return clean[2:].strip(), 18, "bold"
-    if clean.startswith("## "):
-        return clean[3:].strip(), 14, "bold"
-    if clean.startswith("### "):
-        return clean[4:].strip(), 12, "bold"
-    if clean.startswith("- "):
-        return f"• {clean[2:].strip()}", 9, "normal"
-    return clean, 9, "normal"
-
-
-def _iter_render_lines(markdown_text: str) -> list[tuple[str, int, str]]:
-=======
         return clean[2:].strip(), 18, "bold", 1
     if clean.startswith("## "):
         return clean[3:].strip(), 15, "bold", 2
@@ -90,20 +58,14 @@ def _iter_render_lines(markdown_text: str) -> list[tuple[str, int, str]]:
 
 
 def _iter_render_lines(markdown_text: str) -> list[tuple[str, int, str, int]]:
->>>>>>> codex/jelaskan-proyek-ini
     """Prepare wrapped lines for PDF rendering.
 
     Args:
         markdown_text: Full Markdown document text.
 
     Returns:
-<<<<<<< HEAD
-        List of `(text, font_size, font_weight)` tuples. Long text is wrapped to
-        fit a portrait PDF page.
-=======
         List of `(text, font_size, font_weight, heading_level)` tuples. Long
         text is wrapped to fit a portrait PDF page.
->>>>>>> codex/jelaskan-proyek-ini
 
     Side effects:
         None.
@@ -111,23 +73,6 @@ def _iter_render_lines(markdown_text: str) -> list[tuple[str, int, str, int]]:
     Flow constraints:
         Preserve command examples literally enough to remain readable in the PDF.
     """
-<<<<<<< HEAD
-    rendered: list[tuple[str, int, str]] = []
-    for raw_line in markdown_text.splitlines():
-        text, font_size, weight = _format_markdown_line(raw_line)
-        if not text:
-            rendered.append(("", font_size, weight))
-            continue
-
-        # Wrap normal paragraphs and long command lines inside the page margin.
-        width = 86 if font_size <= 9 else 70
-        wrapped_lines = textwrap.wrap(text, width=width, replace_whitespace=False) or [text]
-        for wrapped in wrapped_lines:
-            rendered.append((wrapped, font_size, weight))
-    return rendered
-
-
-=======
     rendered: list[tuple[str, int, str, int]] = []
     for raw_line in markdown_text.splitlines():
         text, font_size, weight, heading_level = _format_markdown_line(raw_line)
@@ -257,7 +202,6 @@ def _add_pdf_outline(output_path: Path, outline_entries: list[tuple[str, int]]) 
     return True
 
 
->>>>>>> codex/jelaskan-proyek-ini
 def generate_pdf(source_path: Path = SOURCE_PATH, output_path: Path = OUTPUT_PATH) -> Path:
     """Generate `help_manual.pdf` from the Markdown manual.
 
@@ -271,47 +215,6 @@ def generate_pdf(source_path: Path = SOURCE_PATH, output_path: Path = OUTPUT_PAT
         Path to the generated PDF.
 
     Side effects:
-<<<<<<< HEAD
-        Reads the Markdown source and writes a PDF file.
-
-    Flow constraints:
-        Do not read Google Sheets, call Telegram, or require new dependencies.
-    """
-    markdown_text = source_path.read_text(encoding="utf-8")
-    lines = _iter_render_lines(markdown_text)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with PdfPages(output_path) as pdf:
-        page = None
-        y = 0.95
-
-        # Render each prepared line, opening a new page when the margin is full.
-        for text, font_size, weight in lines:
-            line_height = 0.032 if font_size >= 14 else 0.023
-            if page is None or y < 0.07:
-                if page is not None:
-                    pdf.savefig(page, bbox_inches="tight")
-                    plt.close(page)
-                page = plt.figure(figsize=(8.27, 11.69))
-                y = 0.95
-                page.text(0.08, 0.985, "Finance Bot Manual", fontsize=8, color="#666666")
-
-            page.text(
-                0.08,
-                y,
-                text,
-                fontsize=font_size,
-                fontweight=weight,
-                family="DejaVu Sans",
-                va="top",
-            )
-            y -= line_height if text else 0.014
-
-        if page is not None:
-            pdf.savefig(page, bbox_inches="tight")
-            plt.close(page)
-
-=======
         Reads the Markdown source and writes a PDF file. If `pypdf` is available,
         the function also rewrites the PDF with clickable outline entries.
 
@@ -360,7 +263,6 @@ def generate_pdf(source_path: Path = SOURCE_PATH, output_path: Path = OUTPUT_PAT
     if not outline_written:
         print("PDF outline skipped: install pypdf to embed clickable bookmarks.")
     print(f"Font used: {font_family}")
->>>>>>> codex/jelaskan-proyek-ini
     return output_path
 
 
