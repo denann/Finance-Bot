@@ -10,6 +10,7 @@ apscheduler==3.10.4
 pytz==2024.1
 matplotlib==3.10.5
 pypdf==5.9.0
+reportlab==4.4.9
 
 langchain-core==1.4.6
 langchain-google-genai==4.2.5
