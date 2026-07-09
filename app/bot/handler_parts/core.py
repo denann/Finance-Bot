@@ -8,11 +8,10 @@ from app.bot.handler_parts.common_imports import *
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
-# Prepare TELEGRAM SAFE MESSAGE LIMIT for the next step.
 TELEGRAM_SAFE_MESSAGE_LIMIT = 3800
 
 
-# Define split long message for callers in this flow.
+# Helper for split long message.
 def split_long_message(text: str, max_len: int = TELEGRAM_SAFE_MESSAGE_LIMIT) -> list[str]:
     """Coordinate the split long message logic in the Telegram handler layer.
 
@@ -30,88 +29,70 @@ def split_long_message(text: str, max_len: int = TELEGRAM_SAFE_MESSAGE_LIMIT) ->
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
     text = str(text or "").strip()
-    # Handle the missing or empty text case.
+    # Validate missing text before continuing.
     if not text:
         return [""]
-    # Handle the case where len(text) <= max_len.
     if len(text) <= max_len:
-        # Return [text] to the caller.
         return [text]
 
-    # Prepare chunks for the next step.
     chunks = []
     current = ""
 
     for block in text.split("\n\n"):
-        # Prepare block for the next step.
         block = block.strip()
-        # Handle the missing or empty block case.
+        # Validate missing block before continuing.
         if not block:
             # Skip the rest of this loop iteration after handling this case.
             continue
 
         candidate = f"{current}\n\n{block}".strip() if current else block
-        # Handle the case where len(candidate) <= max_len.
         if len(candidate) <= max_len:
-            # Prepare current for the next step.
             current = candidate
             # Skip the rest of this loop iteration after handling this case.
             continue
 
-        # Handle the case where current.
         if current:
-            # Update chunks with the current value.
+            # Append the current value to chunks.
             chunks.append(current)
             current = ""
 
-        # Handle the case where len(block) <= max_len.
         if len(block) <= max_len:
-            # Prepare current for the next step.
             current = block
             # Skip the rest of this loop iteration after handling this case.
             continue
 
         line_current = ""
-        # Process each line in the current collection.
+        # Iterate through each line.
         for line in block.splitlines():
             candidate_line = f"{line_current}\n{line}".strip() if line_current else line
-            # Handle the case where len(candidate_line) <= max_len.
             if len(candidate_line) <= max_len:
-                # Prepare line current for the next step.
                 line_current = candidate_line
-            # Handle the fallback path after earlier conditions are skipped.
+            # Use the fallback path when no earlier branch matched.
             else:
-                # Handle the case where line_current.
                 if line_current:
-                    # Update chunks with the current value.
+                    # Append the current value to chunks.
                     chunks.append(line_current)
-                # Handle the case where len(line) > max_len.
                 if len(line) > max_len:
-                    # Process each i in the current collection.
+                    # Iterate through each i.
                     for i in range(0, len(line), max_len):
-                        # Update chunks with the current value.
+                        # Append the current value to chunks.
                         chunks.append(line[i:i + max_len])
                     line_current = ""
-                # Handle the fallback path after earlier conditions are skipped.
+                # Use the fallback path when no earlier branch matched.
                 else:
-                    # Prepare line current for the next step.
                     line_current = line
 
-        # Handle the case where line_current.
         if line_current:
-            # Update chunks with the current value.
+            # Append the current value to chunks.
             chunks.append(line_current)
 
-    # Handle the case where current.
     if current:
-        # Update chunks with the current value.
+        # Append the current value to chunks.
         chunks.append(current)
 
-    # Return chunks to the caller.
     return chunks
 
 
-# Handle the asynchronous reply long markdown workflow.
 async def reply_long_markdown(update: Update, text: str):
     """Handle the asynchronous reply long markdown flow in the Telegram handler layer.
 
@@ -128,18 +109,17 @@ async def reply_long_markdown(update: Update, text: str):
     Flow constraints:
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
-    # Process each part in the current collection.
+    # Iterate through each part.
     for part in split_long_message(text):
         # Run this operation in a guarded block so failures can be handled.
         try:
             await update.message.reply_text(part, parse_mode="Markdown")
         # Handle an expected failure from the guarded operation above.
         except BadRequest:
-            # Wait for update.message.reply_text before continuing this flow.
+            # Send the Telegram response before continuing.
             await update.message.reply_text(part)
 
 
-# Handle the asynchronous reply message safely workflow.
 async def reply_message_safely(message, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
     """Handle the asynchronous reply message safely flow in the Telegram handler layer.
 
@@ -160,23 +140,20 @@ async def reply_message_safely(message, text: str, parse_mode: str | None = None
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
     text = str(text or "").strip() or " "
-    # Prepare chunks for the next step.
     chunks = split_long_message(text)
-    # Process each idx, chunk in the current collection.
+    # Iterate through each idx, chunk.
     for idx, chunk in enumerate(chunks):
-        # Prepare markup for the next step.
         markup = reply_markup if idx == len(chunks) - 1 else None
         # Run this operation in a guarded block so failures can be handled.
         try:
-            # Wait for message.reply_text before continuing this flow.
+            # Send the Telegram response before continuing.
             await message.reply_text(chunk, parse_mode=parse_mode, reply_markup=markup, **kwargs)
         # Handle an expected failure from the guarded operation above.
         except BadRequest:
-            # Wait for message.reply_text before continuing this flow.
+            # Send the Telegram response before continuing.
             await message.reply_text(chunk, reply_markup=markup, **kwargs)
 
 
-# Handle the asynchronous reply update safely workflow.
 async def reply_update_safely(update: Update, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
     """Handle the asynchronous reply update safely flow in the Telegram handler layer.
 
@@ -196,13 +173,11 @@ async def reply_update_safely(update: Update, text: str, parse_mode: str | None 
     Flow constraints:
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
-    # Handle the case where update.message.
     if update.message:
-        # Wait for reply_message_safely before continuing this flow.
+        # Send the Telegram response before continuing.
         await reply_message_safely(update.message, text, parse_mode=parse_mode, reply_markup=reply_markup, **kwargs)
 
 
-# Handle the asynchronous safe edit message workflow.
 async def safe_edit_message(query, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
     """Handle the asynchronous safe edit message flow in the Telegram handler layer.
 
@@ -223,24 +198,18 @@ async def safe_edit_message(query, text: str, parse_mode: str | None = None, rep
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
     text = str(text or "").strip()
-    # Handle the missing or empty text case.
+    # Validate missing text before continuing.
     if not text:
         text = " "
 
-    # Prepare chunks for the next step.
     chunks = split_long_message(text)
-    # Prepare first for the next step.
     first = chunks[0]
 
-    # Handle the case where len(chunks) > 1.
     if len(chunks) > 1:
         suffix = "\n\n📄 *Pesan terlalu panjang, detail lanjutan dikirim di bawah.*"
-        # Prepare max first len for the next step.
         max_first_len = TELEGRAM_SAFE_MESSAGE_LIMIT - len(suffix) - 10
-        # Prepare first for the next step.
         first = first[:max_first_len].rstrip() + suffix
 
-    # Handle the asynchronous edit workflow.
     async def _edit(payload: str, mode: str | None, markup):
         """Handle the asynchronous edit flow in the Telegram handler layer.
 
@@ -258,26 +227,19 @@ async def safe_edit_message(query, text: str, parse_mode: str | None = None, rep
         Flow constraints:
             Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
         """
-        # Return await query.message.edit_text( to the caller.
         return await query.message.edit_text(
-            # Include this value in the surrounding collection or call.
             payload,
-            # Prepare parse mode for the next step.
             parse_mode=mode,
-            # Prepare reply markup for the next step.
             reply_markup=markup,
-            # Include this value in the surrounding collection or call.
             **kwargs,
-        # Close the structure that was opened above.
         )
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Wait for _edit before continuing this flow.
+        # Await  edit before continuing.
         await _edit(first, parse_mode, reply_markup)
     # Handle an expected failure from the guarded operation above.
     except BadRequest as exc:
-        # Prepare err for the next step.
         err = str(exc).lower()
         if "message is not modified" in err:
             # Keep this intentionally empty block valid.
@@ -286,32 +248,32 @@ async def safe_edit_message(query, text: str, parse_mode: str | None = None, rep
             safe_first = first[:3500].rstrip() + "\n\n📄 Pesan terlalu panjang, detail lanjutan dikirim di bawah."
             # Run this operation in a guarded block so failures can be handled.
             try:
-                # Wait for _edit before continuing this flow.
+                # Await  edit before continuing.
                 await _edit(safe_first, None, reply_markup)
             # Handle an expected failure from the guarded operation above.
             except Exception:
-                # Wait for query.message.reply_text before continuing this flow.
+                # Send the Telegram response before continuing.
                 await query.message.reply_text(safe_first, reply_markup=reply_markup)
-        # Handle the fallback path after earlier conditions are skipped.
+        # Use the fallback path when no earlier branch matched.
         else:
             # Run this operation in a guarded block so failures can be handled.
             try:
-                # Wait for _edit before continuing this flow.
+                # Await  edit before continuing.
                 await _edit(first, None, reply_markup)
             # Handle an expected failure from the guarded operation above.
             except BadRequest:
-                # Wait for query.message.reply_text before continuing this flow.
+                # Send the Telegram response before continuing.
                 await query.message.reply_text(first, reply_markup=reply_markup)
 
-    # Process each chunk in the current collection.
+    # Iterate through each chunk.
     for chunk in chunks[1:]:
         # Run this operation in a guarded block so failures can be handled.
         try:
-            # Wait for query.message.reply_text before continuing this flow.
+            # Send the Telegram response before continuing.
             await query.message.reply_text(chunk, parse_mode=parse_mode)
         # Handle an expected failure from the guarded operation above.
         except BadRequest:
-            # Wait for query.message.reply_text before continuing this flow.
+            # Send the Telegram response before continuing.
             await query.message.reply_text(chunk)
 
 
@@ -326,7 +288,6 @@ async def show_callback_loading(query, text: str = "⏳ *Memproses pilihan...*")
         pass
 
 
-# Handle the asynchronous error handler workflow.
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Handle the asynchronous error handler flow in the Telegram handler layer.
 
@@ -347,21 +308,17 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     err_text = str(error or "Unknown error")
 
     if isinstance(error, BadRequest) and ("Message_too_long" in err_text or "Message is too long" in err_text):
-        # Open a multi-line structure for the values below.
         user_msg = (
             "❌ *Terjadi error saat menampilkan pesan.*\n\n"
             "Output terlalu panjang untuk Telegram. Saya sudah menahan crash-nya, "
             "coba ulangi atau kirim input dalam beberapa batch yang lebih kecil."
-        # Close the structure that was opened above.
         )
-    # Handle the fallback path after earlier conditions are skipped.
+    # Use the fallback path when no earlier branch matched.
     else:
-        # Open a multi-line structure for the values below.
         user_msg = (
             "❌ *Terjadi error saat memproses tombol/input.*\n\n"
             f"Detail: `{md_safe(err_text[:250])}`\n\n"
             "Coba ulangi dari step terakhir. Kalau masih muncul, kirim log ini untuk dicek."
-        # Close the structure that was opened above.
         )
 
     # Run this operation in a guarded block so failures can be handled.
@@ -369,10 +326,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         effective_message = getattr(update, "effective_message", None)
         callback_query = getattr(update, "callback_query", None)
 
-        # Handle the case where effective_message.
         if effective_message:
             await effective_message.reply_text(user_msg, parse_mode="Markdown")
-        # Handle the alternate case where callback_query and callback_query.message.
+        # Fall back when callback query and callback query.
         elif callback_query and callback_query.message:
             await callback_query.message.reply_text(user_msg, parse_mode="Markdown")
     # Handle an expected failure from the guarded operation above.

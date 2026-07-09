@@ -12,138 +12,73 @@ from zoneinfo import ZoneInfo
 
 # Import telegram.ext so this module can use its helpers.
 from telegram.ext import (
-    # Include this value in the surrounding collection or call.
     Application,
-    # Include this value in the surrounding collection or call.
     CallbackQueryHandler,
-    # Include this value in the surrounding collection or call.
     CommandHandler,
-    # Include this value in the surrounding collection or call.
     MessageHandler,
-    # Include this value in the surrounding collection or call.
     filters,
-# Close the structure that was opened above.
 )
 
 # Import app.bot.handlers so this module can use its helpers.
 from app.bot.handlers import (
-    # Include this value in the surrounding collection or call.
     ask_handler,
-    # Include this value in the surrounding collection or call.
     add_kategori_handler,
-    # Include this value in the surrounding collection or call.
     asset_add_handler,
-    # Include this value in the surrounding collection or call.
     asset_off_handler,
-    # Include this value in the surrounding collection or call.
     asset_update_handler,
-    # Include this value in the surrounding collection or call.
     assets_handler,
-    # Include this value in the surrounding collection or call.
     audit_handler,
-    # Include this value in the surrounding collection or call.
     budget_handler,
-    # Include this value in the surrounding collection or call.
     budget_history_handler,
-    # Include this value in the surrounding collection or call.
     pending_add_handler,
-    # Include this value in the surrounding collection or call.
     pending_cancel_handler,
-    # Include this value in the surrounding collection or call.
     pending_handler,
-    # Include this value in the surrounding collection or call.
     pending_paid_handler,
-    # Include this value in the surrounding collection or call.
     bulanan_handler,
-    # Include this value in the surrounding collection or call.
     callback_handler,
-    # Include this value in the surrounding collection or call.
     cancel_handler,
-    # Include this value in the surrounding collection or call.
     cari_handler,
-    # Include this value in the surrounding collection or call.
     coach_handler,
-    # Include this value in the surrounding collection or call.
     debt_edit_handler,
-    # Include this value in the surrounding collection or call.
     debt_settle_handler,
-    # Include this value in the surrounding collection or call.
     debt_void_handler,
-    # Include this value in the surrounding collection or call.
     delete_txn_handler,
-    # Include this value in the surrounding collection or call.
     edit_txn_handler,
-    # Include this value in the surrounding collection or call.
     edit_kategori_handler,
-    # Include this value in the surrounding collection or call.
     error_handler,
-    # Include this value in the surrounding collection or call.
     examples_handler,
-    # Include this value in the surrounding collection or call.
     export_handler,
-    # Include this value in the surrounding collection or call.
     grafik_handler,
-    # Include this value in the surrounding collection or call.
     harian_handler,
-    # Include this value in the surrounding collection or call.
     health_handler,
-    # Include this value in the surrounding collection or call.
     help_handler,
-    # Include this value in the surrounding collection or call.
     manual_handler,
-    # Include this value in the surrounding collection or call.
     privacy_handler,
-    # Include this value in the surrounding collection or call.
     quickstart_handler,
-    # Include this value in the surrounding collection or call.
     set_saldo_handler,
-    # Include this value in the surrounding collection or call.
     hutang_handler,
-    # Include this value in the surrounding collection or call.
     image_handler,
-    # Include this value in the surrounding collection or call.
     insight_handler,
-    # Include this value in the surrounding collection or call.
     kategori_handler,
-    # Include this value in the surrounding collection or call.
     last_handler,
-    # Include this value in the surrounding collection or call.
     message_handler,
-    # Include this value in the surrounding collection or call.
     mingguan_handler,
-    # Include this value in the surrounding collection or call.
     networth_handler,
-    # Include this value in the surrounding collection or call.
     networth_history_handler,
-    # Include this value in the surrounding collection or call.
     networth_snapshot_handler,
-    # Include this value in the surrounding collection or call.
     recurring_add_handler,
-    # Include this value in the surrounding collection or call.
     recurring_edit_handler,
-    # Include this value in the surrounding collection or call.
     recurring_handler,
-    # Include this value in the surrounding collection or call.
     recurring_off_handler,
-    # Include this value in the surrounding collection or call.
     recurring_run_handler,
-    # Include this value in the surrounding collection or call.
     rekening_handler,
-    # Include this value in the surrounding collection or call.
     ringkasan_hutang_handler,
-    # Include this value in the surrounding collection or call.
     saldo_handler,
-    # Include this value in the surrounding collection or call.
     scheduled_export_transactions,
-    # Include this value in the surrounding collection or call.
     set_budget_handler,
-    # Include this value in the surrounding collection or call.
     start_handler,
-    # Include this value in the surrounding collection or call.
     transaksi_handler,
-    # Include this value in the surrounding collection or call.
     unknown_command_handler,
-# Close the structure that was opened above.
 )
 # Import app.config so this module can use its helpers.
 from app.config import ALLOWED_USER_ID, TELEGRAM_BOT_TOKEN
@@ -156,13 +91,12 @@ from app.sheets.client import sheets_transaction
 # Wrapper ini menjaga setiap aksi Telegram berada dalam satu konteks rollback Sheets.
 # Implementation note for this project-specific finance flow.
 
-# Define atomic bot handler for callers in this flow.
+# Helper for atomic bot handler.
 def atomic_bot_handler(callback):
     """Wrap a Telegram handler inside a best-effort Google Sheets transaction context."""
 
     # Apply this decorator before the callable is registered or executed.
     @wraps(callback)
-    # Handle the asynchronous wrapped workflow.
     async def wrapped(update, context, *args, **kwargs):
         """Handle the asynchronous wrapped flow in the Telegram bot layer.
 
@@ -191,26 +125,23 @@ def atomic_bot_handler(callback):
         message_text = str(getattr(getattr(update, "message", None), "text", "") or "").strip()
         if message_text.startswith("/") and callback_name not in {"cancel_handler", "unknown_command_handler"}:
             command_token = message_text.split()[0].lstrip("/").split("@", 1)[0].lower()
-            # Run this statement as part of the current workflow.
             clear_pending_flow_state_before_command(context, command_token)
 
         # Use a managed resource so it is closed after this operation.
         with sheets_transaction(label=callback_name):
-            # Return await callback(update, context, *args, **kwargs) to the caller.
             return await callback(update, context, *args, **kwargs)
 
-    # Return wrapped to the caller.
     return wrapped
 
 
 # Implementation note for this project-specific finance flow.
 # Message handling section
 
-# Define register handlers for callers in this flow.
+# Helper for register handlers.
 def register_handlers(telegram_app: Application) -> Application:
     """Register all Telegram commands, message handlers, callback handlers, and error handlers."""
 
-    # Define add command for callers in this flow.
+    # Helper for add command.
     def add_command(command_name: str, callback):
         """Coordinate the add command logic in the Telegram bot layer.
 
@@ -227,10 +158,9 @@ def register_handlers(telegram_app: Application) -> Application:
         Flow constraints:
             Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
         """
-        # Run this statement as part of the current workflow.
         telegram_app.add_handler(CommandHandler(command_name, atomic_bot_handler(callback)))
 
-    # Define add message for callers in this flow.
+    # Helper for add message.
     def add_message(message_filter, callback):
         """Coordinate the add message logic in the Telegram bot layer.
 
@@ -247,7 +177,6 @@ def register_handlers(telegram_app: Application) -> Application:
         Flow constraints:
             Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
         """
-        # Run this statement as part of the current workflow.
         telegram_app.add_handler(MessageHandler(message_filter, atomic_bot_handler(callback)))
 
     # Basic commands for onboarding and bot checks.
@@ -363,21 +292,15 @@ def register_handlers(telegram_app: Application) -> Application:
 
     # Generic handlers stay at the end so specific commands are processed first.
     add_message(filters.COMMAND, unknown_command_handler)
-    # Run this statement as part of the current workflow.
     add_message(filters.PHOTO | filters.Document.IMAGE, image_handler)
-    # Run this statement as part of the current workflow.
     add_message(filters.TEXT & ~filters.COMMAND, message_handler)
 
-    # Run this statement as part of the current workflow.
     telegram_app.add_handler(CallbackQueryHandler(atomic_bot_handler(callback_handler)))
-    # Run this statement as part of the current workflow.
     telegram_app.add_error_handler(error_handler)
 
-    # Return telegram_app to the caller.
     return telegram_app
 
 
-# Handle the asynchronous scheduled data export workflow.
 async def scheduled_data_export(context):
     """Handle the asynchronous scheduled data export flow in the Telegram bot layer.
 
@@ -395,22 +318,19 @@ async def scheduled_data_export(context):
     """
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Wait for scheduled_export_transactions before continuing this flow.
+        # Await scheduled export transactions before continuing.
         await scheduled_export_transactions(
-            # Prepare bot for the next step.
             bot=context.bot,
-            # Prepare chat id for the next step.
             chat_id=int(ALLOWED_USER_ID),
-            # Prepare period for the next step.
+            # Extract period for validation.
             period=None,
-        # Close the structure that was opened above.
         )
     # Handle an expected failure from the guarded operation above.
     except Exception as exc:
         print(f"[AUTO EXPORT ERROR] {exc}")
 
 
-# Define register job queue jobs for callers in this flow.
+# Helper for register job queue jobs.
 def register_job_queue_jobs(telegram_app: Application) -> Application:
     """Coordinate the register job queue jobs logic in the Telegram bot layer.
 
@@ -426,35 +346,26 @@ def register_job_queue_jobs(telegram_app: Application) -> Application:
     Flow constraints:
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
-    # Handle the case where telegram_app.job_queue.
     if telegram_app.job_queue:
-        # Open a multi-line structure for the values below.
         telegram_app.job_queue.run_daily(
-            # Include this value in the surrounding collection or call.
             scheduled_data_export,
             time=time(hour=23, minute=55, tzinfo=ZoneInfo("Asia/Jakarta")),
             name="daily_data_export",
-        # Close the structure that was opened above.
         )
-    # Handle the fallback path after earlier conditions are skipped.
+    # Use the fallback path when no earlier branch matched.
     else:
         print("⚠️ JobQueue belum aktif. Install: python-telegram-bot[job-queue]")
-    # Return telegram_app to the caller.
     return telegram_app
 
 
-# Define build telegram app for callers in this flow.
+# Helper for build telegram app.
 def build_telegram_app() -> Application:
     """Create one configured Telegram Application instance with handlers and scheduled jobs."""
-    # Handle the missing or empty TELEGRAM_BOT_TOKEN case.
+    # Validate missing TELEGRAM BOT TOKEN before continuing.
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN belum diisi di .env.")
 
-    # Prepare telegram app for the next step.
     telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    # Run this statement as part of the current workflow.
     register_handlers(telegram_app)
-    # Run this statement as part of the current workflow.
     register_job_queue_jobs(telegram_app)
-    # Return telegram_app to the caller.
     return telegram_app

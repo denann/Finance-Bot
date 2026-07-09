@@ -20,15 +20,11 @@ from app.bot.handler_parts.message_handlers import *
 # Import app.bot.handler_parts.callback_handler so this module can use its helpers.
 from app.bot.handler_parts.callback_handler import *
 
-# Open a multi-line structure for the values below.
 __all__ = [
-    # Run this statement as part of the current workflow.
     name for name in globals()
     if name.endswith("_handler") or name in {
         "callback_handler",
         "scheduled_export_transactions",
         "error_handler",
-    # Close the structure that was opened above.
     }
-# Close the structure that was opened above.
 ]

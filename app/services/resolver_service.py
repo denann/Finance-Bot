@@ -18,7 +18,6 @@ from app.config import SHEET_ACCOUNTS, SHEET_CATEGORIES
 from app.sheets.client import append_row_raw, get_all_records, update_cell
 
 DEFAULT_ACCOUNT_NAMES = ["Cash", "BRI", "BSI", "BCA", "DANA", "GoPay", "Seabank"]
-# Open a multi-line structure for the values below.
 DEFAULT_CATEGORY_ROWS = [
     {"category_name": "Food & Beverage", "type": "expense", "emoji": "🍽️", "aliases": "makan,minum,kopi,nasi,donat,galon"},
     {"category_name": "Jajan", "type": "expense", "emoji": "🍢", "aliases": "jajan,ngemil,cemilan,snack,bakso,cilok,seblak,jajan pasar"},
@@ -36,10 +35,8 @@ DEFAULT_CATEGORY_ROWS = [
     {"category_name": "Refund", "type": "income", "emoji": "↩️", "aliases": "refund,pengembalian"},
     {"category_name": "Cashback", "type": "income", "emoji": "🏷️", "aliases": "cashback"},
     {"category_name": "Other Income", "type": "income", "emoji": "💰", "aliases": "pemasukan lain,other income"},
-# Close the structure that was opened above.
 ]
 
-# Open a multi-line structure for the values below.
 CATEGORY_CANONICAL_ALIASES = {
     "food": "Food & Beverage",
     "food and beverage": "Food & Beverage",
@@ -76,11 +73,10 @@ CATEGORY_CANONICAL_ALIASES = {
     "salary": "Salary",
     "refund": "Refund",
     "cashback": "Cashback",
-# Close the structure that was opened above.
 }
 
 
-# Define normalize lookup key for callers in this flow.
+# Helper for normalize lookup key.
 def normalize_lookup_key(value: Any) -> str:
     """Normalize input values for the normalize lookup key workflow in the service layer.
 
@@ -102,7 +98,7 @@ def normalize_lookup_key(value: Any) -> str:
     return re.sub(r"\s+", " ", clean).strip()
 
 
-# Define compact lookup key for callers in this flow.
+# Helper for compact lookup key.
 def compact_lookup_key(value: Any) -> str:
     """Coordinate the compact lookup key logic in the service layer.
 
@@ -121,100 +117,82 @@ def compact_lookup_key(value: Any) -> str:
     return re.sub(r"\s+", "", normalize_lookup_key(value))
 
 
-# Define safe records for callers in this flow.
+# Helper for safe records.
 def _safe_records(sheet_name: str, fallback: list[dict]) -> list[dict]:
     """Read records from Sheets with a fallback for offline tests or setup issues."""
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Prepare records for the next step.
+        # Load records for the current calculation.
         records = get_all_records(sheet_name)
     # Handle an expected failure from the guarded operation above.
     except Exception:
-        # Return list(fallback) to the caller.
         return list(fallback)
-    # Return records or list(fallback) to the caller.
     return records or list(fallback)
 
 
-# Define get account records safe for callers in this flow.
+# Helper for get account records safe.
 def get_account_records_safe() -> list[dict]:
     """Return account records from the accounts sheet, with safe defaults."""
-    # Open a multi-line structure for the values below.
     fallback = [
         {"account_name": name, "type": "bank" if name not in {"Cash", "DANA", "GoPay"} else ("cash" if name == "Cash" else "ewallet"), "balance": 0, "currency": "IDR", "last_updated": ""}
-        # Process each name in the current collection.
+        # Iterate through each name.
         for name in DEFAULT_ACCOUNT_NAMES
-    # Close the structure that was opened above.
     ]
-    # Return _safe_records(SHEET_ACCOUNTS, fallback) to the caller.
     return _safe_records(SHEET_ACCOUNTS, fallback)
 
 
-# Define get account names from sheet for callers in this flow.
+# Helper for get account names from sheet.
 def get_account_names_from_sheet() -> list[str]:
     """Return active account names from the accounts sheet."""
-    # Prepare names for the next step.
     names = []
-    # Process each record in the current collection.
+    # Iterate through each record.
     for record in get_account_records_safe():
         name = str(record.get("account_name") or "").strip()
-        # Handle the case where name and name not in names.
         if name and name not in names:
-            # Update names with the current value.
+            # Append the current value to names.
             names.append(name)
-    # Return names or list(DEFAULT_ACCOUNT_NAMES) to the caller.
     return names or list(DEFAULT_ACCOUNT_NAMES)
 
 
-# Define resolve account name for callers in this flow.
+# Helper for resolve account name.
 def resolve_account_name(account_input: str, *, similarity_threshold: float = 0.78) -> dict:
     """Resolve account input against the accounts sheet.
 
     Returns a dict with status: exact, similar, missing, or empty.
     """
     raw = str(account_input or "").strip().strip('"').strip("'")
-    # Handle the missing or empty raw case.
+    # Validate missing raw before continuing.
     if not raw:
         return {"status": "empty", "account_name": None, "suggestions": []}
 
-    # Prepare names for the next step.
     names = get_account_names_from_sheet()
-    # Prepare raw key for the next step.
+    # Prepare raw key from the incoming input.
     raw_key = normalize_lookup_key(raw)
-    # Prepare raw compact for the next step.
+    # Prepare raw compact from the incoming input.
     raw_compact = compact_lookup_key(raw)
 
-    # Process each name in the current collection.
+    # Iterate through each name.
     for name in names:
-        # Handle the case where normalize_lookup_key(name) == raw_key.
         if normalize_lookup_key(name) == raw_key:
             return {"status": "exact", "account_name": name, "suggestions": []}
 
-    # Prepare suggestions for the next step.
     suggestions = []
-    # Process each name in the current collection.
+    # Iterate through each name.
     for name in names:
-        # Prepare name key for the next step.
         name_key = normalize_lookup_key(name)
-        # Prepare name compact for the next step.
         name_compact = compact_lookup_key(name)
-        # Prepare score for the next step.
         score = SequenceMatcher(None, raw_key, name_key).ratio()
-        # Prepare substring match for the next step.
         substring_match = bool(raw_compact and name_compact and (raw_compact in name_compact or name_compact in raw_compact))
-        # Handle the case where substring_match or score >= similarity_threshold.
+        # Handle substring match or score >= similarity threshold.
         if substring_match or score >= similarity_threshold:
             suggestions.append({"account_name": name, "score": max(score, 0.95 if substring_match else score)})
 
     suggestions = sorted(suggestions, key=lambda item: item["score"], reverse=True)
-    # Handle the case where suggestions.
     if suggestions:
-        # Return { to the caller.
         return {
             "status": "similar",
             "account_name": None,
             "suggestions": [item["account_name"] for item in suggestions[:5]],
-        # Close the structure that was opened above.
         }
 
     return {"status": "missing", "account_name": None, "suggestions": []}
@@ -223,38 +201,32 @@ def resolve_account_name(account_input: str, *, similarity_threshold: float = 0.
 def create_account(account_name: str, initial_balance: float = 0, account_type: str = "bank") -> dict:
     """Create a new account row in the accounts sheet if it does not exist."""
     clean_name = str(account_name or "").strip().strip('"').strip("'")
-    # Handle the missing or empty clean_name case.
+    # Validate missing clean name before continuing.
     if not clean_name:
         return {"success": False, "message": "Nama rekening kosong.", "account_name": ""}
 
-    # Prepare resolved for the next step.
     resolved = resolve_account_name(clean_name)
     if resolved.get("status") == "exact":
-        # Return { to the caller.
         return {
             "success": True,
             "created": False,
             "message": "Rekening sudah ada.",
             "account_name": resolved.get("account_name"),
-        # Close the structure that was opened above.
         }
 
     today = datetime.now().strftime("%Y-%m-%d")
     append_row_raw(SHEET_ACCOUNTS, [clean_name, account_type or "bank", float(initial_balance or 0), "IDR", today])
-    # Return { to the caller.
     return {
         "success": True,
         "created": True,
         "message": "Rekening baru dibuat.",
         "account_name": clean_name,
-    # Close the structure that was opened above.
     }
 
 
-# Define get category records safe for callers in this flow.
+# Helper for get category records safe.
 def get_category_records_safe() -> list[dict]:
     """Return category records from the categories sheet, with safe defaults."""
-    # Return _safe_records(SHEET_CATEGORIES, DEFAULT_CATEGORY_ROWS) to the caller.
     return _safe_records(SHEET_CATEGORIES, DEFAULT_CATEGORY_ROWS)
 
 
@@ -284,7 +256,7 @@ def normalize_category_aliases(aliases: Any, category_name: str = "", *, limit: 
     """
     # Accept empty alias input without failing the category wizard.
     if aliases is None:
-        # Prepare raw items for the next step.
+        # Prepare raw items from the incoming input.
         raw_items = []
     # Gemini can return a list; manual code may pass tuple/set too.
     elif isinstance(aliases, (list, tuple, set)):
@@ -295,7 +267,7 @@ def normalize_category_aliases(aliases: Any, category_name: str = "", *, limit: 
 
     # Always include the category name itself as the first alias candidate.
     if category_name:
-        # Prepare raw items for the next step.
+        # Prepare raw items from the incoming input.
         raw_items = [str(category_name)] + list(raw_items)
 
     # Broad finance words are blocked because they would over-match categories.
@@ -311,13 +283,12 @@ def normalize_category_aliases(aliases: Any, category_name: str = "", *, limit: 
         "income",
         "pengeluaran",
         "pemasukan",
-    # Close the structure that was opened above.
     }
     # Compact keys are used for duplicate detection across spacing variants.
     seen = set()
-    # Prepare cleaned for the next step.
+    # Normalize cleaned before matching.
     cleaned = []
-    # Process each item in the current collection.
+    # Iterate through each item.
     for item in raw_items:
         # Keep alias normalization consistent with transaction category lookup.
         alias = normalize_lookup_key(item)
@@ -326,15 +297,14 @@ def normalize_category_aliases(aliases: Any, category_name: str = "", *, limit: 
         if not alias or alias in blocked:
             # Skip the rest of this loop iteration after handling this case.
             continue
-        # Prepare compact for the next step.
         compact = compact_lookup_key(alias)
         # Skip duplicates such as `tiktok shop` and `tiktokshop`.
         if not compact or compact in seen:
             # Skip the rest of this loop iteration after handling this case.
             continue
-        # Update seen with the current value.
+        # Append the current value to seen.
         seen.add(compact)
-        # Update cleaned with the current value.
+        # Append the current value to cleaned.
         cleaned.append(alias)
         # Stop once the sheet-friendly alias limit is reached.
         if len(cleaned) >= int(limit or 24):
@@ -344,7 +314,7 @@ def normalize_category_aliases(aliases: Any, category_name: str = "", *, limit: 
     return ",".join(cleaned)
 
 
-# Define get category names from sheet for callers in this flow.
+# Helper for get category names from sheet.
 def get_category_names_from_sheet(transaction_type: str | None = None) -> list[str]:
     """Retrieve data needed by the get category names from sheet workflow in the service layer.
 
@@ -361,29 +331,26 @@ def get_category_names_from_sheet(transaction_type: str | None = None) -> list[s
         Keep category name, type, symbol, and alias behavior consistent with the documented category flow.
     """
     txn_type = str(transaction_type or "").strip().lower()
-    # Prepare names for the next step.
     names = []
-    # Process each record in the current collection.
+    # Iterate through each record.
     for record in get_category_records_safe():
         name = str(record.get("category_name") or "").strip()
         record_type = str(record.get("type") or "").strip().lower()
-        # Handle the missing or empty name case.
+        # Validate missing name before continuing.
         if not name:
             # Skip the rest of this loop iteration after handling this case.
             continue
-        # Handle the case where txn_type and record_type and record_type != txn_type.
+        # Handle txn type and record type and record type != txn type.
         if txn_type and record_type and record_type != txn_type:
             # Skip the rest of this loop iteration after handling this case.
             continue
-        # Handle the case where name not in names.
         if name not in names:
-            # Update names with the current value.
+            # Append the current value to names.
             names.append(name)
-    # Return names to the caller.
     return names
 
 
-# Define category alias candidates for callers in this flow.
+# Helper for category alias candidates.
 def _category_alias_candidates(record: dict) -> list[str]:
     """Return the category name plus comma-separated aliases for matching.
 
@@ -396,11 +363,10 @@ def _category_alias_candidates(record: dict) -> list[str]:
     aliases = str(record.get("aliases") or "")
     result = [str(record.get("category_name") or "")]
     result.extend(part.strip() for part in aliases.split(",") if part.strip())
-    # Return result to the caller.
     return result
 
 
-# Define category name exists for callers in this flow.
+# Helper for category name exists.
 def _category_name_exists(records: list[dict], category_name: str, transaction_type: str) -> bool:
     """Check whether a canonical category exists for the selected type.
 
@@ -414,21 +380,18 @@ def _category_name_exists(records: list[dict], category_name: str, transaction_t
         type. False prevents built-in aliases from fabricating missing category
         names.
     """
-    # Prepare target key for the next step.
     target_key = normalize_lookup_key(category_name)
-    # Process each record in the current collection.
+    # Iterate through each record.
     for record in records or []:
         name = str((record or {}).get("category_name") or "").strip()
         record_type = str((record or {}).get("type") or transaction_type).strip().lower() or transaction_type
-        # Handle the case where name and record_type == transaction_type and normalize_lookup....
+        # Handle name and record type == transaction type and normalize lookup.
         if name and record_type == transaction_type and normalize_lookup_key(name) == target_key:
-            # Return True to the caller.
             return True
-    # Return False to the caller.
     return False
 
 
-# Define default category type for callers in this flow.
+# Helper for default category type.
 def _default_category_type(transaction_type: str | None) -> str:
     """Return the fallback category type for an unresolved transaction.
 
@@ -443,7 +406,7 @@ def _default_category_type(transaction_type: str | None) -> str:
     return "income" if txn_type == "income" else "expense"
 
 
-# Define default category name for callers in this flow.
+# Helper for default category name.
 def _default_category_name(transaction_type: str | None) -> str:
     """Return the canonical fallback category name for a transaction type.
 
@@ -457,7 +420,7 @@ def _default_category_name(transaction_type: str | None) -> str:
     return "Other Income" if _default_category_type(transaction_type) == "income" else "Other Expense"
 
 
-# Define default category emoji for callers in this flow.
+# Helper for default category emoji.
 def _default_category_emoji(transaction_type: str | None) -> str:
     """Return the fallback category emoji for a transaction type.
 
@@ -471,7 +434,7 @@ def _default_category_emoji(transaction_type: str | None) -> str:
     return "💰" if _default_category_type(transaction_type) == "income" else "📦"
 
 
-# Define find category by name for callers in this flow.
+# Helper for find category by name.
 def find_category_by_name(category_name: str) -> dict:
     """Find an existing category row by exact normalized category name.
 
@@ -517,33 +480,29 @@ def find_category_by_name(category_name: str) -> dict:
 
     # If exact match fails, build suggestions without auto-selecting them.
     suggestions = []
-    # Process each record in the current collection.
+    # Iterate through each record.
     for record in records or []:
         # Suggestions are only hints; they are never auto-selected for editing.
         name = str((record or {}).get("category_name") or "").strip()
-        # Handle the missing or empty name case.
+        # Validate missing name before continuing.
         if not name:
             # Skip the rest of this loop iteration after handling this case.
             continue
-        # Prepare score for the next step.
         score = SequenceMatcher(None, clean_key, normalize_lookup_key(name)).ratio()
-        # Handle the case where score >= 0.72.
         if score >= 0.72:
             suggestions.append({"name": name, "score": score})
 
     # Highest similarity suggestions are shown first in Telegram.
     suggestions = sorted(suggestions, key=lambda item: item["score"], reverse=True)
-    # Return { to the caller.
     return {
         "found": False,
         "record": None,
         "row_index": None,
         "suggestions": [item["name"] for item in suggestions[:5]],
-    # Close the structure that was opened above.
     }
 
 
-# Define resolve category name for callers in this flow.
+# Helper for resolve category name.
 def resolve_category_name(category_input: str, transaction_type: str | None = None, *, allow_create: bool = False) -> dict:
     """Resolve category input against existing categories and aliases.
 
@@ -562,117 +521,93 @@ def resolve_category_name(category_input: str, transaction_type: str | None = No
         `missing`.
     """
     raw = str(category_input or "").strip()
-    # Prepare txn type for the next step.
     txn_type = _default_category_type(transaction_type)
-    # Handle the missing or empty raw case.
+    # Validate missing raw before continuing.
     if not raw:
         return {"status": "default", "category_name": _default_category_name(txn_type), "created": False}
 
-    # Prepare records for the next step.
+    # Load records for the current calculation.
     records = get_category_records_safe()
-    # Prepare raw key for the next step.
+    # Prepare raw key from the incoming input.
     raw_key = normalize_lookup_key(raw)
-    # Prepare raw compact for the next step.
+    # Prepare raw compact from the incoming input.
     raw_compact = compact_lookup_key(raw)
-    # Prepare canonical for the next step.
     canonical = CATEGORY_CANONICAL_ALIASES.get(raw_key) or CATEGORY_CANONICAL_ALIASES.get(raw_compact)
 
-    # Handle the case where canonical and _category_name_exists(records, canonical, txn_t....
+    # Handle canonical and category name exists(records, canonical, txn t.
     if canonical and _category_name_exists(records, canonical, txn_type):
-        # Prepare raw for the next step.
+        # Prepare raw from the incoming input.
         raw = canonical
-        # Prepare raw key for the next step.
+        # Prepare raw key from the incoming input.
         raw_key = normalize_lookup_key(raw)
-        # Prepare raw compact for the next step.
+        # Prepare raw compact from the incoming input.
         raw_compact = compact_lookup_key(raw)
 
-    # Process each record in the current collection.
+    # Iterate through each record.
     for record in records:
         name = str(record.get("category_name") or "").strip()
-        # Handle the missing or empty name case.
+        # Validate missing name before continuing.
         if not name:
             # Skip the rest of this loop iteration after handling this case.
             continue
         record_type = str(record.get("type") or txn_type).strip().lower() or txn_type
-        # Handle the case where record_type != txn_type.
         if record_type != txn_type:
             # Skip the rest of this loop iteration after handling this case.
             continue
-        # Handle the case where normalize_lookup_key(name) == raw_key.
         if normalize_lookup_key(name) == raw_key:
             return {"status": "exact", "category_name": name, "created": False}
 
-    # Process each record in the current collection.
+    # Iterate through each record.
     for record in records:
         name = str(record.get("category_name") or "").strip()
         record_type = str(record.get("type") or txn_type).strip().lower() or txn_type
-        # Handle the missing or empty name or record_type != txn_type case.
+        # Validate missing name or record type != txn type before continuing.
         if not name or record_type != txn_type:
             # Skip the rest of this loop iteration after handling this case.
             continue
-        # Process each alias in the current collection.
+        # Iterate through each alias.
         for alias in _category_alias_candidates(record):
-            # Prepare alias key for the next step.
             alias_key = normalize_lookup_key(alias)
-            # Prepare alias compact for the next step.
             alias_compact = compact_lookup_key(alias)
-            # Handle the case where raw_key == alias_key or (raw_compact and raw_compact == alias....
+            # Handle raw key == alias key or (raw compact and raw compact == alias.
             if raw_key == alias_key or (raw_compact and raw_compact == alias_compact):
                 return {"status": "alias", "category_name": name, "created": False}
 
-    # Prepare best name for the next step.
     best_name = None
-    # Prepare best score for the next step.
     best_score = 0.0
-    # Process each record in the current collection.
+    # Iterate through each record.
     for record in records:
         name = str(record.get("category_name") or "").strip()
         record_type = str(record.get("type") or txn_type).strip().lower() or txn_type
-        # Handle the missing or empty name or record_type != txn_type case.
+        # Validate missing name or record type != txn type before continuing.
         if not name or record_type != txn_type:
             # Skip the rest of this loop iteration after handling this case.
             continue
-        # Process each alias in the current collection.
+        # Iterate through each alias.
         for alias in _category_alias_candidates(record):
-            # Prepare alias key for the next step.
             alias_key = normalize_lookup_key(alias)
-            # Prepare alias compact for the next step.
             alias_compact = compact_lookup_key(alias)
-            # Prepare score for the next step.
             score = SequenceMatcher(None, raw_key, alias_key).ratio()
-            # Open a multi-line structure for the values below.
             substring_match = bool(
-                # Run this statement as part of the current workflow.
                 len(raw_compact) >= 5
-                # Run this statement as part of the current workflow.
                 and len(alias_compact) >= 5
-                # Run this statement as part of the current workflow.
                 and (raw_compact in alias_compact or alias_compact in raw_compact)
-            # Close the structure that was opened above.
             )
-            # Prepare effective score for the next step.
             effective_score = max(score, 0.95 if substring_match else score)
-            # Handle the case where effective_score > best_score.
             if effective_score > best_score:
-                # Prepare best name for the next step.
                 best_name = name
-                # Prepare best score for the next step.
                 best_score = effective_score
 
-    # Handle the case where best_name and best_score >= 0.86.
+    # Handle best name and best score >= 0.
     if best_name and best_score >= 0.86:
         return {"status": "similar", "category_name": best_name, "created": False}
 
-    # Handle the case where allow_create.
     if allow_create:
-        # Prepare created for the next step.
         created = create_category(raw, txn_type)
-        # Return { to the caller.
         return {
             "status": "created" if created.get("success") else "fallback",
             "category_name": created.get("category_name") or _default_category_name(txn_type),
             "created": bool(created.get("created")),
-        # Close the structure that was opened above.
         }
 
     return {"status": "missing", "category_name": raw, "created": False}
@@ -711,42 +646,32 @@ def create_category(category_name: str, transaction_type: str = "expense", emoji
     # Prevent duplicate rows by checking exact, alias, and similar matches.
     existing = resolve_category_name(clean_name, txn_type, allow_create=False)
     if existing.get("status") in {"exact", "alias", "similar"}:
-        # Return { to the caller.
         return {
             "success": True,
             "created": False,
             "message": "Kategori sudah ada atau mirip kategori existing.",
             "category_name": existing.get("category_name"),
-        # Close the structure that was opened above.
         }
 
     # Normalize aliases again at write boundary as a final safety step.
     clean_aliases = normalize_category_aliases(aliases, clean_name)
     # Preserve the current sheet schema: category_name, type, emoji, aliases.
     append_row_raw(SHEET_CATEGORIES, [clean_name, txn_type, emoji or _default_category_emoji(txn_type), clean_aliases])
-    # Return { to the caller.
     return {
         "success": True,
         "created": True,
         "message": "Kategori baru dibuat.",
         "category_name": clean_name,
-    # Close the structure that was opened above.
     }
 
 
-# Define update category for callers in this flow.
+# Helper for update category.
 def update_category(
-    # Include this value in the surrounding collection or call.
     category_name: str,
-    # Include this value in the surrounding collection or call.
     *,
-    # Include this value in the surrounding collection or call.
     transaction_type: str | None = None,
-    # Include this value in the surrounding collection or call.
     emoji: str | None = None,
-    # Include this value in the surrounding collection or call.
     aliases: str | list[str] | None = None,
-# Close the structure that was opened above.
 ) -> dict:
     """Update editable fields for an existing category row.
 
@@ -772,48 +697,38 @@ def update_category(
     found = find_category_by_name(category_name)
     # Missing category names are returned with suggestions when available.
     if not found.get("found"):
-        # Return { to the caller.
         return {
             "success": False,
             "message": "Kategori tidak ditemukan.",
             "suggestions": found.get("suggestions") or [],
-        # Close the structure that was opened above.
         }
 
     # Row index is validated before any cell update happens.
     row_index = int(found.get("row_index") or 0)
     record = found.get("record") or {}
-    # Handle the case where row_index < 2.
     if row_index < 2:
         return {"success": False, "message": "Row kategori tidak valid."}
 
     # Track which fields were actually updated for the caller response.
     updated = {}
-    # Handle the case where transaction_type is not None.
     if transaction_type is not None:
         # Column B stores the category type.
         txn_type = _default_category_type(transaction_type)
-        # Run this statement as part of the current workflow.
         update_cell(SHEET_CATEGORIES, row_index, 2, txn_type)
         updated["type"] = txn_type
 
-    # Handle the case where emoji is not None.
     if emoji is not None:
         # Column C keeps the historical `emoji` schema, used as user symbol.
         clean_emoji = str(emoji or "").strip()
-        # Run this statement as part of the current workflow.
         update_cell(SHEET_CATEGORIES, row_index, 3, clean_emoji)
         updated["emoji"] = clean_emoji
 
-    # Handle the case where aliases is not None.
     if aliases is not None:
         # Column D uses one comma-separated aliases string.
         clean_aliases = normalize_category_aliases(aliases, str(record.get("category_name") or category_name))
-        # Run this statement as part of the current workflow.
         update_cell(SHEET_CATEGORIES, row_index, 4, clean_aliases)
         updated["aliases"] = clean_aliases
 
-    # Return { to the caller.
     return {
         "success": True,
         "message": "Kategori berhasil diupdate.",
@@ -821,56 +736,48 @@ def update_category(
         "row_index": row_index,
         "updated": updated,
         "record": record,
-    # Close the structure that was opened above.
     }
 
 
-# Define ensure category for transaction for callers in this flow.
+# Helper for ensure category for transaction.
 def ensure_category_for_transaction(category_name: str, transaction_type: str | None) -> str:
     """Resolve or create the category used by a parsed transaction."""
     txn_type = str(transaction_type or "").strip().lower()
     if txn_type not in {"expense", "income"}:
         return str(category_name or "").strip()
-    # Prepare resolved for the next step.
     resolved = resolve_category_name(category_name, txn_type, allow_create=True)
     return str(resolved.get("category_name") or _default_category_name(txn_type)).strip()
 
 
-# Define resolve account for parser for callers in this flow.
+# Helper for resolve account for parser.
 def resolve_account_for_parser(account_name: str | None) -> str | None:
     """Resolve parser account output to an existing account when possible."""
-    # Handle the missing or empty account_name case.
+    # Validate missing account name before continuing.
     if not account_name:
-        # Return None to the caller.
         return None
-    # Prepare resolved for the next step.
     resolved = resolve_account_name(account_name)
     if resolved.get("status") == "exact":
         return str(resolved.get("account_name") or "").strip() or None
     if resolved.get("status") == "similar" and resolved.get("suggestions"):
         return str(resolved["suggestions"][0] or "").strip() or None
-    # Return None to the caller.
     return None
 
 
 def resolve_parsed_transaction(parsed: dict, raw_text: str = "") -> dict:
     """Normalize parsed transaction accounts and category through sheet-backed resolvers."""
-    # Handle the missing or empty isinstance(parsed, dict) case.
+    # Validate missing isinstance(parsed, dict) before continuing.
     if not isinstance(parsed, dict):
-        # Return parsed to the caller.
         return parsed
 
     txn_type = str(parsed.get("type") or "").strip().lower()
 
     if parsed.get("account"):
         resolved_account = resolve_account_for_parser(parsed.get("account"))
-        # Handle the case where resolved_account.
         if resolved_account:
             parsed["account"] = resolved_account
 
     if parsed.get("to_account"):
         resolved_to_account = resolve_account_for_parser(parsed.get("to_account"))
-        # Handle the case where resolved_to_account.
         if resolved_to_account:
             parsed["to_account"] = resolved_to_account
 
@@ -878,5 +785,4 @@ def resolve_parsed_transaction(parsed: dict, raw_text: str = "") -> dict:
         category = str(parsed.get("category") or "").strip()
         parsed["category"] = ensure_category_for_transaction(category, txn_type)
 
-    # Return parsed to the caller.
     return parsed
