@@ -43,3 +43,29 @@ def install_external_stubs() -> None:
         google.oauth2 = oauth2
         oauth2.service_account = service_account
         sys.modules.setdefault("google.oauth2.service_account", service_account)
+
+    if "langchain_core.messages" not in sys.modules:
+        langchain_core = sys.modules.setdefault("langchain_core", types.ModuleType("langchain_core"))
+        messages = types.ModuleType("langchain_core.messages")
+
+        class HumanMessage:
+            """Store prompt content without creating a LangChain dependency."""
+
+            def __init__(self, content=None, **_kwargs):
+                self.content = content
+
+        messages.HumanMessage = HumanMessage
+        langchain_core.messages = messages
+        sys.modules.setdefault("langchain_core.messages", messages)
+
+    if "langchain_google_genai" not in sys.modules:
+        langchain_google_genai = types.ModuleType("langchain_google_genai")
+
+        class ChatGoogleGenerativeAI:
+            """Fail closed if a test reaches the real Gemini client boundary."""
+
+            def __init__(self, *_args, **_kwargs):
+                raise RuntimeError("External Gemini client is disabled in offline tests.")
+
+        langchain_google_genai.ChatGoogleGenerativeAI = ChatGoogleGenerativeAI
+        sys.modules.setdefault("langchain_google_genai", langchain_google_genai)

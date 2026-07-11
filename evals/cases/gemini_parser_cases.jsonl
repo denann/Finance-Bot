@@ -1,0 +1,7 @@
+{"id":"ai_topup_game","input":"top up game ML 50k dari DANA","expected":{"type":"expense","amount":50000,"account":"DANA","category":"Entertainment"},"tags":["transfer","ambiguous_category"]}
+{"id":"ai_topup_steam","input":"top up steam 100k dari BCA","expected":{"type":"expense","amount":100000,"account":"BCA","category":"Entertainment"},"tags":["transfer","ambiguous_category"]}
+{"id":"ai_fish_food","input":"beli makanan ikan 20k dari Cash","expected":{"type":"expense","amount":20000,"account":"Cash"},"tags":["ambiguous_category"]}
+{"id":"ai_donut_unknown","input":"beli donat qq 15k dari Cash","expected":{"type":"expense","amount":15000,"account":"Cash"},"tags":["ambiguous_category"]}
+{"id":"ai_refund_shopee","input":"refund shopee 50k ke BCA","expected":{"type":"income","amount":50000,"account":"BCA"},"tags":["income","category_conflict"]}
+{"id":"ai_synthetic_laundry","input":"bayar laundri kilat 42k dari DANA","expected":{"type":"expense","amount":42000,"account":"DANA"},"tags":["regex_miss"]}
+{"id":"ai_synthetic_pet_food","input":"beli pakan kucing premium 75k dari BRI","expected":{"type":"expense","amount":75000,"account":"BRI"},"tags":["ambiguous_category"]}

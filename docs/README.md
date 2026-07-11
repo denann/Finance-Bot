@@ -15,5 +15,6 @@ Read the docs in this order:
 9. `09-function-reference.md`
 10. `10-glossary.md`
 11. `testing.md`
+12. `testing/debug-matrix-coverage.md`
 
 The documentation is written for an international audience, while the current product behavior is still optimized for Indonesian finance input.

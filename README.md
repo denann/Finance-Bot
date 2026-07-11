@@ -15,6 +15,7 @@ The core idea is simple: users can write everyday finance inputs such as `beli k
 - [Data & Privacy](#data--privacy)
 - [Installation](#installation)
 - [Usage](#usage)
+- [Testing and Evaluation](#testing-and-evaluation)
 - [Project Structure](#project-structure)
 - [Code Documentation](#code-documentation)
 - [Limitations and Troubleshooting](#limitations-and-troubleshooting)
@@ -511,6 +512,17 @@ Expense totals, Top 3 expenses, category ranking, and percentage contribution us
 
 `/privacy` explains what data the bot processes, where data is stored, how Telegram and Gemini are used, and what credentials the user must protect. `/download_data` and `/export` send a warning before the CSV because export files contain personal finance data.
 
+## Testing and Evaluation
+
+Install development dependencies and run the complete offline suite:
+
+```powershell
+python -m pip install -r requirements-dev.txt
+python -m pytest -q tests
+```
+
+Default pytest blocks unexpected network, Telegram, Gemini, and real gspread calls. Fixture-driven regressions come from the debug matrix, while live Gemini evaluation is a separate explicit opt-in command. See `docs/testing.md` for commands, fixture format, coverage classification, report comparison, and regression gates.
+
 ## Project Structure
 
 ```text
@@ -523,7 +535,10 @@ app/
 └── sheets/              # Google Sheets client and schema handling
 
 docs/                    # Technical documentation
+evals/                   # Opt-in Gemini parser evaluation, reports, and gates
 scripts/                 # Setup, debug, and regression scripts
+tests/                   # Unit, service, integration, fake, and regression suites
+.github/workflows/       # Offline CI without production credentials
 assets/                  # README diagrams
 main.py                  # Application entry point
 ```
@@ -544,6 +559,8 @@ Start here:
 - `docs/08-setup-debug-deployment.md`
 - `docs/09-function-reference.md`
 - `docs/10-glossary.md`
+- `docs/testing.md`
+- `docs/testing/debug-matrix-coverage.md`
 
 ## Limitations and Troubleshooting
 

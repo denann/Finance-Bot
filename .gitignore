@@ -1,6 +1,7 @@
 .env
 *.pyc
 __pycache__/
+.pytest_cache/
 *.db
 credentials.json
 service_account.json
@@ -8,5 +9,7 @@ service_account_test.json
 .venv/
 venv/
 token.json
+evals/reports/*.json
+evals/reports/*.md
 
 Personal Use/

@@ -1,51 +1,154 @@
 # Testing
 
-## Scope
+## Scope and safety
 
-The automated suite protects Phase 0 data-integrity contracts without contacting Telegram, Google Sheets, Gemini, webhooks, or production schedulers.
+The default suite is offline and deterministic. It protects Phase 0 data-integrity contracts and fixture-driven Phase 1A regressions without contacting Telegram, Google Sheets, Gemini, webhooks, or production schedulers.
+
+An autouse pytest guard removes external credentials and blocks socket, HTTP, Telegram Bot API, and real gspread authorization calls. Tests may replace a boundary only with an explicit local fake.
 
 | Test area | Coverage |
 | :--- | :--- |
-| Unit | Date absent/valid/invalid states, parser regression corpus, immutable action lifecycle |
-| Service | Save outcome semantics, rollback propagation, recurring exactly-once, append reconciliation |
+| Unit | Date states, parser baseline, immutable action lifecycle, evaluation metrics, report comparison, and gates |
+| Service | Save outcome semantics, rollback propagation, recurring exactly-once, and append reconciliation |
 | Integration | Diagnostic route policy and public command confirmation inventory |
-| Fakes | In-memory worksheet/failure plan, Telegram update/callback objects, frozen clock, optional import stubs |
+| Regression | JSONL parser, routing, safety, preview, split-bill, multi-input, manual-edit, and scenario cases |
+| Fakes | In-memory worksheet/failure plan, Telegram objects, frozen clock, and optional import stubs |
+| Live evaluation | Explicit opt-in Gemini draft parsing with versioned reports; excluded from pytest |
 
-## Install and run
+The matrix coverage inventory is maintained in [`docs/testing/debug-matrix-coverage.md`](testing/debug-matrix-coverage.md).
 
-Use a development environment rather than adding pytest to production-only installation:
+## Install dependencies
+
+Use a development environment. `requirements-dev.txt` includes runtime dependencies and pytest.
 
 ```powershell
 python -m pip install -r requirements-dev.txt
-python -m pytest -q tests
-python -m compileall app main.py tests
 ```
 
-The suite must run without `.env`, Telegram token, service-account JSON, spreadsheet ID, Gemini key, or network access.
+No `.env`, Telegram token, service-account JSON, spreadsheet ID, or Gemini key is required for pytest.
 
-## Failure-injection invariants
+## Run tests
 
-Tests verify outcomes, not only raised exceptions:
+Complete offline suite:
 
-- rollback/unknown commits never return `success=True`;
-- a logical transaction ID is not appended twice after an ambiguous response;
-- result-style failures after a mutation escape as typed errors so the outer rollback boundary runs;
-- a preview action is immutable, owner-bound, message-bound when available, expiring, and consumable once;
-- one recurring `rule_id + scheduled_run_date` produces at most one transaction;
-- public F-007 commands do not call write services before final confirmation;
-- anonymous `/test-sheets` access stops before the Sheets probe.
+```powershell
+python -m pytest -q tests
+```
+
+Focused suites:
+
+```powershell
+python -m pytest -q tests/unit
+python -m pytest -q tests/service
+python -m pytest -q tests/integration
+python -m pytest -q tests/regression
+```
+
+Filter by case ID, tag-like keyword, or flow name:
+
+```powershell
+python -m pytest -q -k split_bill
+python -m pytest -q -k slash_command
+python -m pytest -q -k confirmation_security
+```
+
+Compile and import smoke checks:
+
+```powershell
+python -m compileall -q app evals main.py tests
+python -c "from tests.fakes.external_modules import install_external_stubs; install_external_stubs(); import app.nlp.regex_parser, app.nlp.parse_safety, app.bot.pending_actions, evals.metrics, evals.gates"
+```
+
+## Regression fixture format
+
+One-shot JSONL cases live under `tests/regression/fixtures/`. A case has a stable ID, matrix source, fixed reference date when needed, tags, raw input, and partial expectations.
+
+```json
+{
+  "id": "mx02_01_expense_coffee_cash",
+  "source": {
+    "document": "finance_bot_debug_input_matrix_v2.md",
+    "section": "2. Single Transaction Ready to Save",
+    "case": 1
+  },
+  "input": "beli kopi 20k dari Cash",
+  "reference_date": "2026-07-10",
+  "expected": {
+    "route": "transaction",
+    "flow": "PREVIEW_SAVE_EDIT_CANCEL",
+    "parsed": {
+      "type": "expense",
+      "amount": 20000,
+      "account": "Cash"
+    }
+  },
+  "tags": ["expense", "parser", "critical"]
+}
+```
+
+Add the case to the fixture matching the boundary being asserted. Do not include dynamic UUIDs, timestamps, preview message IDs, or unrelated metadata. The shared assertion helper compares only fields declared in `expected` and reports the case ID, input, step, field, expected value, actual value, route, and flow.
+
+## Multi-step scenarios
+
+Confirmation scenarios live in `scenario_cases.jsonl`. Supported steps create a preview, bind its message ID, save, cancel, advance time, and assert lifecycle errors.
+
+```json
+{
+  "id": "scenario_duplicate_save_one_shot",
+  "steps": [
+    {
+      "action": "preview",
+      "capture": "preview",
+      "message_id": 201,
+      "payload": {"subject": "Kopi", "amount": 20000}
+    },
+    {"action": "save", "target": "preview", "message_id": 201},
+    {
+      "action": "save",
+      "target": "preview",
+      "message_id": 201,
+      "expect_error": "consumed"
+    }
+  ],
+  "expected": {"mutation_count": 1}
+}
+```
+
+Scenarios use in-memory state. They do not send Telegram messages or write Sheets.
+
+## Interpreting failures
+
+A fixture failure identifies the exact field or invariant. Correct the fixture only when current approved behavior or business rules prove the old expectation obsolete. Otherwise treat the failure as a regression or a documented product gap.
+
+Critical cases cannot be optional. Do not remove fields or weaken assertions merely to restore a green run.
+
+## Live Gemini evaluation
+
+Live evaluation is separate from pytest and default-disabled. It uses only synthetic inputs, static category/account lists, and parser draft output. It never starts Telegram, writes Sheets, or runs the scheduler.
+
+```powershell
+$env:ENABLE_LIVE_AI_EVAL = "1"
+$env:GEMINI_API_KEY = "<evaluation-key>"
+python evals/run_parser_eval.py
+```
+
+The runner exits non-zero before calling Gemini when opt-in or `GEMINI_API_KEY` is missing. Reports are timestamped under `evals/reports/` and include commit, dataset version, prompt version, model configuration, metrics, and failed case IDs. Token usage remains `null` when provider metadata is unavailable; cost is not estimated.
+
+Compare and gate reports:
+
+```powershell
+python evals/compare_runs.py evals/reports/baseline.json evals/reports/candidate.json
+python evals/gates.py evals/reports/baseline.json evals/reports/candidate.json
+```
+
+Gate thresholds and critical tags are centralized in `evals/gates.py`.
+
+## CI
+
+`.github/workflows/offline-tests.yml` uses Python 3.12, installs `requirements-dev.txt`, runs the full offline suite, compiles application/test/evaluation modules, performs import smoke, and checks whitespace. It provides no production credentials and does not run live AI evaluation.
 
 ## External staging verification
 
-Automated tests do not prove real Google Sheets rollback behavior or Telegram delivery ordering. Run the following only with a staging bot and staging spreadsheet after owner approval:
+Offline tests do not prove real Google Sheets rollback behavior, Telegram delivery ordering, Gemini Vision output, or scheduler contention. Use the detailed staging checklist in the debug-matrix coverage document only with an approved staging bot and spreadsheet.
 
-1. Create previews A and B; confirm A, then B, and verify each exact row once.
-2. Double-click one confirmation and verify a single transaction/balance delta.
-3. Press a legacy/stale callback and verify no write.
-4. Trigger one recurring occurrence from reminder and manual run close together; verify one transaction and one successful log.
-5. Inject/observe an ambiguous append failure and reconcile the existing logical ID before retry.
-6. Enter invalid dates such as `31/02/2026` and verify clarification without a row.
-7. Exercise each direct-write command and verify no write before `Simpan`; verify `Batal` writes nothing.
-8. Verify `/test-sheets` returns hidden/forbidden by default and never repairs schema.
-
-Record worksheet row IDs, balances, recurring logs, and callback results before and after each staging case. Never run these checks against the production spreadsheet.
+Never run destructive staging checks against the production spreadsheet.
