@@ -272,6 +272,22 @@ class SheetsAtomicWriteError(RuntimeError):
         super().__init__(message)
 
 
+class SheetsCommitOutcomeUnknownError(RuntimeError):
+    """Signal that a non-idempotent mutation may have committed remotely."""
+
+    def __init__(self, operation: str, original_error: Exception, detail: str | None = None):
+        self.operation = operation
+        self.original_error = original_error
+        self.detail = detail or ""
+        message = (
+            f"Hasil operasi Google Sheets `{operation}` tidak dapat dipastikan. "
+            "Jangan ulangi mutation sebelum rekonsiliasi logical ID."
+        )
+        if self.detail:
+            message += f" Detail: {self.detail}"
+        super().__init__(message)
+
+
 # Schema compatibility note for Google Sheets headers and rows.
 
 # Group the SheetsTransaction behavior in one class.
@@ -431,13 +447,25 @@ def _is_quota_or_transient_error(exc: Exception) -> bool:
 
 
 # Helper for call with retry.
-def _call_with_retry(fn, *, max_retries: int | None = None):
+def _call_with_retry(
+    fn,
+    *,
+    max_retries: int | None = None,
+    operation: str = "read",
+    reconcile=None,
+):
     """Call a Sheets operation with retry for quota/transient failures.
 
     Args:
         fn: Zero-argument callable that performs the Sheets API operation.
         max_retries: Optional retry count override. Defaults to
             `SHEETS_MAX_RETRIES`.
+        operation: ``read`` or ``idempotent_write`` may be retried directly.
+            ``non_idempotent_write`` requires reconciliation after an
+            ambiguous transient error.
+        reconcile: Optional zero-argument lookup. Return a non-``None`` value
+            when the logical mutation already exists remotely; return ``None``
+            only when a successful lookup proves it is absent.
 
     Returns:
         Whatever `fn` returns.
@@ -461,12 +489,28 @@ def _call_with_retry(fn, *, max_retries: int | None = None):
             if is_last or not _is_quota_or_transient_error(exc):
                 raise
 
+            if operation == "non_idempotent_write":
+                if reconcile is None:
+                    raise SheetsCommitOutcomeUnknownError(operation, exc, "reconciliation callback tidak tersedia") from exc
+                try:
+                    reconciled = reconcile()
+                except SheetsCommitOutcomeUnknownError:
+                    raise
+                except Exception as reconcile_error:
+                    raise SheetsCommitOutcomeUnknownError(
+                        operation,
+                        exc,
+                        f"lookup gagal: {reconcile_error}",
+                    ) from reconcile_error
+                if reconciled is not None:
+                    return reconciled
+
             sleep_time = base_delay * (2 ** attempt) + random.uniform(0, 0.5)
             time.sleep(sleep_time)
 
 
 # Helper for execute write.
-def _execute_write(fn):
+def _execute_write(fn, *, operation: str = "idempotent_write", reconcile=None):
     """Execute a Sheets write with retry and active-transaction rollback.
 
     Args:
@@ -494,7 +538,7 @@ def _execute_write(fn):
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        return _call_with_retry(fn)
+        return _call_with_retry(fn, operation=operation, reconcile=reconcile)
     # Handle an expected failure from the guarded operation above.
     except Exception as exc:
         if tx is not None:
@@ -923,6 +967,56 @@ def get_sheet(sheet_name: str):
     return _worksheets[clean_name]
 
 
+def _first_column_values(sheet) -> list[str]:
+    """Read first-column logical IDs through the retry-safe read policy."""
+
+    if hasattr(sheet, "col_values"):
+        values = _call_with_retry(lambda: sheet.col_values(1), operation="read")
+    else:
+        rows = _call_with_retry(lambda: sheet.get_all_values(), operation="read")
+        values = [row[0] if row else "" for row in rows]
+    return [str(value or "").strip() for value in values]
+
+
+def _synthetic_append_response(sheet, start_row: int, end_row: int | None = None) -> dict:
+    """Build a gspread-like response for a remotely reconciled append."""
+
+    title = str(getattr(sheet, "title", "Sheet1") or "Sheet1")
+    last_row = end_row or start_row
+    return {"updates": {"updatedRange": f"{title}!A{start_row}:Z{last_row}"}, "reconciled": True}
+
+
+def _reconcile_single_append(sheet, logical_id: str) -> dict | None:
+    """Return a synthetic success only when exactly one logical ID exists."""
+
+    matches = [index for index, value in enumerate(_first_column_values(sheet), start=1) if value == logical_id]
+    if len(matches) == 1:
+        return _synthetic_append_response(sheet, matches[0])
+    if len(matches) > 1:
+        raise SheetsCommitOutcomeUnknownError("append", RuntimeError("duplicate logical ID"), logical_id)
+    return None
+
+
+def _reconcile_batch_append(sheet, logical_ids: list[str]) -> dict | None:
+    """Reconcile a batch only when all IDs exist exactly once or none exist."""
+
+    values = _first_column_values(sheet)
+    positions = {logical_id: [i for i, value in enumerate(values, start=1) if value == logical_id] for logical_id in logical_ids}
+    found = {logical_id: rows for logical_id, rows in positions.items() if rows}
+    if not found:
+        return None
+    if len(found) != len(logical_ids) or any(len(rows) != 1 for rows in positions.values()):
+        raise SheetsCommitOutcomeUnknownError(
+            "batch_append",
+            RuntimeError("partial or duplicate logical IDs"),
+            ", ".join(sorted(found)),
+        )
+    row_numbers = sorted(rows[0] for rows in positions.values())
+    if row_numbers != list(range(row_numbers[0], row_numbers[-1] + 1)):
+        raise SheetsCommitOutcomeUnknownError("batch_append", RuntimeError("reconciled rows are not contiguous"))
+    return _synthetic_append_response(sheet, row_numbers[0], row_numbers[-1])
+
+
 # Helper for append row.
 def append_row(sheet_name: str, row: list):
     """Append one row to a sheet with rollback tracking.
@@ -939,7 +1033,13 @@ def append_row(sheet_name: str, row: list):
         when inside `sheets_transaction`.
     """
     sheet = get_sheet(sheet_name)
-    response = _execute_write(lambda: sheet.append_row(row, value_input_option="RAW"))
+    logical_id = str(row[0] if row else "").strip()
+    reconcile = (lambda: _reconcile_single_append(sheet, logical_id)) if logical_id else None
+    response = _execute_write(
+        lambda: sheet.append_row(row, value_input_option="RAW"),
+        operation="non_idempotent_write",
+        reconcile=reconcile,
+    )
 
     tx = _current_transaction.get()
     row_index = _extract_updated_row_index(response)
@@ -969,7 +1069,13 @@ def append_row_raw(sheet_name: str, row: list):
         when inside `sheets_transaction`.
     """
     sheet = get_sheet(sheet_name)
-    response = _execute_write(lambda: sheet.append_row(row, value_input_option="RAW"))
+    logical_id = str(row[0] if row else "").strip()
+    reconcile = (lambda: _reconcile_single_append(sheet, logical_id)) if logical_id else None
+    response = _execute_write(
+        lambda: sheet.append_row(row, value_input_option="RAW"),
+        operation="non_idempotent_write",
+        reconcile=reconcile,
+    )
 
     tx = _current_transaction.get()
     row_index = _extract_updated_row_index(response)
@@ -1003,7 +1109,14 @@ def append_rows(sheet_name: str, rows: list[list]):
         return None
 
     sheet = get_sheet(sheet_name)
-    response = _execute_write(lambda: sheet.append_rows(rows, value_input_option="RAW"))
+    logical_ids = [str(row[0] if row else "").strip() for row in rows]
+    can_reconcile = all(logical_ids) and len(set(logical_ids)) == len(logical_ids)
+    reconcile = (lambda: _reconcile_batch_append(sheet, logical_ids)) if can_reconcile else None
+    response = _execute_write(
+        lambda: sheet.append_rows(rows, value_input_option="RAW"),
+        operation="non_idempotent_write",
+        reconcile=reconcile,
+    )
 
     tx = _current_transaction.get()
     row_range = _extract_updated_row_range(response)

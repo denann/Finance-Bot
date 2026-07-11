@@ -1341,6 +1341,16 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    explicit_date = detect_date_result(user_text)
+    if explicit_date.status == "invalid":
+        await update.message.reply_text(
+            "❌ Tanggal yang ditulis tidak valid.\n\n"
+            f"Input tanggal: `{md_code_text(explicit_date.explicit_input)}`\n"
+            "Gunakan tanggal kalender yang benar, misalnya `29/02/2024` atau `2026-07-10`.",
+            parse_mode="Markdown",
+        )
+        return
+
     receipt_selection_handled = await handle_pending_receipt_selection(update, context, user_text)
     if receipt_selection_handled:
         return

@@ -7,6 +7,8 @@
 from app.bot.handler_parts.common_imports import *
 # Import app.services.resolver_service so this module can use its helpers.
 from app.services.resolver_service import create_account
+from app.services.operation_errors import PartialMutationError
+from app.services.recurring_service import get_recurring_rule_by_id
 # Import app.bot.handler_parts.state_utils so this module can use its helpers.
 from app.bot.handler_parts.state_utils import BULK_EDIT_CATEGORY_DECISION_KEY, EDIT_CATEGORY_CHOICE_KEY, clear_pending_flow_state
 
@@ -922,6 +924,24 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Await show callback loading before continuing.
     await show_callback_loading(query)
 
+    if data.startswith("cancel:a_"):
+        from app.bot.pending_actions import PendingActionError, cancel_pending_action
+
+        action_id = data.split(":", 1)[1]
+        try:
+            cancel_pending_action(
+                context.user_data,
+                action_id,
+                owner_user_id=int(getattr(query.from_user, "id", 0) or 0),
+                message_id=getattr(query.message, "message_id", None),
+            )
+        except PendingActionError:
+            await safe_edit_message(query, "❌ Preview ini sudah kedaluwarsa, sudah dipakai, atau bukan milik Anda. Tidak ada data yang diubah.")
+            return
+
+        await safe_edit_message(query, "🚫 Input dibatalkan. Tidak ada data yang disimpan.")
+        return
+
     # Category wizard type selection: expense/income button, no sheet write yet.
     if data.startswith("category_type:"):
         handled = await handle_category_type_callback(query, context, data)
@@ -1675,11 +1695,67 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("recurring_paid:"):
-        rule_id = data.split(":", 1)[1].strip()
-        # Build result for the response flow.
-        result = mark_recurring_rule_paid(rule_id)
+        parts = data.split(":")
+        if len(parts) != 3:
+            await safe_edit_message(
+                query,
+                "❌ Tombol recurring lama sudah kedaluwarsa. Gunakan reminder terbaru agar transaksi tidak tercatat ganda.",
+            )
+            return
+        rule_id = parts[1].strip()
+        try:
+            scheduled_run_date = datetime.strptime(parts[2].strip(), "%Y-%m-%d").date()
+        except ValueError:
+            await safe_edit_message(query, "❌ Tanggal occurrence recurring tidak valid. Tidak ada data yang diubah.")
+            return
+        rule = get_recurring_rule_by_id(rule_id)
+        if not rule:
+            await safe_edit_message(query, "❌ Recurring rule tidak ditemukan. Tidak ada data yang diubah.")
+            return
+        if str(rule.get("next_run_date") or "").strip() != scheduled_run_date.strftime("%Y-%m-%d"):
+            await safe_edit_message(query, "❌ Reminder recurring ini sudah kedaluwarsa. Gunakan reminder terbaru.")
+            return
 
-        if result.get("success"):
+        from app.bot.pending_actions import create_pending_action
+
+        action = create_pending_action(
+            context.user_data,
+            owner_user_id=int(getattr(query.from_user, "id", 0) or 0),
+            flow_type="command_mutation",
+            payload={
+                "operation": "recurring_occurrence_paid",
+                "arguments": {
+                    "rule_id": rule_id,
+                    "scheduled_run_date": scheduled_run_date.strftime("%Y-%m-%d"),
+                },
+            },
+            preview_message_id=getattr(query.message, "message_id", None),
+        )
+        action_id = action["action_id"]
+        await safe_edit_message(
+            query,
+            "🧾 *Preview final — recurring sudah dibayar*\n\n"
+            f"📌 {md_safe(rule.get('name') or '-')}\n"
+            f"📅 Occurrence: {scheduled_run_date.strftime('%Y-%m-%d')}\n"
+            f"💰 Nominal: *{format_rupiah(float(rule.get('amount') or 0))}*\n"
+            f"💳 Rekening: *{md_safe(rule.get('account') or '-')}*\n\n"
+            "Tekan Simpan untuk membuat satu transaksi, atau Batal.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Simpan", callback_data=f"confirm:{action_id}"),
+                InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{action_id}"),
+            ]]),
+        )
+        return
+        # Build result for the response flow.
+        result = {"success": False, "message": "unreachable legacy rendering block"}
+
+        if result.get("success") and result.get("duplicate"):
+            await safe_edit_message(
+                query,
+                "✅ Occurrence recurring ini sudah pernah diproses. Tidak ada transaksi atau saldo yang ditambahkan lagi.",
+            )
+        elif result.get("success"):
             rule = result.get("rule") or {}
             # Build balance lines for the response flow.
             balance_lines = []
@@ -2559,6 +2635,50 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("confirm:"):
         confirm_target = data.split(":")[1] if ":" in data else ""
+        confirmed_action = None
+        if confirm_target.startswith("a_"):
+            from app.bot.pending_actions import PendingActionError, consume_pending_action, restore_pending_state
+
+            try:
+                confirmed_action = consume_pending_action(
+                    context.user_data,
+                    confirm_target,
+                    owner_user_id=int(getattr(query.from_user, "id", 0) or 0),
+                    message_id=getattr(query.message, "message_id", None),
+                )
+            except PendingActionError:
+                await safe_edit_message(
+                    query,
+                    "❌ Preview ini sudah kedaluwarsa, sudah dipakai, atau tidak cocok dengan pesan ini. Buat preview baru; tidak ada data yang diubah.",
+                )
+                return
+
+            action_payload = confirmed_action.get("payload") or {}
+            if confirmed_action.get("flow_type") == "command_mutation":
+                from app.bot.command_mutations import execute_command_mutation
+
+                mutation_result = execute_command_mutation(
+                    str(action_payload.get("operation") or ""),
+                    dict(action_payload.get("arguments") or {}),
+                )
+                await safe_edit_message(
+                    query,
+                    mutation_result.get("display_text") or "❌ Mutasi gagal tanpa detail.",
+                    parse_mode="Markdown",
+                )
+                return
+
+            restore_pending_state(context.user_data, action_payload.get("user_state") or {})
+            confirm_target = str(action_payload.get("legacy_target") or "").strip()
+            if not confirm_target:
+                await safe_edit_message(query, "❌ Jenis preview tidak valid. Tidak ada data yang diubah.")
+                return
+        else:
+            await safe_edit_message(
+                query,
+                "❌ Tombol konfirmasi lama sudah tidak berlaku. Buat preview baru agar perubahan terikat ke data yang ditampilkan.",
+            )
+            return
         # Category add/edit writes to Sheets only after this preview confirmation.
         if confirm_target in {"category_add", "category_edit"}:
             handled = await handle_category_confirm_callback(query, context, confirm_target)
@@ -3059,7 +3179,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     debt_ids = [a.get("debt_id") for a in allocations if a.get("debt_id")]
                     if debt_ids and target_txn_id:
                         tipe_hutang = "utang" if target_type == "payable" else "piutang"
-                        update_transaction_debt_relation(target_txn_id, debt_ids, tipe_hutang=tipe_hutang)
+                        relation_result = update_transaction_debt_relation(target_txn_id, debt_ids, tipe_hutang=tipe_hutang)
+                        if not relation_result.get("success"):
+                            raise PartialMutationError(
+                                relation_result.get("message", "Gagal menghubungkan transaksi dengan debt payment."),
+                                operation="edit_transaction_payment_relation",
+                            )
 
                     lines.append(f"\n💸 *Pembayaran {label.title()} tercatat:*")
                     lines.append(f"• Orang: {md_safe(person)}")
@@ -3086,10 +3211,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     lines.append(f"• Sisa {label}: *{format_rupiah(payment_result.get('remaining', 0))}*")
                 # Use the fallback path when no earlier branch matched.
                 else:
-                    lines.append(
-                        "\n⚠️ *Transaksi sudah diedit, tapi pembayaran debt gagal dicatat.*\n"
-                        f"Detail: {md_safe(payment_result.get('message') or '-')}\n"
-                        "Cek sheet debts/debt_payments secara manual."
+                    raise PartialMutationError(
+                        payment_result.get("message", "Pembayaran debt gagal setelah transaksi diedit."),
+                        operation="edit_transaction_payment_conversion",
                     )
 
             if split_parsed and target_txn_id:
@@ -3106,15 +3230,28 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             if item.get("debt_id")
                         ]
                         if debt_ids:
-                            update_transaction_debt_relation(target_txn_id, debt_ids, tipe_hutang="piutang")
+                            relation_result = update_transaction_debt_relation(target_txn_id, debt_ids, tipe_hutang="piutang")
+                            if not relation_result.get("success"):
+                                raise PartialMutationError(
+                                    relation_result.get("message", "Gagal menghubungkan split bill dengan transaksi."),
+                                    operation="edit_transaction_split_relation",
+                                )
                         lines.append("\n🤝 *Piutang split bill baru dibuat:*")
                         # Append the current value to lines.
                         lines.extend(format_split_debt_result_lines(split_debt))
                     # Fall back when split debt.
                     elif split_debt:
-                        lines.append(f"\n⚠️ Gagal membuat piutang split bill baru: {md_safe(split_debt.get('message') or '-')}")
+                        raise PartialMutationError(
+                            split_debt.get("message", "Gagal membuat piutang split bill baru."),
+                            operation="edit_transaction_split_debt",
+                        )
                 elif split_status == "paid":
-                    clear_transaction_debt_relation(target_txn_id)
+                    clear_result = clear_transaction_debt_relation(target_txn_id)
+                    if not clear_result.get("success"):
+                        raise PartialMutationError(
+                            clear_result.get("message", "Gagal menghapus relasi split bill."),
+                            operation="edit_transaction_clear_split_relation",
+                        )
                     lines.append("\n🤝 Split bill ditandai sudah dibayar, jadi tidak ada piutang aktif baru.")
 
             # Send the Telegram response before continuing.
@@ -3713,7 +3850,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         lines.append(f"💳 {md_safe(balance_account)}: saldo {format_rupiah(transaction_result['new_balance'])}")
                 # Use the fallback path when no earlier branch matched.
                 else:
-                    lines.append(f"\n⚠️ Debt tersimpan, tapi cashflow gagal: {md_safe(transaction_result.get('message'))}")
+                    raise PartialMutationError(
+                        f"Cashflow debt gagal setelah debt ditulis: {transaction_result.get('message')}",
+                        operation="debt_with_cashflow",
+                    )
             # Fall back when not debt uses cashflow(debt parsed).
             elif not debt_uses_cashflow(debt_parsed):
                 lines.append("\n📝 Cashflow tidak dicatat karena ini mode talangan/ditalangin tanpa uang masuk/keluar dari rekening Anda.")
@@ -4146,16 +4286,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 tipe_hutang="piutang",
                             )
                             if not relation_result.get("success"):
-                                failed_items.append({
-                                    "raw": item.get("raw", "split bill"),
-                                    "message": f"Piutang dibuat, tapi relasi transaksi gagal: {relation_result.get('message')}",
-                                })
+                                raise PartialMutationError(
+                                    f"Relasi split bill gagal: {relation_result.get('message')}",
+                                    operation="mixed_split_relation",
+                                )
                     # Fall back when debt result.
                     elif debt_result:
-                        failed_items.append({
-                            "raw": item.get("raw", "split bill"),
-                            "message": debt_result.get("message", "Gagal membuat piutang split bill."),
-                        })
+                        raise PartialMutationError(
+                            debt_result.get("message", "Gagal membuat piutang split bill."),
+                            operation="mixed_split_debt",
+                        )
 
                 if split_debt_lines:
                     result_lines.append("\n🤝 *Piutang split bill dibuat:*")
@@ -4253,16 +4393,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             tipe_hutang="piutang",
                         )
                         if not relation_result.get("success"):
-                            result.setdefault("failed_items", []).append({
-                                "raw": item.get("raw", "split bill"),
-                                "message": f"Piutang dibuat, tapi relasi transaksi gagal: {relation_result.get('message')}",
-                            })
+                            raise PartialMutationError(
+                                f"Relasi split bill gagal: {relation_result.get('message')}",
+                                operation="batch_split_relation",
+                            )
                 # Fall back when debt result.
                 elif debt_result:
-                    result.setdefault("failed_items", []).append({
-                        "raw": item.get("raw", "split bill"),
-                        "message": debt_result.get("message", "Gagal membuat piutang split bill."),
-                    })
+                    raise PartialMutationError(
+                        debt_result.get("message", "Gagal membuat piutang split bill."),
+                        operation="batch_split_debt",
+                    )
 
             if split_debt_lines:
                 lines.append("\n🤝 *Piutang split bill dibuat:*")
@@ -4369,13 +4509,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         tipe_hutang="piutang",
                     )
                     if not relation_result.get("success"):
-                        split_info += (
-                            "\n⚠️ Piutang dibuat, tapi relasi transaksi gagal: "
-                            f"{relation_result.get('message')}"
+                        raise PartialMutationError(
+                            f"Relasi split bill gagal: {relation_result.get('message')}",
+                            operation="single_split_relation",
                         )
             # Fall back when split debt.
             elif split_debt:
-                split_info = f"\n\n⚠️ Gagal membuat piutang split bill: {split_debt.get('message')}"
+                raise PartialMutationError(
+                    split_debt.get("message", "Gagal membuat piutang split bill."),
+                    operation="single_split_debt",
+                )
 
             budget_info = ""
             if parsed.get("type") == "expense" and parsed.get("category"):

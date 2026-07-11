@@ -3,6 +3,8 @@
 
 # Import re for this module's local operations.
 import re
+# Import dataclass for structured date detection results.
+from dataclasses import dataclass
 # Import datetime so this module can use its helpers.
 from datetime import datetime, timedelta
 # Import app.nlp.normalizer so this module can use its helpers.
@@ -1529,7 +1531,75 @@ def detect_relative_date(text: str) -> str | None:
     return None
 
 # Helper for detect date.
-def detect_date(text: str) -> str:
+@dataclass(frozen=True)
+class DateDetectionResult:
+    """Describe whether a date was absent, valid, or explicitly invalid.
+
+    ``value`` keeps the existing ``YYYY-MM-DD`` representation for valid and
+    absent inputs. Explicitly invalid input has ``value=None`` so callers can
+    require clarification instead of silently using today.
+    """
+
+    status: str
+    value: str | None
+    explicit_input: str | None = None
+
+
+def detect_date_result(text: str) -> DateDetectionResult:
+    """Detect a business date while preserving explicit invalid input.
+
+    Args:
+        text: Natural-language transaction input.
+
+    Returns:
+        ``DateDetectionResult`` with status ``absent``, ``valid``, or
+        ``invalid``. Only ``absent`` defaults to the current date.
+
+    Side effects:
+        None. The function reads the local clock only for absent, relative, and
+        day-only dates, matching the existing business-date behavior.
+    """
+
+    clean = str(text or "").strip().lower()
+    today = datetime.now().date()
+
+    explicit_pattern = (
+        r"20\d{2}[-/]\d{1,2}[-/]\d{1,2}"
+        r"|"
+        r"\d{1,2}[-/]\d{1,2}[-/]20\d{2}"
+    )
+    explicit_match = re.search(
+        rf"\b(?:tanggal|tgl|date|pada\s+tanggal)?\s*({explicit_pattern})\b",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    if explicit_match:
+        raw_value = explicit_match.group(1)
+        parsed_value = parse_explicit_date(raw_value)
+        if parsed_value:
+            return DateDetectionResult("valid", parsed_value, raw_value)
+        return DateDetectionResult("invalid", None, raw_value)
+
+    day_only_match = re.search(
+        r"\b(?:tanggal|tgl|tg|date|pada\s+tanggal)\s+(\d{1,2})\b",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    if day_only_match:
+        raw_value = day_only_match.group(1)
+        parsed_value = parse_day_only_date(raw_value)
+        if parsed_value:
+            return DateDetectionResult("valid", parsed_value, raw_value)
+        return DateDetectionResult("invalid", None, raw_value)
+
+    relative_date = detect_relative_date(clean)
+    if relative_date:
+        return DateDetectionResult("valid", relative_date)
+
+    return DateDetectionResult("absent", today.strftime("%Y-%m-%d"))
+
+
+def detect_date(text: str) -> str | None:
     """Coordinate the detect date logic in the NLP/parser layer.
 
     Args:
@@ -1544,64 +1614,7 @@ def detect_date(text: str) -> str:
     Flow constraints:
         Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
     """
-    clean = str(text or "").strip().lower()
-    today = datetime.now().date()
-
-    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
-    prefixed_date_match = re.search(
-        r"\b(?:tanggal|tgl|date|pada tanggal)\s+"
-        r"("
-        r"20\d{2}[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])"
-        r"|"
-        r"(?:0?[1-9]|[12]\d|3[01])[-/](?:0?[1-9]|1[0-2])[-/]20\d{2}"
-        r")\b",
-        clean,
-        flags=re.IGNORECASE,
-    )
-
-    if prefixed_date_match:
-        # Extract parsed date for validation.
-        parsed_date = parse_explicit_date(prefixed_date_match.group(1))
-        if parsed_date:
-            return parsed_date
-
-    # Date parsing note: keep explicit and relative Indonesian date formats predictable.
-    day_only_match = re.search(
-        r"\b(?:tanggal|tgl|tg|date|pada tanggal)\s+"
-        r"(0?[1-9]|[12]\d|3[01])\b",
-        clean,
-        flags=re.IGNORECASE,
-    )
-
-    if day_only_match:
-        # Extract parsed date for validation.
-        parsed_date = parse_day_only_date(day_only_match.group(1))
-        if parsed_date:
-            return parsed_date
-
-    # Bare explicit date: 2026-06-01 / 01-06-2026
-    bare_date_match = re.search(
-        r"\b("
-        r"20\d{2}[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])"
-        r"|"
-        r"(?:0?[1-9]|[12]\d|3[01])[-/](?:0?[1-9]|1[0-2])[-/]20\d{2}"
-        r")\b",
-        clean,
-        flags=re.IGNORECASE,
-    )
-
-    if bare_date_match:
-        # Extract parsed date for validation.
-        parsed_date = parse_explicit_date(bare_date_match.group(1))
-        if parsed_date:
-            return parsed_date
-
-    # Extract relative date for validation.
-    relative_date = detect_relative_date(clean)
-    if relative_date:
-        return relative_date
-
-    return today.strftime("%Y-%m-%d")
+    return detect_date_result(text).value
 
 # Helper for extract description.
 def extract_description(text: str, amount=None) -> str:
@@ -1895,8 +1908,9 @@ def parse_with_regex(text: str) -> dict | None:
         else:
             return None
 
-    # Extract date for validation.
-    date = detect_date(text)
+    # Preserve explicit invalid dates so parse safety can request clarification.
+    date_result = detect_date_result(text)
+    date = date_result.value
     description = extract_description(text, amount)
 
     if transaction_type == "transfer":
@@ -1913,6 +1927,8 @@ def parse_with_regex(text: str) -> dict | None:
             "catatan": extract_note(text),
             "tipe_pengeluaran": "",
             "date": date,
+            "date_status": date_result.status,
+            "explicit_date_input": date_result.explicit_input,
             "parsed_by": "regex",
         }
 
@@ -1935,5 +1951,7 @@ def parse_with_regex(text: str) -> dict | None:
         "catatan": catatan,
         "tipe_pengeluaran": tipe_pengeluaran,
         "date": date,
+        "date_status": date_result.status,
+        "explicit_date_input": date_result.explicit_input,
         "parsed_by": "regex",
     }

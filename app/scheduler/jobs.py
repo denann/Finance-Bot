@@ -73,11 +73,12 @@ async def job_recurring_run():
             lines.append(f"• {name} — {amount} dari {account}")
 
             rule_id = str(rule.get("id") or "").strip()
+            scheduled_run_date = str(rule.get("next_run_date") or "").strip()
             if rule_id:
                 keyboard.append([
                     InlineKeyboardButton(
                         f"✅ Sudah bayar: {name[:24]}",
-                        callback_data=f"recurring_paid:{rule_id}",
+                        callback_data=f"recurring_paid:{rule_id}:{scheduled_run_date}",
                     )
                 ])
 

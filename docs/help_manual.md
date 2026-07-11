@@ -4,6 +4,8 @@ Panduan ini menjelaskan cara memakai Finance Bot Telegram untuk mencatat transak
 
 Semua flow yang menyimpan atau mengubah data memakai preview sebelum simpan. Tombol `Batal` dipakai untuk membatalkan wizard atau preview aktif.
 
+Preview final berlaku satu kali dan kedaluwarsa otomatis. Tombol dari preview lama, tombol yang sudah dipakai, atau preview yang hilang setelah bot restart akan ditolak tanpa menulis data. Command `/pending_paid`, `/pending_cancel`, `/recurring_run`, `/recurring_edit`, `/recurring_off`, `/asset_update`, `/asset_off`, dan `/networth_snapshot` tetap memakai syntax yang sama, tetapi sekarang memerlukan satu konfirmasi `Simpan` tambahan.
+
 ## Daftar Isi
 
 - [Quickstart](#quickstart)

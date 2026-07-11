@@ -141,17 +141,24 @@ async def reply_message_safely(message, text: str, parse_mode: str | None = None
     """
     text = str(text or "").strip() or " "
     chunks = split_long_message(text)
+    sent_message = None
     # Iterate through each idx, chunk.
     for idx, chunk in enumerate(chunks):
         markup = reply_markup if idx == len(chunks) - 1 else None
         # Run this operation in a guarded block so failures can be handled.
         try:
             # Send the Telegram response before continuing.
-            await message.reply_text(chunk, parse_mode=parse_mode, reply_markup=markup, **kwargs)
+            sent_message = await message.reply_text(chunk, parse_mode=parse_mode, reply_markup=markup, **kwargs)
         # Handle an expected failure from the guarded operation above.
         except BadRequest:
             # Send the Telegram response before continuing.
-            await message.reply_text(chunk, reply_markup=markup, **kwargs)
+            sent_message = await message.reply_text(chunk, reply_markup=markup, **kwargs)
+
+    if reply_markup is not None and sent_message is not None:
+        from app.bot.pending_actions import bind_current_action_message
+
+        bind_current_action_message(reply_markup, getattr(sent_message, "message_id", None))
+    return sent_message
 
 
 async def reply_update_safely(update: Update, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
@@ -175,7 +182,8 @@ async def reply_update_safely(update: Update, text: str, parse_mode: str | None 
     """
     if update.message:
         # Send the Telegram response before continuing.
-        await reply_message_safely(update.message, text, parse_mode=parse_mode, reply_markup=reply_markup, **kwargs)
+        return await reply_message_safely(update.message, text, parse_mode=parse_mode, reply_markup=reply_markup, **kwargs)
+    return None
 
 
 async def safe_edit_message(query, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
@@ -307,7 +315,20 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     error = getattr(context, "error", None)
     err_text = str(error or "Unknown error")
 
-    if isinstance(error, BadRequest) and ("Message_too_long" in err_text or "Message is too long" in err_text):
+    from app.services.operation_errors import AtomicOperationError
+
+    if isinstance(error, AtomicOperationError):
+        if error.reconciliation_required:
+            user_msg = (
+                "❌ *Hasil penyimpanan belum dapat dipastikan.*\n\n"
+                "Jangan ulangi aksi ini sebelum data diperiksa atau direkonsiliasi."
+            )
+        else:
+            user_msg = (
+                "❌ *Penyimpanan gagal dan operasi dibatalkan.*\n\n"
+                "Tidak ada hasil sukses yang dinyatakan. Buat preview baru sebelum mencoba lagi."
+            )
+    elif isinstance(error, BadRequest) and ("Message_too_long" in err_text or "Message is too long" in err_text):
         user_msg = (
             "❌ *Terjadi error saat menampilkan pesan.*\n\n"
             "Output terlalu panjang untuk Telegram. Saya sudah menahan crash-nya, "

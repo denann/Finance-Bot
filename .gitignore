@@ -7,7 +7,6 @@ service_account.json
 service_account_test.json
 .venv/
 venv/
-tests/
 token.json
 
 Personal Use/

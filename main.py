@@ -6,16 +6,20 @@ from __future__ import annotations
 
 # Import asyncio for this module's local operations.
 import asyncio
+# Import os for environment-gated diagnostic policy.
+import os
 # Import contextlib so this module can use its helpers.
 from contextlib import asynccontextmanager
 
 # Import uvicorn for this module's local operations.
 import uvicorn
 # Import fastapi so this module can use its helpers.
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 
 # Import app.api.webhook so this module can use its helpers.
 from app.api.webhook import router as webhook_router, set_telegram_app
+# Import the default-off, read-only diagnostic policy.
+from app.api.diagnostics import DiagnosticAccess, evaluate_diagnostic_access, run_read_only_sheets_diagnostic
 # Import app.bot.application so this module can use its helpers.
 from app.bot.application import build_telegram_app
 # Import app.config so this module can use its helpers.
@@ -299,49 +303,37 @@ async def health_check():
     return {"status": "ok", "mode": BOT_MODE}
 
 
-@app.get("/test-sheets")
+@app.get("/test-sheets", include_in_schema=False)
 # Handle the asynchronous test sheets workflow.
-async def test_sheets():
-    """Coordinate the test sheets logic in the application layer.
+async def test_sheets(x_admin_secret: str | None = Header(default=None)):
+    """Run an optional authenticated and read-only Sheets connectivity check.
 
     Args:
-        None.
+        x_admin_secret: Admin secret supplied through the ``X-Admin-Secret``
+            request header when the diagnostic is explicitly enabled.
 
     Returns:
-        Awaitable result from the async flow. Most Telegram handlers return `None` after sending a response.
+        Generic connectivity status. Spreadsheet title, worksheet names,
+        schema actions, credentials, and raw errors are never returned.
 
     Side effects:
-        None beyond the side effects already performed by the existing implementation.
+        Opens the configured spreadsheet only after authorization. It never
+        calls schema creation or repair.
 
     Flow constraints:
-        Keep behavior compatible with existing callers and avoid unrelated schema or flow changes.
+        The route is disabled by default and must fail before touching Sheets
+        for anonymous, invalid, or production-default requests.
     """
-    # Run this operation in a guarded block so failures can be handled.
+    access = evaluate_diagnostic_access(os.environ, x_admin_secret)
+    if access is DiagnosticAccess.DISABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+    if access is DiagnosticAccess.FORBIDDEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     try:
-        # Prepare schema results for the next step.
-        schema_results = ensure_spreadsheet_schema()
-        # Prepare spreadsheet for the next step.
-        spreadsheet = get_spreadsheet()
-        # Prepare sheets for the next step.
-        sheets = [ws.title for ws in spreadsheet.worksheets()]
-
-        # Return { to the caller.
-        return {
-            "status": "connected",
-            "spreadsheet_title": spreadsheet.title,
-            "sheets_found": sheets,
-            "schema_check": schema_results,
-        # Close the structure that was opened above.
-        }
-
-    # Handle an expected failure from the guarded operation above.
+        return run_read_only_sheets_diagnostic(get_spreadsheet)
     except Exception as exc:
-        # Return { to the caller.
-        return {
-            "status": "error",
-            "message": str(exc),
-        # Close the structure that was opened above.
-        }
+        raise HTTPException(status_code=503, detail="Sheets diagnostic unavailable") from exc
 
 
 # ── Polling mode ──────────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
+from app.services.pending_expense_service import find_pending_by_ref
 # Import pathlib so /manual can resolve docs relative to the project root.
 from pathlib import Path
 # Import modular help content so /help stays short and topic-based.
@@ -2441,46 +2442,33 @@ async def pending_paid_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     # Extract account for validation.
     account = context.args[1].strip() if len(context.args) >= 2 else None
 
-    # Build result for the response flow.
-    result = mark_pending_paid(pending_id, account=account)
-    if not result.get("success"):
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            f"❌ {md_safe(result.get('message', 'Gagal menandai pending sebagai paid.'))}",
-            parse_mode="Markdown",
-        )
+    _, item = find_pending_by_ref(pending_id)
+    if not item:
+        await update.message.reply_text("❌ Pending expense tidak ditemukan.")
+        return
+    status = str(item.get("status") or "pending").strip().lower()
+    if status in {"paid", "cancelled", "canceled", "done", "selesai"}:
+        await update.message.reply_text(f"❌ Pending expense sudah berstatus {md_safe(status)}.", parse_mode="Markdown")
+        return
+    account_display = account or item.get("account") or ""
+    if not account_display:
+        await update.message.reply_text("❌ Rekening belum diketahui. Gunakan: `/pending_paid pending_id BRI`", parse_mode="Markdown")
         return
 
-    item = result.get("item") or {}
-    pending_id_display = result.get("pending_id") or item.get("id") or pending_id
-    account_display = result.get("account") or account or item.get("account") or "-"
-    amount = float(result.get("amount") or item.get("amount") or 0)
-    new_balance = result.get("new_balance")
-    new_balances = result.get("new_balances") or {}
-
-    # Handle new balance is None and account display.
-    if new_balance is None and account_display:
-        # Iterate through each saved account, saved balance.
-        for saved_account, saved_balance in new_balances.items():
-            if str(saved_account).strip().lower() == str(account_display).strip().lower():
-                new_balance = saved_balance
-                # Extract account display for validation.
-                account_display = saved_account
-                # Leave the loop after the target condition has been reached.
-                break
-
-    lines = [
-        "✅ *Pending expense sudah dicatat sebagai transaksi aktual.*",
-        "",
-        f"🔖 Pending ID: `{md_code_text(pending_id_display)}`",
-        f"🔖 Transaction ID: `{md_code_text(result.get('transaction_id'))}`",
-        f"💳 Rekening: *{md_safe(account_display)}*",
-        f"💰 Nominal keluar: *-{format_rupiah(amount)}*",
-    ]
-    if new_balance is not None:
-        lines.append(f"🏦 Saldo {md_safe(account_display)} sekarang: *{format_rupiah(new_balance)}*")
-
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await send_financial_mutation_preview(
+        update,
+        context,
+        operation="pending_paid",
+        payload={"pending_id": pending_id, "account": account_display},
+        preview_text=(
+            "🧾 *Preview final — tandai pending paid*\n\n"
+            f"🔖 Pending ID: `{md_code_text(pending_id)}`\n"
+            f"📝 Deskripsi: {md_safe(item.get('description') or item.get('subject') or '-')}\n"
+            f"💳 Rekening: *{md_safe(account_display)}*\n"
+            f"💰 Transaksi keluar: *-{format_rupiah(float(item.get('amount') or 0))}*\n\n"
+            "Simpan perubahan ini atau batal?"
+        ),
+    )
 
 
 async def pending_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2516,22 +2504,28 @@ async def pending_cancel_handler(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # Build result for the response flow.
-    result = cancel_pending_expense(context.args[0])
-    if not result.get("success"):
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            f"❌ {md_safe(result.get('message', 'Gagal membatalkan pending expense.'))}",
-            parse_mode="Markdown",
-        )
+    pending_id = context.args[0].strip()
+    _, item = find_pending_by_ref(pending_id)
+    if not item:
+        await update.message.reply_text("❌ Pending expense tidak ditemukan.")
+        return
+    status = str(item.get("status") or "pending").strip().lower()
+    if status in {"paid", "cancelled", "canceled", "done", "selesai"}:
+        await update.message.reply_text(f"❌ Pending expense sudah berstatus {md_safe(status)}.", parse_mode="Markdown")
         return
 
-    item = result.get("item") or {}
-    # Send the Telegram response before continuing.
-    await update.message.reply_text(
-        "✅ Pending expense dibatalkan.\n"
-        f"🔖 `{md_code_text(item.get('id'))}`",
-        parse_mode="Markdown",
+    await send_financial_mutation_preview(
+        update,
+        context,
+        operation="pending_cancel",
+        payload={"pending_id": pending_id},
+        preview_text=(
+            "🧾 *Preview final — batalkan pending expense*\n\n"
+            f"🔖 Pending ID: `{md_code_text(pending_id)}`\n"
+            f"📝 Deskripsi: {md_safe(item.get('description') or item.get('subject') or '-')}\n"
+            f"💰 Nominal: *{format_rupiah(float(item.get('amount') or 0))}*\n\n"
+            "Simpan perubahan pembatalan ini atau batal?"
+        ),
     )
 
 

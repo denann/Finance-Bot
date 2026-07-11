@@ -1821,22 +1821,27 @@ async def asset_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         # Read args from the original text so fallback routing keeps quoted values intact.
         command_args = _command_args_from_update(update, context, "asset_update")
         asset_id, updates = parse_pipe_update_args(command_args, "asset_update")
-        # Build result for the response flow.
-        result = update_asset(asset_id, updates)
-
-        if not result.get("success"):
-            # Send the Telegram response before continuing.
-            await update.message.reply_text(
-                f"❌ {result.get('message')}\n\n"
-                "Cek ID dengan command:\n"
-                "`/assets`",
-                parse_mode="Markdown",
-            )
+        asset = next((item for item in get_assets(active_only=False) if str(item.get("id") or "").strip() == asset_id), None)
+        if not asset:
+            await update.message.reply_text("❌ Asset tidak ditemukan.\n\nCek ID dengan command:\n`/assets`", parse_mode="Markdown")
             return
-
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            build_update_result_text(result, "Aset")
+        lines = [
+            "🧾 *Preview final — update aset*",
+            "",
+            f"🔖 Asset ID: `{md_code_text(asset_id)}`",
+            f"📌 Nama: {md_safe(asset.get('name') or '-')}",
+            "",
+            "*Perubahan:*",
+        ]
+        for field, value in updates.items():
+            lines.append(f"• {md_safe(field)}: `{md_code_text(asset.get(field, '-'))}` → `{md_code_text(value)}`")
+        lines.append("\nSimpan perubahan ini atau batal?")
+        await send_financial_mutation_preview(
+            update,
+            context,
+            operation="asset_update",
+            payload={"asset_id": asset_id, "updates": updates},
+            preview_text="\n".join(lines),
         )
 
     # Handle an expected failure from the guarded operation above.
@@ -1944,17 +1949,23 @@ async def asset_off_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     asset_id = context.args[0].strip()
-    success = deactivate_asset(asset_id)
-
-    # Validate missing success before continuing.
-    if not success:
+    asset = next((item for item in get_assets(active_only=False) if str(item.get("id") or "").strip() == asset_id), None)
+    if not asset:
         await update.message.reply_text("❌ Asset tidak ditemukan.")
         return
 
-    # Send the Telegram response before continuing.
-    await update.message.reply_text(
-        f"✅ Asset berhasil dinonaktifkan:\n`{asset_id}`",
-        parse_mode="Markdown",
+    await send_financial_mutation_preview(
+        update,
+        context,
+        operation="asset_off",
+        payload={"asset_id": asset_id},
+        preview_text=(
+            "🧾 *Preview final — nonaktifkan aset*\n\n"
+            f"🔖 Asset ID: `{md_code_text(asset_id)}`\n"
+            f"📌 Nama: {md_safe(asset.get('name') or '-')}\n"
+            f"💰 Nilai saat ini: *{format_rupiah(float(asset.get('current_value') or 0))}*\n\n"
+            "Simpan perubahan ini atau batal?"
+        ),
     )
 
 
@@ -2030,16 +2041,25 @@ async def networth_snapshot_handler(update: Update, context: ContextTypes.DEFAUL
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        snapshot = create_net_worth_snapshot()
-
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            "✅ *Snapshot Net Worth berhasil disimpan!*\n\n"
-            f"📅 Tanggal: `{snapshot.get('snapshot_date')}`\n"
-            f"💰 Rekening: *{format_rupiah(float(snapshot.get('total_accounts', 0) or 0))}*\n"
-            f"📦 Aset: *{format_rupiah(float(snapshot.get('total_assets', 0) or 0))}*\n"
-            f"🏁 Net Worth: *{format_rupiah(float(snapshot.get('net_worth', 0) or 0))}*",
-            parse_mode="Markdown",
+        summary = calculate_net_worth()
+        snapshot_summary = {
+            "total_accounts": float(summary.get("total_accounts") or 0),
+            "total_assets": float(summary.get("total_assets") or 0),
+            "total_liabilities": float(summary.get("total_liabilities") or 0),
+            "net_worth": float(summary.get("net_worth") or 0),
+        }
+        await send_financial_mutation_preview(
+            update,
+            context,
+            operation="networth_snapshot",
+            payload={"summary": snapshot_summary},
+            preview_text=(
+                "🧾 *Preview final — simpan snapshot Net Worth*\n\n"
+                f"💰 Rekening: *{format_rupiah(snapshot_summary['total_accounts'])}*\n"
+                f"📦 Aset: *{format_rupiah(snapshot_summary['total_assets'])}*\n"
+                f"🏁 Net Worth: *{format_rupiah(snapshot_summary['net_worth'])}*\n\n"
+                "Snapshot akan menyimpan tepat nilai di atas. Simpan atau batal?"
+            ),
         )
 
     # Handle an expected failure from the guarded operation above.

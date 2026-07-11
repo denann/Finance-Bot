@@ -7,6 +7,8 @@ import calendar
 import re
 # Import uuid for this module's local operations.
 import uuid
+# Import threading for single-process recurring occurrence claims.
+import threading
 # Import datetime so this module can use its helpers.
 from datetime import datetime, date
 
@@ -48,6 +50,41 @@ RECURRING_LOG_COLUMNS = [
     "message",
     "created_at",
 ]
+
+_recurring_run_lock = threading.RLock()
+_recurring_inflight: set[str] = set()
+
+
+def recurring_occurrence_key(rule_id: str, scheduled_run_date: str) -> str:
+    """Return the logical identity for one recurring occurrence."""
+
+    return f"{str(rule_id or '').strip()}:{str(scheduled_run_date or '').strip()}"
+
+
+def find_processed_recurring_run(rule_id: str, scheduled_run_date: str) -> dict | None:
+    """Find a successful run in the existing recurring log worksheet.
+
+    Args:
+        rule_id: Recurring rule identifier.
+        scheduled_run_date: Due date that identifies the occurrence.
+
+    Returns:
+        Existing successful log record, otherwise ``None``.
+
+    Side effects:
+        Performs a read-only lookup on the existing ``recurring_logs`` sheet.
+        No worksheet or column is created.
+    """
+
+    success_statuses = {"paid", "success", "processed", "committed"}
+    for record in get_all_records(SHEET_RECURRING_LOGS):
+        if str(record.get("rule_id") or "").strip() != str(rule_id or "").strip():
+            continue
+        if str(record.get("run_date") or "").strip() != str(scheduled_run_date or "").strip():
+            continue
+        if str(record.get("status") or "").strip().lower() in success_statuses:
+            return record
+    return None
 
 
 # Helper for now str.
@@ -947,12 +984,19 @@ def build_transaction_from_recurring_rule(rule: dict, run_date: str | None = Non
 
 
 # Helper for mark recurring rule paid.
-def mark_recurring_rule_paid(rule_id: str, run_date: date | None = None) -> dict:
+def mark_recurring_rule_paid(
+    rule_id: str,
+    run_date: date | None = None,
+    *,
+    scheduled_run_date: date | None = None,
+) -> dict:
     """Coordinate the mark recurring rule paid logic in the service layer.
 
     Args:
         rule_id: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-        run_date: Input value supplied by the caller; accepted shape follows the function signature and local validation.
+        run_date: Actual transaction date. Defaults to today.
+        scheduled_run_date: Due date embedded in the reminder or selected by
+            the scheduler. It forms the logical idempotency key with rule ID.
 
     Returns:
         `dict` value as defined by the function signature.
@@ -984,64 +1028,123 @@ def mark_recurring_rule_paid(rule_id: str, run_date: date | None = None) -> dict
         }
 
     target = run_date or datetime.now().date()
-    run_date_str = target.strftime("%Y-%m-%d")
-
-    # Run this operation in a guarded block so failures can be handled.
-    try:
-        parsed_txn = build_transaction_from_recurring_rule(rule, run_date=run_date_str)
-        transaction_result = save_transaction(
-            parsed_txn,
-            raw_input=parsed_txn.get("raw_input") or f"recurring:{rule_id}",
-        )
-
-        if not transaction_result.get("success"):
-            raise RuntimeError(transaction_result.get("message", "Gagal membuat transaksi recurring."))
-
-        transaction_id = transaction_result.get("transaction_id")
-        # Extract next run date for validation.
-        next_run_date = calculate_next_run_after_execution(rule, target)
-
-        update_recurring_rule_cells(
-            rule_id,
-            {
-                "next_run_date": next_run_date,
-                "updated_at": now_str(),
-            },
-        )
-
-        log_recurring_run(
-            rule_id=rule_id,
-            transaction_id=transaction_id,
-            # Extract run date for validation.
-            run_date=run_date_str,
-            status="paid",
-            message=f"Recurring marked paid. Next run: {next_run_date}",
-        )
-
-        return {
-            "success": True,
-            "message": "ok",
-            "transaction_id": transaction_id,
-            "next_run_date": next_run_date,
-            "rule": rule,
-            "new_balance": transaction_result.get("new_balance"),
-            "new_balance_account": transaction_result.get("new_balance_account"),
-            "new_balances": transaction_result.get("new_balances", {}),
-            "amount": parsed_txn.get("amount"),
-            "account": parsed_txn.get("account"),
-            "to_account": parsed_txn.get("to_account"),
-            "type": parsed_txn.get("type"),
-        }
-    # Handle an expected failure from the guarded operation above.
-    except Exception as e:
-        rollback_current_sheets_transaction()
+    current_due = parse_date(rule.get("next_run_date"))
+    requested_due = scheduled_run_date or current_due
+    if not current_due or not requested_due:
         return {
             "success": False,
-            "message": str(e),
+            "message": "Tanggal jatuh tempo recurring tidak valid.",
             "transaction_id": None,
             "next_run_date": rule.get("next_run_date"),
             "rule": rule,
         }
+    if requested_due != current_due:
+        return {
+            "success": False,
+            "message": "Reminder recurring ini sudah kedaluwarsa karena occurrence aktif sudah berubah.",
+            "transaction_id": None,
+            "next_run_date": rule.get("next_run_date"),
+            "rule": rule,
+            "stale": True,
+        }
+    if current_due > target:
+        return {
+            "success": False,
+            "message": "Recurring rule belum jatuh tempo.",
+            "transaction_id": None,
+            "next_run_date": rule.get("next_run_date"),
+            "rule": rule,
+            "not_due": True,
+        }
+
+    scheduled_date_str = current_due.strftime("%Y-%m-%d")
+    transaction_date_str = target.strftime("%Y-%m-%d")
+    occurrence_key = recurring_occurrence_key(rule_id, scheduled_date_str)
+
+    with _recurring_run_lock:
+        existing = find_processed_recurring_run(rule_id, scheduled_date_str)
+        if existing or occurrence_key in _recurring_inflight:
+            return {
+                "success": True,
+                "message": "Occurrence recurring ini sudah diproses.",
+                "transaction_id": (existing or {}).get("transaction_id"),
+                "next_run_date": rule.get("next_run_date"),
+                "rule": rule,
+                "duplicate": True,
+                "logical_run_id": occurrence_key,
+            }
+        _recurring_inflight.add(occurrence_key)
+
+        try:
+            with sheets_transaction(label=f"recurring:{occurrence_key}"):
+                existing = find_processed_recurring_run(rule_id, scheduled_date_str)
+                if existing:
+                    return {
+                        "success": True,
+                        "message": "Occurrence recurring ini sudah diproses.",
+                        "transaction_id": existing.get("transaction_id"),
+                        "next_run_date": rule.get("next_run_date"),
+                        "rule": rule,
+                        "duplicate": True,
+                        "logical_run_id": occurrence_key,
+                    }
+
+                parsed_txn = build_transaction_from_recurring_rule(rule, run_date=transaction_date_str)
+                transaction_result = save_transaction(
+                    parsed_txn,
+                    raw_input=parsed_txn.get("raw_input") or f"recurring:{rule_id}",
+                )
+                if not transaction_result.get("success"):
+                    raise RuntimeError(transaction_result.get("message", "Gagal membuat transaksi recurring."))
+
+                transaction_id = transaction_result.get("transaction_id")
+                next_run_date = calculate_next_run_after_execution(rule, target)
+                if not update_recurring_rule_cells(
+                    rule_id,
+                    {"next_run_date": next_run_date, "updated_at": now_str()},
+                ):
+                    raise RuntimeError("Gagal memperbarui next_run_date recurring.")
+
+                log = log_recurring_run(
+                    rule_id=rule_id,
+                    transaction_id=transaction_id,
+                    run_date=scheduled_date_str,
+                    status="paid",
+                    message=f"Recurring marked paid. Next run: {next_run_date}",
+                )
+                if not log:
+                    raise RuntimeError("Gagal mencatat recurring log.")
+
+                return {
+                    "success": True,
+                    "message": "ok",
+                    "transaction_id": transaction_id,
+                    "next_run_date": next_run_date,
+                    "rule": rule,
+                    "new_balance": transaction_result.get("new_balance"),
+                    "new_balance_account": transaction_result.get("new_balance_account"),
+                    "new_balances": transaction_result.get("new_balances", {}),
+                    "amount": parsed_txn.get("amount"),
+                    "account": parsed_txn.get("account"),
+                    "to_account": parsed_txn.get("to_account"),
+                    "type": parsed_txn.get("type"),
+                    "duplicate": False,
+                    "logical_run_id": occurrence_key,
+                }
+        except Exception as e:
+            rollback_ok = rollback_current_sheets_transaction()
+            return {
+                "success": False,
+                "message": str(e),
+                "transaction_id": None,
+                "next_run_date": rule.get("next_run_date"),
+                "rule": rule,
+                "commit_status": "rolled_back" if rollback_ok else "reconciliation_required",
+                "reconciliation_required": not rollback_ok,
+                "logical_run_id": occurrence_key,
+            }
+        finally:
+            _recurring_inflight.discard(occurrence_key)
 
 
 # Helper for process due recurring rules.
@@ -1078,36 +1181,17 @@ def process_due_recurring_rules(target_date: date | None = None) -> dict:
 
         # Run this operation in a guarded block so failures can be handled.
         try:
-            parsed_txn = build_transaction_from_recurring_rule(rule, run_date=run_date)
-            transaction_result = save_transaction(
-                parsed_txn,
-                raw_input=parsed_txn.get("raw_input") or f"recurring:{rule_id}",
-            )
-
-            if not transaction_result.get("success"):
-                raise RuntimeError(transaction_result.get("message", "Gagal membuat transaksi recurring."))
-
-            transaction_id = transaction_result.get("transaction_id")
-
-            # Extract next run date for validation.
-            next_run_date = calculate_next_run_after_execution(rule, target)
-
-            update_recurring_rule_cells(
+            scheduled = parse_date(rule.get("next_run_date"))
+            result = mark_recurring_rule_paid(
                 rule_id,
-                {
-                    "next_run_date": next_run_date,
-                    "updated_at": now_str(),
-                },
+                run_date=target,
+                scheduled_run_date=scheduled,
             )
+            if not result.get("success"):
+                raise RuntimeError(result.get("message", "Gagal membuat transaksi recurring."))
 
-            log_recurring_run(
-                rule_id=rule_id,
-                transaction_id=transaction_id,
-                # Extract run date for validation.
-                run_date=run_date,
-                status="success",
-                message=f"Recurring transaction created. Next run: {next_run_date}",
-            )
+            transaction_id = result.get("transaction_id")
+            next_run_date = result.get("next_run_date")
 
             results["success"].append(
                 {

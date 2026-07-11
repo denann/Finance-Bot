@@ -14,5 +14,6 @@ Read the docs in this order:
 8. `08-setup-debug-deployment.md`
 9. `09-function-reference.md`
 10. `10-glossary.md`
+11. `testing.md`
 
 The documentation is written for an international audience, while the current product behavior is still optimized for Indonesian finance input.

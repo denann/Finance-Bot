@@ -949,6 +949,19 @@ def save_edit_cancel_keyboard(scope: str) -> InlineKeyboardMarkup:
         change balances by itself.
     """
     confirm_target = _confirm_target_for_edit_scope(scope)
+    from app.bot.pending_actions import create_bound_preview_action
+
+    action = create_bound_preview_action(scope, confirm_target)
+    if action:
+        action_id = action["action_id"]
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Simpan", callback_data=f"confirm:{action_id}"),
+                InlineKeyboardButton("✏️ Edit dulu", callback_data=f"editflow:edit:{scope}"),
+            ],
+            [InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{action_id}")],
+        ])
+
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ Simpan", callback_data=f"confirm:{confirm_target}"),

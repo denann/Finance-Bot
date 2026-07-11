@@ -51,3 +51,30 @@ If the user edits a single split bill preview after choosing paid/unpaid status,
 ## Debt
 
 Debt-related flows also go through preview so the user can confirm before the bot changes balances or debt records.
+
+## Immutable confirmation actions
+
+Every final financial preview now creates a short-lived in-memory `action_id`. The action stores an immutable copy of the payload shown to the user, the owner user ID, the preview message ID when available, creation/expiry time, and terminal status.
+
+```text
+validated input
+→ immutable action snapshot
+→ final preview with confirm:<action_id> / cancel:<action_id>
+→ owner, message, TTL, and one-shot validation
+→ write
+```
+
+Creating preview B does not change preview A. Pressing A either writes A exactly once or fails safely when it is stale, expired, already used, canceled, owned by another user, or lost after restart. Legacy generic transaction callbacks are rejected and never fall back to the latest mutable pending state.
+
+The action store intentionally remains in memory for the approved single-process deployment. A restart invalidates outstanding previews; it does not restore or execute them.
+
+## Commands that add a confirmation step
+
+The command names and syntax are unchanged, but these mutations now show one final `Simpan / Batal` preview before writing:
+
+- `/pending_paid` and `/pending_cancel`;
+- `/recurring_run`, `/recurring_edit`, and `/recurring_off`;
+- the recurring reminder `Sudah bayar` button;
+- `/asset_update`, `/asset_off`, and `/networth_snapshot`.
+
+The snapshot preview freezes the totals that will be written. Canceling or using an expired/duplicate action does not call a financial write service.

@@ -84,10 +84,14 @@ def confirm_keyboard(txn_id: str) -> InlineKeyboardMarkup:
     Returns:
         Inline keyboard with Simpan and Batal buttons.
     """
+    from app.bot.pending_actions import create_bound_preview_action
+
+    action = create_bound_preview_action(str(txn_id), str(txn_id))
+    callback_target = action["action_id"] if action else str(txn_id)
     keyboard = [
         [
-            InlineKeyboardButton("✅ Simpan", callback_data=f"confirm:{txn_id}"),
-            InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{txn_id}"),
+            InlineKeyboardButton("✅ Simpan", callback_data=f"confirm:{callback_target}"),
+            InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{callback_target}"),
         ]
     ]
     return InlineKeyboardMarkup(keyboard)

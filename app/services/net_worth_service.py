@@ -1134,11 +1134,12 @@ def calculate_net_worth() -> dict:
     }
 
 # Helper for create net worth snapshot.
-def create_net_worth_snapshot() -> dict:
+def create_net_worth_snapshot(summary: dict | None = None) -> dict:
     """Coordinate the create net worth snapshot logic in the service layer.
 
     Args:
-        None.
+        summary: Optional immutable totals shown in the confirmed preview. When
+            omitted, totals are calculated using the existing behavior.
 
     Returns:
         `dict` value as defined by the function signature.
@@ -1150,7 +1151,7 @@ def create_net_worth_snapshot() -> dict:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
     # Build summary for the response flow.
-    summary = calculate_net_worth()
+    summary = dict(summary or calculate_net_worth())
 
     snapshot = {
         "id": generate_id("nws"),

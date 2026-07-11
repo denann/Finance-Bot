@@ -12,20 +12,90 @@ import uuid
 from app.nlp.normalizer import extract_amount_from_text
 # Import app.services.resolver_service so this module can use its helpers.
 from app.services.resolver_service import ensure_category_for_transaction
+from app.services.operation_errors import PartialMutationError, require_success_after_write
 
 # Import app.config so this module can use its helpers.
 from app.config import SHEET_ACCOUNTS, SHEET_TRANSACTIONS
 # Import app.sheets.client so this module can use its helpers.
 from app.sheets.client import (
+    SheetsAtomicWriteError,
     append_row,
     append_rows,
     delete_rows,
     find_row_index,
     get_all_records,
     get_sheet,
+    get_current_sheets_transaction,
+    rollback_current_sheets_transaction,
     update_cell,
     update_row,
 )
+
+
+def _post_write_failure_result(error: Exception, *, batch: bool = False, candidate_ids: list[str] | None = None) -> dict:
+    """Return an explicit failed/unknown outcome after a mutation started.
+
+    Args:
+        error: Failure raised after at least one logical write was attempted.
+        batch: Whether to build the batch-shaped result contract.
+        candidate_ids: Pre-generated transaction IDs used only for manual
+            reconciliation. They are never reported as successfully saved.
+
+    Returns:
+        Backward-compatible result dictionary with ``success=False`` plus
+        explicit commit, rollback, and reconciliation states.
+
+    Side effects:
+        If an active in-memory Sheets transaction has not already rolled back,
+        it is rolled back before the result is returned. No new write occurs.
+    """
+
+    rollback_ok: bool | None = None
+    if isinstance(error, SheetsAtomicWriteError):
+        rollback_ok = error.rollback_ok
+
+    transaction = get_current_sheets_transaction()
+    if transaction is not None and not transaction.rolled_back:
+        rollback_ok = rollback_current_sheets_transaction()
+
+    if rollback_ok is True:
+        commit_status = "commit_failed"
+        rollback_status = "rollback_succeeded"
+        reconciliation_required = False
+        message = "Penyimpanan gagal dan seluruh perubahan operasi ini sudah dibatalkan. Tidak ada transaksi yang dinyatakan tersimpan."
+    elif rollback_ok is False:
+        commit_status = "commit_outcome_unknown"
+        rollback_status = "rollback_failed"
+        reconciliation_required = True
+        message = "Hasil penyimpanan tidak dapat dipastikan karena rollback gagal. Jangan ulangi sebelum data direkonsiliasi."
+    else:
+        commit_status = "commit_outcome_unknown"
+        rollback_status = "rollback_not_verified"
+        reconciliation_required = True
+        message = "Hasil penyimpanan tidak dapat dipastikan. Jangan ulangi sebelum data direkonsiliasi."
+
+    common = {
+        "success": False,
+        "message": message,
+        "commit_status": commit_status,
+        "rollback_status": rollback_status,
+        "reconciliation_required": reconciliation_required,
+        "candidate_transaction_ids": list(candidate_ids or []),
+    }
+    if batch:
+        return {
+            **common,
+            "success_count": 0,
+            "failed_items": [{"raw": "commit transaksi", "message": str(error)}],
+            "saved_ids": [],
+            "new_balances": {},
+        }
+    return {
+        **common,
+        "transaction_id": None,
+        "new_balance": None,
+        "new_balances": {},
+    }
 
 EXPORT_TRANSACTION_COLUMNS = [
     "id",
@@ -834,30 +904,20 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
                     break
 
         if balance_result.get("failed_accounts"):
-            return {
-                "success": True,
-                "transaction_id": txn_id,
-                "message": (
-                    "⚠️ Transaksi tersimpan, tapi saldo rekening berikut gagal diupdate: "
-                    + ", ".join(balance_result["failed_accounts"])
-                ),
-                "new_balance": new_balance,
-                "new_balance_account": new_balance_account,
-                "new_balances": balance_result.get("new_balances", {}),
-            }
+            return _post_write_failure_result(
+                RuntimeError("Saldo gagal diupdate: " + ", ".join(balance_result["failed_accounts"])),
+                candidate_ids=[txn_id],
+            )
 
     # Handle an expected failure from the guarded operation above.
     except Exception as e:
-        return {
-            "success": True,
-            "transaction_id": txn_id,
-            "message": f"⚠️ Transaksi tersimpan, tapi saldo gagal diupdate: {str(e)}",
-            "new_balance": None,
-            "new_balances": {},
-        }
+        return _post_write_failure_result(e, candidate_ids=[txn_id])
 
     return {
         "success": True,
+        "commit_status": "commit_succeeded",
+        "rollback_status": "rollback_not_needed",
+        "reconciliation_required": False,
         "transaction_id": txn_id,
         "message": "ok",
         "new_balance": new_balance,
@@ -980,16 +1040,17 @@ def save_transactions_batch(parsed_items: list[dict]) -> dict:
         balance_result = apply_account_deltas(deltas)
 
         if balance_result.get("failed_accounts"):
-            failed_items.append({
-                "raw": "update saldo",
-                "message": (
-                    "Saldo gagal diupdate untuk rekening: "
-                    + ", ".join(balance_result["failed_accounts"])
-                ),
-            })
+            return _post_write_failure_result(
+                RuntimeError("Saldo gagal diupdate: " + ", ".join(balance_result["failed_accounts"])),
+                batch=True,
+                candidate_ids=saved_ids,
+            )
 
         return {
             "success": True,
+            "commit_status": "commit_succeeded",
+            "rollback_status": "rollback_not_needed",
+            "reconciliation_required": False,
             "message": "ok",
             "success_count": len(valid_items),
             "failed_items": failed_items,
@@ -1000,19 +1061,7 @@ def save_transactions_batch(parsed_items: list[dict]) -> dict:
 
     # Handle an expected failure from the guarded operation above.
     except Exception as e:
-        return {
-            "success": True,
-            "message": f"⚠️ Transaksi tersimpan, tapi saldo gagal diupdate: {str(e)}",
-            "success_count": len(valid_items),
-            "failed_items": failed_items + [
-                {
-                    "raw": "update saldo",
-                    "message": str(e),
-                }
-            ],
-            "saved_ids": saved_ids,
-            "new_balances": {},
-        }
+        return _post_write_failure_result(e, batch=True, candidate_ids=saved_ids)
 
 
 # ── Query functions ───────────────────────────────────────────────────────────
@@ -1701,28 +1750,15 @@ def delete_transactions_by_refs(
         # Build balance result for the response flow.
         balance_result = apply_account_deltas(reverse_deltas)
         if balance_result.get("failed_accounts"):
-            return {
-                "success": False,
-                "message": "Rekening tidak ditemukan: " + ", ".join(balance_result["failed_accounts"]),
-                "deleted_count": 0,
-                "deleted_ids": [],
-                "blocked": blocked,
-                "missing_ids": missing_ids,
-                "missing_rows": missing_rows,
-                "new_balances": {},
-            }
+            raise PartialMutationError(
+                "Rekening gagal direverse: " + ", ".join(balance_result["failed_accounts"]),
+                operation="delete_transaction_reverse_balance",
+            )
     # Handle an expected failure from the guarded operation above.
     except Exception as e:
-        return {
-            "success": False,
-            "message": f"Gagal reverse saldo: {str(e)}",
-            "deleted_count": 0,
-            "deleted_ids": [],
-            "blocked": blocked,
-            "missing_ids": missing_ids,
-            "missing_rows": missing_rows,
-            "new_balances": {},
-        }
+        if isinstance(e, PartialMutationError):
+            raise
+        raise PartialMutationError(f"Gagal reverse saldo: {e}", operation="delete_transaction_reverse_balance") from e
 
     linked_debt_voided_ids = []
     reversed_payment_debt_items = []
@@ -1740,17 +1776,11 @@ def delete_transactions_by_refs(
             if category in {"Pembayaran Piutang", "Bayar Utang"}:
                 # Build reverse result for the response flow.
                 reverse_result = reverse_debt_payment_transaction(txn)
-                if not reverse_result.get("success"):
-                    return {
-                        "success": False,
-                        "message": reverse_result.get("message", "Gagal membalik pembayaran debt terkait transaksi."),
-                        "deleted_count": 0,
-                        "deleted_ids": [],
-                        "blocked": blocked,
-                        "missing_ids": missing_ids,
-                        "missing_rows": missing_rows,
-                        "new_balances": balance_result.get("new_balances", {}),
-                    }
+                require_success_after_write(
+                    reverse_result,
+                    operation="delete_transaction_reverse_debt_payment",
+                    default_message="Gagal membalik pembayaran debt terkait transaksi.",
+                )
                 reversed_payment_debt_items.extend(reverse_result.get("reversed", []))
                 # Skip the rest of this loop iteration after handling this case.
                 continue
@@ -1762,30 +1792,17 @@ def delete_transactions_by_refs(
 
             # Build linked result for the response flow.
             linked_result = void_debts_for_transaction(txn_id, linked_ids)
-            if not linked_result.get("success"):
-                return {
-                    "success": False,
-                    "message": linked_result.get("message", "Gagal void debt terkait transaksi."),
-                    "deleted_count": 0,
-                    "deleted_ids": [],
-                    "blocked": blocked,
-                    "missing_ids": missing_ids,
-                    "missing_rows": missing_rows,
-                    "new_balances": balance_result.get("new_balances", {}),
-                }
+            require_success_after_write(
+                linked_result,
+                operation="delete_transaction_void_linked_debt",
+                default_message="Gagal void debt terkait transaksi.",
+            )
             linked_debt_voided_ids.extend(linked_result.get("voided_ids", []))
     # Handle an expected failure from the guarded operation above.
     except Exception as e:
-        return {
-            "success": False,
-            "message": f"Gagal sync debt terkait transaksi: {str(e)}",
-            "deleted_count": 0,
-            "deleted_ids": [],
-            "blocked": blocked,
-            "missing_ids": missing_ids,
-            "missing_rows": missing_rows,
-            "new_balances": balance_result.get("new_balances", {}),
-        }
+        if isinstance(e, PartialMutationError):
+            raise
+        raise PartialMutationError(f"Gagal sync debt terkait transaksi: {e}", operation="delete_transaction_sync_debt") from e
 
     # Run this operation in a guarded block so failures can be handled.
     try:
@@ -1800,19 +1817,10 @@ def delete_transactions_by_refs(
 
     # Handle an expected failure from the guarded operation above.
     except Exception as e:
-        return {
-            "success": False,
-            "message": (
-                "Saldo sudah sempat direverse, tapi row transaksi gagal dihapus. "
-                f"Cek manual di sheet. Error: {str(e)}"
-            ),
-            "deleted_count": 0,
-            "deleted_ids": [],
-            "blocked": blocked,
-            "missing_ids": missing_ids,
-            "missing_rows": missing_rows,
-            "new_balances": balance_result.get("new_balances", {}),
-        }
+        raise PartialMutationError(
+            f"Row transaksi gagal dihapus setelah saldo/debt berubah: {e}",
+            operation="delete_transaction_rows",
+        ) from e
 
     deleted_ids = [
         str(txn.get("id", ""))
@@ -2359,8 +2367,11 @@ def edit_debt_payment_transaction_amount(preview: dict) -> dict:
         from app.services.debt_service import reverse_debt_payment_transaction, add_payment_by_person
         # Build reverse result for the response flow.
         reverse_result = reverse_debt_payment_transaction(old_txn)
-        if not reverse_result.get("success"):
-            return {"success": False, "message": reverse_result.get("message", "Gagal reverse payment lama.")}
+        require_success_after_write(
+            reverse_result,
+            operation="edit_debt_payment_reverse_old",
+            default_message="Gagal reverse payment lama.",
+        )
 
         payment_result = add_payment_by_person(
             person,
@@ -2369,21 +2380,31 @@ def edit_debt_payment_transaction_amount(preview: dict) -> dict:
             target_debt_type=target_debt_type,
             overpayment_policy="opposite_debt",
         )
-        if not payment_result.get("success"):
-            return {"success": False, "message": payment_result.get("message", "Gagal alokasi payment baru.")}
+        require_success_after_write(
+            payment_result,
+            operation="edit_debt_payment_allocate_new",
+            default_message="Gagal alokasi payment baru.",
+        )
     # Handle an expected failure from the guarded operation above.
     except Exception as e:
-        return {"success": False, "message": f"Gagal sync debt payment: {str(e)}"}
+        if isinstance(e, PartialMutationError):
+            raise
+        raise PartialMutationError(f"Gagal sync debt payment: {e}", operation="edit_debt_payment_sync") from e
 
     # Run this operation in a guarded block so failures can be handled.
     try:
         # Build balance result for the response flow.
         balance_result = apply_account_deltas(net_deltas)
         if balance_result.get("failed_accounts"):
-            return {"success": False, "message": "Rekening tidak ditemukan: " + ", ".join(balance_result["failed_accounts"])}
+            raise PartialMutationError(
+                "Rekening gagal diupdate: " + ", ".join(balance_result["failed_accounts"]),
+                operation="edit_debt_payment_balance",
+            )
     # Handle an expected failure from the guarded operation above.
     except Exception as e:
-        return {"success": False, "message": f"Gagal update saldo: {str(e)}"}
+        if isinstance(e, PartialMutationError):
+            raise
+        raise PartialMutationError(f"Gagal update saldo: {e}", operation="edit_debt_payment_balance") from e
 
     # Run this operation in a guarded block so failures can be handled.
     try:
@@ -2403,11 +2424,10 @@ def edit_debt_payment_transaction_amount(preview: dict) -> dict:
         sort_transactions_sheet_by_date(desc=True)
     # Handle an expected failure from the guarded operation above.
     except Exception as e:
-        return {
-            "success": False,
-            "message": "Saldo/debt sudah sempat berubah, tapi update row transaksi gagal. Cek manual. Error: " + str(e),
-            "new_balances": balance_result.get("new_balances", {}),
-        }
+        raise PartialMutationError(
+            f"Update row transaksi gagal setelah saldo/debt berubah: {e}",
+            operation="edit_debt_payment_row",
+        ) from e
 
     return {
         "success": True,
@@ -2463,16 +2483,15 @@ def edit_transaction_by_ref(
         # Build balance result for the response flow.
         balance_result = apply_account_deltas(net_deltas)
         if balance_result.get("failed_accounts"):
-            return {
-                "success": False,
-                "message": "Rekening tidak ditemukan: " + ", ".join(balance_result["failed_accounts"]),
-            }
+            raise PartialMutationError(
+                "Rekening gagal diupdate: " + ", ".join(balance_result["failed_accounts"]),
+                operation="edit_transaction_balance",
+            )
     # Handle an expected failure from the guarded operation above.
     except Exception as e:
-        return {
-            "success": False,
-            "message": f"Gagal update saldo: {str(e)}",
-        }
+        if isinstance(e, PartialMutationError):
+            raise
+        raise PartialMutationError(f"Gagal update saldo: {e}", operation="edit_transaction_balance") from e
 
     # Run this operation in a guarded block so failures can be handled.
     try:
@@ -2496,14 +2515,10 @@ def edit_transaction_by_ref(
 
     # Handle an expected failure from the guarded operation above.
     except Exception as e:
-        return {
-            "success": False,
-            "message": (
-                "Saldo sudah sempat berubah, tapi update row transaksi gagal. "
-                f"Cek manual di sheet. Error: {str(e)}"
-            ),
-            "new_balances": balance_result.get("new_balances", {}),
-        }
+        raise PartialMutationError(
+            f"Update row transaksi gagal setelah saldo berubah: {e}",
+            operation="edit_transaction_row",
+        ) from e
 
     debt_sync_result = {"success": True, "updated": [], "overpaid": []}
     # Handle transaction has debt relation(old txn) or transaction has deb.
@@ -2517,16 +2532,20 @@ def edit_transaction_by_ref(
             debt_sync_result = sync_debt_charges_from_transaction_edit(old_txn, new_txn)
         # Handle an expected failure from the guarded operation above.
         except Exception as e:
-            debt_sync_result = {
-                "success": False,
-                "message": str(e),
-                "updated": [],
-                "overpaid": [],
-            }
+            raise PartialMutationError(
+                f"Sync debt gagal setelah transaksi diedit: {e}",
+                operation="edit_transaction_sync_debt",
+            ) from e
+
+        require_success_after_write(
+            debt_sync_result,
+            operation="edit_transaction_sync_debt",
+            default_message="Sync debt gagal setelah transaksi diedit.",
+        )
 
     return {
         "success": True,
-        "message": "ok" if debt_sync_result.get("success") else "Transaksi diedit, tapi sync debt perlu dicek: " + str(debt_sync_result.get("message") or "-"),
+        "message": "ok",
         "old_txn": old_txn,
         "new_txn": new_txn,
         "net_deltas": net_deltas,

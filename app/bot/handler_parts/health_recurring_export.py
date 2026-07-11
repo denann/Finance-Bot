@@ -9,6 +9,7 @@ from app.bot.handler_parts.common_imports import *
 import shlex
 # Import app.services.resolver_service so this module can use its helpers.
 from app.services.resolver_service import resolve_account_name
+from app.services.recurring_service import get_due_recurring_rules, get_recurring_rule_by_id
 
 # Helper for health status icon.
 def health_status_icon(ok: bool) -> str:
@@ -1215,21 +1216,27 @@ async def recurring_edit_handler(update: Update, context: ContextTypes.DEFAULT_T
         command_args = _recurring_command_args_from_update(update, context, "recurring_edit")
         rule_id, updates = parse_recurring_edit_args(command_args)
 
-        # Build result for the response flow.
-        result = edit_recurring_rule(rule_id, updates)
-
-        if not result.get("success"):
-            # Send the Telegram response before continuing.
-            await update.message.reply_text(
-                f"❌ {result.get('message')}\n\n"
-                "Cek ID dengan command:\n"
-                "/recurring"
-            )
+        rule = get_recurring_rule_by_id(rule_id)
+        if not rule:
+            await update.message.reply_text("❌ Recurring rule tidak ditemukan.\n\nCek ID dengan command:\n/recurring")
             return
-
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            build_recurring_edit_result_text(result)
+        lines = [
+            "🧾 *Preview final — edit recurring*",
+            "",
+            f"🔖 Rule ID: `{md_code_text(rule_id)}`",
+            f"📌 Nama: {md_safe(rule.get('name') or '-')}",
+            "",
+            "*Perubahan:*",
+        ]
+        for field, value in updates.items():
+            lines.append(f"• {md_safe(field)}: `{md_code_text(rule.get(field, '-'))}` → `{md_code_text(value)}`")
+        lines.append("\nSimpan perubahan ini atau batal?")
+        await send_financial_mutation_preview(
+            update,
+            context,
+            operation="recurring_edit",
+            payload={"rule_id": rule_id, "updates": updates},
+            preview_text="\n".join(lines),
         )
 
     # Handle an expected failure from the guarded operation above.
@@ -1472,13 +1479,24 @@ async def recurring_run_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Build result for the response flow.
-        result = process_due_recurring_rules()
-
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            build_recurring_run_text(result),
-            parse_mode="Markdown",
+        due_rules = get_due_recurring_rules()
+        lines = [
+            "🧾 *Preview final — jalankan recurring jatuh tempo*",
+            "",
+            f"📌 Rule jatuh tempo: *{len(due_rules)}*",
+        ]
+        for rule in due_rules:
+            lines.append(
+                f"• {md_safe(rule.get('name') or '-')} — {format_rupiah(float(rule.get('amount') or 0))} "
+                f"(`{md_code_text(rule.get('id'))}`)"
+            )
+        lines.append("\nTidak ada transaksi dibuat sebelum Anda menekan Simpan.")
+        await send_financial_mutation_preview(
+            update,
+            context,
+            operation="recurring_run",
+            payload={},
+            preview_text="\n".join(lines),
         )
 
     # Handle an expected failure from the guarded operation above.
@@ -1523,21 +1541,23 @@ async def recurring_off_handler(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     rule_id = context.args[0].strip()
-
-    success = disable_recurring_rule(rule_id)
-
-    # Validate missing success before continuing.
-    if not success:
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            "❌ Recurring rule tidak ditemukan."
-        )
+    rule = get_recurring_rule_by_id(rule_id)
+    if not rule:
+        await update.message.reply_text("❌ Recurring rule tidak ditemukan.")
         return
 
-    # Send the Telegram response before continuing.
-    await update.message.reply_text(
-        f"✅ Recurring rule berhasil dinonaktifkan:\n`{rule_id}`",
-        parse_mode="Markdown",
+    await send_financial_mutation_preview(
+        update,
+        context,
+        operation="recurring_off",
+        payload={"rule_id": rule_id},
+        preview_text=(
+            "🧾 *Preview final — nonaktifkan recurring*\n\n"
+            f"🔖 Rule ID: `{md_code_text(rule_id)}`\n"
+            f"📌 Nama: {md_safe(rule.get('name') or '-')}\n"
+            f"💰 Nominal: *{format_rupiah(float(rule.get('amount') or 0))}*\n\n"
+            "Simpan perubahan ini atau batal?"
+        ),
     )
 
 # Helper for write transactions to csv.

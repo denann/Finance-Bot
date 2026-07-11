@@ -84,6 +84,8 @@ from app.bot.handlers import (
 from app.config import ALLOWED_USER_ID, TELEGRAM_BOT_TOKEN
 # Import app.bot.handler_parts.state_utils so this module can use its helpers.
 from app.bot.handler_parts.state_utils import clear_pending_flow_state_before_command
+# Import immutable action request binding for preview keyboard creation.
+from app.bot.pending_actions import pending_action_request_context
 # Import app.sheets.client so this module can use its helpers.
 from app.sheets.client import sheets_transaction
 
@@ -127,9 +129,15 @@ def atomic_bot_handler(callback):
             command_token = message_text.split()[0].lstrip("/").split("@", 1)[0].lower()
             clear_pending_flow_state_before_command(context, command_token)
 
-        # Use a managed resource so it is closed after this operation.
-        with sheets_transaction(label=callback_name):
-            return await callback(update, context, *args, **kwargs)
+        effective_user = getattr(update, "effective_user", None)
+        owner_user_id = int(getattr(effective_user, "id", 0) or 0)
+        callback_query = getattr(update, "callback_query", None)
+        callback_message = getattr(callback_query, "message", None)
+        preview_message_id = getattr(callback_message, "message_id", None)
+
+        with pending_action_request_context(context.user_data, owner_user_id, preview_message_id):
+            with sheets_transaction(label=callback_name):
+                return await callback(update, context, *args, **kwargs)
 
     return wrapped
 

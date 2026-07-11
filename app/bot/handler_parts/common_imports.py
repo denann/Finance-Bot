@@ -62,7 +62,7 @@ from app.bot.keyboards import (
     SKIP_ACCOUNT_NAME,
 )
 # Import app.nlp.regex_parser so this module can use its helpers.
-from app.nlp.regex_parser import parse_with_regex, parse_debt_input, detect_date, strip_date_phrases
+from app.nlp.regex_parser import parse_with_regex, parse_debt_input, detect_date, detect_date_result, strip_date_phrases
 # Import app.nlp.normalizer so this module can use its helpers.
 from app.nlp.normalizer import extract_amount_from_text
 # Import app.nlp.gemini_parser so this module can use its helpers.
@@ -1045,17 +1045,24 @@ async def reply_message_safely(message, text: str, parse_mode: str | None = None
     """
     text = str(text or "").strip() or " "
     chunks = split_long_message(text)
+    sent_message = None
     # Iterate through each idx, chunk.
     for idx, chunk in enumerate(chunks):
         markup = reply_markup if idx == len(chunks) - 1 else None
         # Run this operation in a guarded block so failures can be handled.
         try:
             # Send the Telegram response before continuing.
-            await message.reply_text(chunk, parse_mode=parse_mode, reply_markup=markup, **kwargs)
+            sent_message = await message.reply_text(chunk, parse_mode=parse_mode, reply_markup=markup, **kwargs)
         # Handle an expected failure from the guarded operation above.
         except BadRequest:
             # Send the Telegram response before continuing.
-            await message.reply_text(chunk, reply_markup=markup, **kwargs)
+            sent_message = await message.reply_text(chunk, reply_markup=markup, **kwargs)
+
+    if reply_markup is not None and sent_message is not None:
+        from app.bot.pending_actions import bind_current_action_message
+
+        bind_current_action_message(reply_markup, getattr(sent_message, "message_id", None))
+    return sent_message
 
 
 async def reply_update_safely(update: Update, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
@@ -1079,7 +1086,8 @@ async def reply_update_safely(update: Update, text: str, parse_mode: str | None 
     """
     if update.message:
         # Send the Telegram response before continuing.
-        await reply_message_safely(update.message, text, parse_mode=parse_mode, reply_markup=reply_markup, **kwargs)
+        return await reply_message_safely(update.message, text, parse_mode=parse_mode, reply_markup=reply_markup, **kwargs)
+    return None
 
 
 async def edit_message_safely(message, text: str, parse_mode: str | None = None, reply_markup=None, **kwargs):
@@ -1557,3 +1565,49 @@ async def reply_tracked_inline_keyboard(
     else:
         context.user_data.pop(state_key, None)
     return sent
+
+
+async def send_financial_mutation_preview(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    operation: str,
+    payload: dict,
+    preview_text: str,
+):
+    """Create and send a one-shot final preview for a command mutation.
+
+    Args:
+        update: Telegram command update used to send the preview.
+        context: Per-user PTB state that holds the in-memory action store.
+        operation: Stable command mutation name routed on confirmation.
+        payload: Exact validated arguments represented by ``preview_text``.
+        preview_text: Markdown-safe final preview shown before any write.
+
+    Returns:
+        The created immutable action record.
+
+    Side effects:
+        Stores only an in-memory action snapshot and sends Telegram output. It
+        does not call any financial write service.
+    """
+
+    from app.bot.pending_actions import bind_action_message, create_pending_action
+
+    owner_user_id = int(getattr(getattr(update, "effective_user", None), "id", 0) or 0)
+    action = create_pending_action(
+        context.user_data,
+        owner_user_id=owner_user_id,
+        flow_type="command_mutation",
+        payload={"operation": operation, "arguments": payload},
+    )
+    action_id = action["action_id"]
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Simpan", callback_data=f"confirm:{action_id}"),
+            InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{action_id}"),
+        ]
+    ])
+    sent = await update.message.reply_text(preview_text, parse_mode="Markdown", reply_markup=keyboard)
+    bind_action_message(context.user_data, action_id, getattr(sent, "message_id", None))
+    return action

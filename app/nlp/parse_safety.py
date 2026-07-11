@@ -13,7 +13,7 @@ from typing import Any
 # Import app.nlp.normalizer so this module can use its helpers.
 from app.nlp.normalizer import extract_amount_from_text, normalize_text
 # Import app.nlp.regex_parser so this module can use its helpers.
-from app.nlp.regex_parser import ACCOUNT_NAMES
+from app.nlp.regex_parser import ACCOUNT_NAMES, detect_date_result
 
 
 NORMAL_PREVIEW = "normal_preview"
@@ -325,6 +325,14 @@ def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str
     # Validate missing clean or not has amount(clean) before continuing.
     if not clean or not _has_amount(clean):
         return flags, reasons
+
+    date_result = detect_date_result(text)
+    if date_result.status == "invalid":
+        _append_unique(flags, "invalid_explicit_date")
+        _add_reason(
+            reasons,
+            f"Tanggal `{date_result.explicit_input}` tidak valid. Gunakan tanggal kalender yang benar, misalnya `29/02/2024`.",
+        )
 
     if not _has_debt_keyword(clean):
         person_pays = re.search(
