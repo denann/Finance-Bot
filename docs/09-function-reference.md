@@ -469,7 +469,7 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `build_transactions_full_text(transactions: list[dict], title: str, account_filter: str \| None=None)` | Build the data structure or message text for transactions full text. |
 | `def` | `build_transaction_filter_title(base_title: str, category_filter: str \| None=None, account_filter: str \| None=None)` | Build the data structure or message text for transaction filter title. |
 | `def` | `_build_transaksi_prefixed_period_arg(first: str, rest: str, mode: str)` | Build the data structure or message text for transaksi prefixed period arg. |
-| `def` | `parse_transaksi_period(args: list[str])` | Parse input into structured data for transaksi period. |
+| `async def` | `parse_transaksi_period(args: list[str])` | Parse input into structured data for transaksi period without blocking the event loop during Sheets reads. |
 | `async def` | `transaksi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for transaksi. |
 | `async def` | `last_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for last. |
 | `async def` | `delete_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for delete txn. |

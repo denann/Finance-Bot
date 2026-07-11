@@ -13,6 +13,8 @@ import os
 from app.config import GEMINI_API_KEY
 # Import app.nlp.gemini_langchain_client so this module can use its helpers.
 from app.nlp.gemini_langchain_client import generate_text_with_gemini
+from app.application.gemini_governance import prompt_version
+from app.observability import emit_event
 # Import privacy sanitizer so Gemini never receives credential-like context fields.
 from app.services.privacy_service import sanitize_ai_context
 # Import app.services.finance_insight_service so this module can use its helpers.
@@ -20,6 +22,12 @@ from app.services.finance_insight_service import deterministic_audit_text, deter
 
 
 GEMINI_INSIGHT_MODEL = os.getenv("GEMINI_INSIGHT_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+
+FEATURE_BY_MODE = {
+    "audit": "finance_audit",
+    "coach": "finance_coach",
+    "ask": "finance_ask",
+}
 
 MODE_LABELS = {
     "monthly_auto": "Insight otomatis setelah laporan bulanan",
@@ -164,11 +172,23 @@ def generate_finance_insight(mode: str, context: dict, question: str = "") -> st
 
     # Run this operation in a guarded block so failures can be handled.
     try:
+        feature = FEATURE_BY_MODE.get(mode, "finance_insight")
+        metadata = context.get("context_metadata") or (context.get("monthly_context") or {}).get("context_metadata") or {}
+        emit_event(
+            "gemini_context_prepared",
+            feature=feature,
+            prompt_version=prompt_version(feature),
+            records_considered=int(metadata.get("records_considered") or 0),
+            records_selected=int(metadata.get("records_selected") or 0),
+            context_truncated=bool(metadata.get("context_truncated")),
+            aggregation_level=str(metadata.get("aggregation_level") or "unknown")[:80],
+        )
         prompt = build_finance_insight_prompt(mode, context, question=question)
         text = generate_text_with_gemini(
             prompt,
             model_name=GEMINI_INSIGHT_MODEL,
             temperature=0.25,
+            feature=feature,
         ).strip()
         if text:
             return text

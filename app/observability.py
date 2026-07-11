@@ -32,6 +32,12 @@ SENSITIVE_KEY_PARTS = {
     "finance_text",
     "payload",
 }
+SAFE_METADATA_KEYS = {
+    "prompt_version",
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+}
 SECRET_PATTERNS = (
     re.compile(r"\b\d{6,12}:[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
@@ -88,7 +94,7 @@ def redact_value(key: str, value: Any) -> Any:
     """Remove secret-like and raw finance values from structured event fields."""
 
     normalized_key = str(key or "").strip().lower()
-    if any(part in normalized_key for part in SENSITIVE_KEY_PARTS):
+    if normalized_key not in SAFE_METADATA_KEYS and any(part in normalized_key for part in SENSITIVE_KEY_PARTS):
         return REDACTED
     if isinstance(value, dict):
         return {str(child_key): redact_value(str(child_key), child_value) for child_key, child_value in value.items()}

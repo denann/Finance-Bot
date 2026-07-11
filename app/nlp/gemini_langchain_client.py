@@ -23,9 +23,15 @@ from app.config import (
     GEMINI_API_KEY,
     GEMINI_MAX_OUTPUT_CHARS,
     GEMINI_MAX_OUTPUT_TOKENS,
+    GEMINI_MAX_INPUT_CHARS,
     GEMINI_TIMEOUT_SECONDS,
 )
 from app.observability import emit_event, increment_metric, monotonic_ms, observe_duration
+from app.application.gemini_governance import (
+    GeminiInputTooLarge,
+    current_or_local_budget,
+    prompt_version as resolve_prompt_version,
+)
 
 
 DEFAULT_TEXT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
@@ -135,7 +141,19 @@ def _extract_usage(response: Any) -> dict[str, int | None]:
     }
 
 
-def _invoke_with_observability(llm: Any, message: HumanMessage, *, model_name: str, modality: str) -> Any:
+def _invoke_with_observability(
+    llm: Any,
+    message: HumanMessage,
+    *,
+    model_name: str,
+    modality: str,
+    feature: str,
+    prompt_version: str,
+    input_characters: int,
+    attempt: int,
+    fallback_source: str = "",
+    fallback_target: str = "",
+) -> Any:
     """Invoke Gemini with bounded metadata logging and no prompt content."""
 
     started = monotonic_ms()
@@ -150,6 +168,12 @@ def _invoke_with_observability(llm: Any, message: HumanMessage, *, model_name: s
             "gemini_call_failed",
             model=model_name,
             modality=modality,
+            feature=feature,
+            prompt_version=prompt_version,
+            input_characters=input_characters,
+            attempt=attempt,
+            fallback_source=fallback_source,
+            fallback_target=fallback_target,
             client_version=GEMINI_CLIENT_VERSION,
             duration_ms=round(duration_ms, 3),
             error_type=type(exc).__name__,
@@ -169,6 +193,14 @@ def _invoke_with_observability(llm: Any, message: HumanMessage, *, model_name: s
         input_tokens=usage["input_tokens"],
         output_tokens=usage["output_tokens"],
         total_tokens=usage["total_tokens"],
+        usage_available=any(value is not None for value in usage.values()),
+        feature=feature,
+        prompt_version=prompt_version,
+        input_characters=input_characters,
+        output_characters=len(_extract_text(response)),
+        attempt=attempt,
+        fallback_source=fallback_source,
+        fallback_target=fallback_target,
     )
     return response
 
@@ -179,6 +211,8 @@ def generate_text_with_gemini(
     *,
     model_name: str | None = None,
     temperature: float = 0.0,
+    feature: str = "generic_text",
+    prompt_version: str | None = None,
 ) -> str:
     """Coordinate the generate text with gemini logic in the NLP/parser layer.
 
@@ -197,12 +231,23 @@ def generate_text_with_gemini(
         Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
     """
     selected_model = model_name or DEFAULT_TEXT_MODEL
+    input_characters = len(str(prompt or ""))
+    if input_characters > GEMINI_MAX_INPUT_CHARS:
+        increment_metric("gemini.input_too_large")
+        raise GeminiInputTooLarge("Input Gemini melewati batas karakter.")
+    budget = current_or_local_budget()
+    attempt = budget.consume(feature)
+    version = prompt_version or resolve_prompt_version(feature)
     llm = get_gemini_llm(selected_model, float(temperature))
     response = _invoke_with_observability(
         llm,
         HumanMessage(content=prompt),
         model_name=selected_model,
         modality="text",
+        feature=feature,
+        prompt_version=version,
+        input_characters=input_characters,
+        attempt=attempt,
     )
     return _extract_text(response)
 
@@ -236,6 +281,8 @@ def generate_text_from_image_with_gemini(
     mime_type: str = "image/jpeg",
     model_name: str | None = None,
     temperature: float = 0.0,
+    feature: str = "image_receipt_parser",
+    prompt_version: str | None = None,
 ) -> str:
     """Coordinate the generate text from image with gemini logic in the NLP/parser layer.
 
@@ -260,6 +307,13 @@ def generate_text_from_image_with_gemini(
         raise ValueError("File gambar kosong atau gagal dibaca.")
 
     selected_model = model_name or DEFAULT_IMAGE_MODEL
+    input_characters = len(str(prompt or ""))
+    if input_characters > GEMINI_MAX_INPUT_CHARS:
+        increment_metric("gemini.input_too_large")
+        raise GeminiInputTooLarge("Input Gemini melewati batas karakter.")
+    budget = current_or_local_budget()
+    attempt = budget.consume(feature)
+    version = prompt_version or resolve_prompt_version(feature)
     llm = get_gemini_llm(selected_model, float(temperature))
     data_url = _make_data_url(image_bytes, mime_type)
 
@@ -276,10 +330,22 @@ def generate_text_from_image_with_gemini(
             HumanMessage(content=content),
             model_name=selected_model,
             modality="image",
+            feature=feature,
+            prompt_version=version,
+            input_characters=input_characters,
+            attempt=attempt,
         )
         return _extract_text(response)
     # Handle an expected failure from the guarded operation above.
     except Exception as first_error:
+        message = str(first_error).lower()
+        compatibility_error = isinstance(first_error, (TypeError, ValueError)) and any(
+            marker in message for marker in ("image_url", "schema", "content format", "invocation format")
+        )
+        if not compatibility_error:
+            raise
+        fallback_attempt = budget.consume(feature, compatibility=True)
+        increment_metric("gemini.fallback")
         alt_content = [
             {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": data_url}},
@@ -291,6 +357,12 @@ def generate_text_from_image_with_gemini(
                 HumanMessage(content=alt_content),
                 model_name=selected_model,
                 modality="image_fallback",
+                feature=feature,
+                prompt_version=version,
+                input_characters=input_characters,
+                attempt=fallback_attempt,
+                fallback_source="image_url_string",
+                fallback_target="image_url_object",
             )
             return _extract_text(response)
         # Handle an expected failure from the guarded operation above.

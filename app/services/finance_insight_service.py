@@ -22,6 +22,7 @@ from statistics import mean, median
 
 # Import app.config so this module can use its helpers.
 from app.config import (
+    AI_CONTEXT_RECORD_LIMIT,
     SHEET_ACCOUNTS,
     SHEET_ASSETS,
     SHEET_BUDGETS,
@@ -1271,6 +1272,7 @@ def build_monthly_finance_context(month: str | None = None) -> dict:
         limit=8,
     )
 
+    considered = len(records) + len(prev_records)
     return {
         "period": {"type": "month", "month": month, "previous_month": prev_month},
         "summary": summary,
@@ -1284,6 +1286,13 @@ def build_monthly_finance_context(month: str | None = None) -> dict:
         "debts": get_debt_summary_compact(),
         "net_worth": get_net_worth_compact(),
         "available_commands": AVAILABLE_COMMANDS_FOR_AI,
+        "context_metadata": {
+            "records_considered": considered,
+            "records_selected": min(considered, AI_CONTEXT_RECORD_LIMIT),
+            "context_truncated": considered > AI_CONTEXT_RECORD_LIMIT,
+            "date_range": {"month": month, "previous_month": prev_month},
+            "aggregation_level": "monthly_aggregates_with_ranked_examples",
+        },
     }
 
 
@@ -1420,9 +1429,15 @@ def build_ask_finance_context(question: str) -> dict:
         question,
         date_from=period.get("date_from") if explicit_period else None,
         date_to=period.get("date_to") if explicit_period else None,
-        limit=15,
+        limit=min(15, AI_CONTEXT_RECORD_LIMIT),
     )
 
+    metadata = dict(month_context.get("context_metadata") or {})
+    metadata.update({
+        "records_selected": len(relevant),
+        "context_truncated": bool(metadata.get("context_truncated")) or len(relevant) >= AI_CONTEXT_RECORD_LIMIT,
+        "aggregation_level": "monthly_aggregates_with_relevant_records",
+    })
     return {
         "question": question,
         "period_requested": period,
@@ -1430,6 +1445,7 @@ def build_ask_finance_context(question: str) -> dict:
         "monthly_context": month_context,
         "relevant_transactions": relevant,
         "keyword_used": extract_keywords(question),
+        "context_metadata": metadata,
     }
 
 
@@ -1454,6 +1470,13 @@ def build_audit_context(month: str | None = None) -> dict:
         "known_categories": category_names,
         "known_accounts": account_names,
         "audit_scope": "kategori transaksi vs sheet categories, rekening transaksi vs sheet accounts, date/ID/plain-text fields",
+        "context_metadata": {
+            "records_considered": len(records),
+            "records_selected": min(len(records), AI_CONTEXT_RECORD_LIMIT),
+            "context_truncated": len(records) > AI_CONTEXT_RECORD_LIMIT,
+            "date_range": {"month": month},
+            "aggregation_level": "audit_aggregates_with_bounded_examples",
+        },
     }
 
 

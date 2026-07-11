@@ -16,7 +16,7 @@ from app.services.resolver_service import ensure_category_for_transaction
 from app.services.operation_errors import PartialMutationError, require_success_after_write
 
 # Import app.config so this module can use its helpers.
-from app.config import SHEET_ACCOUNTS, SHEET_TRANSACTIONS
+from app.config import SHEET_ACCOUNTS, SHEET_TRANSACTIONS, TRANSACTION_SORT_MODE
 # Import app.sheets.client so this module can use its helpers.
 from app.sheets.client import (
     SheetsAtomicWriteError,
@@ -28,7 +28,9 @@ from app.sheets.client import (
     get_sheet,
     get_current_sheets_transaction,
     rollback_current_sheets_transaction,
+    sort_range,
     update_cell,
+    update_range,
     update_row,
 )
 
@@ -1131,9 +1133,36 @@ def parse_transaction_date(date_value: str):
         return None
 
 
+def _legacy_rewrite_transactions_sheet_by_date(desc: bool) -> dict:
+    """Compatibility rollback for server-side sort during Phase 3 staging.
+
+    This path intentionally retains the former full-read/full-rewrite behavior.
+    It is not the default and should be removed after server-sort parity is
+    verified in staging.
+    """
+
+    values = get_sheet(SHEET_TRANSACTIONS).get_all_values()
+    if len(values) <= 2:
+        return {"success": True, "message": "Tidak cukup row untuk sort."}
+
+    header = values[0]
+    col_count = len(header)
+    normalized_rows = []
+    for index, row in enumerate(values[1:]):
+        padded = (list(row) + [""] * col_count)[:col_count]
+        date_value = parse_transaction_date(padded[1] if len(padded) > 1 else "")
+        normalized_rows.append((index, date_value or datetime.min.date(), padded))
+
+    normalized_rows.sort(key=lambda item: (item[1], item[0]), reverse=desc)
+    sorted_rows = [item[2] for item in normalized_rows]
+    end_col = chr(ord("A") + col_count - 1)
+    update_range(SHEET_TRANSACTIONS, f"A2:{end_col}{len(sorted_rows) + 1}", sorted_rows)
+    return {"success": True, "message": "transactions sorted by legacy rewrite"}
+
+
 # Helper for sort transactions sheet by date.
 def sort_transactions_sheet_by_date(desc: bool = True) -> dict:
-    """Sort the transactions sheet by date while preserving stable row order.
+    """Sort transaction rows server-side while excluding the header.
 
     Args:
         desc: Whether newest transactions should appear first.
@@ -1142,42 +1171,20 @@ def sort_transactions_sheet_by_date(desc: bool = True) -> dict:
         Result dict with `success` and `message`.
 
     Side effects:
-        Rewrites the transaction data rows in sorted order.
+        Sends one server-side sort request without downloading row data.
     """
     # Run this operation in a guarded block so failures can be handled.
     try:
-        sheet = get_sheet(SHEET_TRANSACTIONS)
-        values = sheet.get_all_values()
+        if TRANSACTION_SORT_MODE == "legacy":
+            return _legacy_rewrite_transactions_sheet_by_date(desc)
 
-        if len(values) <= 2:
-            return {"success": True, "message": "Tidak cukup row untuk sort."}
-
-        header = values[0]
-        # Load rows for the current calculation.
-        rows = values[1:]
-        col_count = len(header)
-
-        # Normalize normalized rows before matching.
-        normalized_rows = []
-        # Iterate through each idx, row.
-        for idx, row in enumerate(rows):
-            padded = list(row) + [""] * max(0, col_count - len(row))
-            padded = padded[:col_count]
-            date_obj = parse_transaction_date(padded[1] if len(padded) > 1 else "")
-            # Append the current value to normalized rows.
-            normalized_rows.append((idx, date_obj or datetime.min.date(), padded))
-
-        normalized_rows.sort(
-            key=lambda item: (item[1], item[0]),
-            reverse=desc,
+        direction = "des" if desc else "asc"
+        sort_range(
+            SHEET_TRANSACTIONS,
+            ((2, direction), (1, direction)),
+            "A2:Z",
         )
-
-        # Load sorted rows for the current calculation.
-        sorted_rows = [item[2] for item in normalized_rows]
-        end_col = chr(ord("A") + col_count - 1)
-        sheet.update(f"A2:{end_col}{len(sorted_rows) + 1}", sorted_rows)
-
-        return {"success": True, "message": "transactions sorted by date"}
+        return {"success": True, "message": "transactions sorted server-side by date and id"}
 
     # Handle an expected failure from the guarded operation above.
     except Exception as e:

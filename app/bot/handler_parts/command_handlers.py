@@ -20,6 +20,7 @@ from app.services.resolver_service import resolve_account_name
 from app.services.chart_service import write_monthly_chart_png
 # Import privacy notice builder for the read-only /privacy command.
 from app.services.privacy_service import build_privacy_notice_text
+from app.application.external_io import run_gemini, run_sheets_read
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -723,7 +724,13 @@ async def send_finance_insight_reply(
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
     await update.message.reply_text("⏳ Mengambil data dan membuat insight...")
-    answer = generate_finance_insight(mode, context_data, question=question)
+    answer = await run_gemini(
+        f"finance_{mode}",
+        generate_finance_insight,
+        mode,
+        context_data,
+        question=question,
+    )
 
     # Handle remember history and context is not None.
     if remember_history and context is not None:
@@ -815,7 +822,7 @@ async def insight_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     month_arg = " ".join(context.args).strip() if context.args else None
     month = normalize_insight_month(month_arg)
-    data = build_monthly_finance_context(month)
+    data = await run_sheets_read("build_monthly_finance_context", build_monthly_finance_context, month)
     # Send the Telegram response before continuing.
     await send_finance_insight_reply(
         update,
@@ -850,7 +857,7 @@ async def audit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     month_arg = " ".join(context.args).strip() if context.args else None
     month = normalize_insight_month(month_arg)
-    data = build_audit_context(month)
+    data = await run_sheets_read("build_audit_context", build_audit_context, month)
     # Send the Telegram response before continuing.
     await send_finance_insight_reply(
         update,
@@ -899,12 +906,12 @@ async def ask_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     mode = route_finance_question_mode(question)
     if mode == "audit":
-        data = build_audit_context(None)
+        data = await run_sheets_read("build_audit_context", build_audit_context, None)
     elif mode == "coach":
-        data = build_coach_context(None, question=question)
+        data = await run_sheets_read("build_coach_context", build_coach_context, None, question=question)
     # Use the fallback path when no earlier branch matched.
     else:
-        data = build_ask_finance_context(question)
+        data = await run_sheets_read("build_ask_finance_context", build_ask_finance_context, question)
 
     data = attach_session_history(context, data)
     # Send the Telegram response before continuing.
@@ -943,7 +950,7 @@ async def coach_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     question = " ".join(context.args).strip() if context.args else "Kasih saran finansial ringan untuk bulan ini."
-    data = build_coach_context(None, question=question)
+    data = await run_sheets_read("build_coach_context", build_coach_context, None, question=question)
     data = attach_session_history(context, data)
     # Send the Telegram response before continuing.
     await send_finance_insight_reply(
@@ -982,12 +989,12 @@ async def handle_natural_finance_question(update: Update, context: ContextTypes.
 
     mode = route_finance_question_mode(user_text)
     if mode == "audit":
-        data = build_audit_context(None)
+        data = await run_sheets_read("build_audit_context", build_audit_context, None)
     elif mode == "coach":
-        data = build_coach_context(None, question=user_text)
+        data = await run_sheets_read("build_coach_context", build_coach_context, None, question=user_text)
     # Use the fallback path when no earlier branch matched.
     else:
-        data = build_ask_finance_context(user_text)
+        data = await run_sheets_read("build_ask_finance_context", build_ask_finance_context, user_text)
 
     data = attach_session_history(context, data)
     # Send the Telegram response before continuing.
@@ -1587,7 +1594,7 @@ async def rekening_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        report = get_account_report(account_arg, period_arg)
+        report = await run_sheets_read("get_account_report", get_account_report, account_arg, period_arg)
     # Handle an expected failure from the guarded operation above.
     except ValueError as e:
         # Send the Telegram response before continuing.
@@ -1673,7 +1680,7 @@ async def harian_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        report = get_daily_report(date_arg, category_arg, account_arg)
+        report = await run_sheets_read("get_daily_report", get_daily_report, date_arg, category_arg, account_arg)
     # Handle an expected failure from the guarded operation above.
     except ValueError as e:
         # Send the Telegram response before continuing.
@@ -1760,7 +1767,7 @@ async def mingguan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        report = get_weekly_report(date_arg, category_arg, account_arg)
+        report = await run_sheets_read("get_weekly_report", get_weekly_report, date_arg, category_arg, account_arg)
     # Handle an expected failure from the guarded operation above.
     except ValueError as e:
         # Send the Telegram response before continuing.
@@ -1852,7 +1859,7 @@ async def grafik_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Run this operation in a guarded block so failures can be handled.
     try:
         year, month_num = parse_report_month_arg(month_arg)
-        report = get_monthly_report(year, month_num)
+        report = await run_sheets_read("get_monthly_report", get_monthly_report, year, month_num)
     # Handle an expected failure from the guarded operation above.
     except ValueError as e:
         # Send the Telegram response before continuing.
@@ -1904,7 +1911,7 @@ async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Run this operation in a guarded block so failures can be handled.
     try:
         year, month_num = parse_report_month_arg(month_arg)
-        report = get_monthly_report(year, month_num, category_arg, account_arg)
+        report = await run_sheets_read("get_monthly_report", get_monthly_report, year, month_num, category_arg, account_arg)
     # Handle an expected failure from the guarded operation above.
     except ValueError as e:
         # Send the Telegram response before continuing.
@@ -1977,8 +1984,10 @@ async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Automatic insight after /bulanan.
     # Message handling section
     try:
-        insight_data = build_monthly_finance_context(month_name)
-        insight_text = generate_finance_insight(
+        insight_data = await run_sheets_read("build_monthly_finance_context", build_monthly_finance_context, month_name)
+        insight_text = await run_gemini(
+            "finance_monthly_auto",
+            generate_finance_insight,
             "monthly_auto",
             insight_data,
             question=f"Buat insight singkat otomatis setelah laporan bulanan {month_name}",
@@ -2055,7 +2064,7 @@ async def cari_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyword = " ".join(args)
     # Build results for the response flow.
-    results = search_transactions(keyword)
+    results = await run_sheets_read("search_transactions", search_transactions, keyword)
 
     # Validate missing results before continuing.
     if not results:

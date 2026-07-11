@@ -99,7 +99,7 @@ from app.bot.handler_parts.state_utils import clear_pending_flow_state_before_co
 # Import immutable action request binding for preview keyboard creation.
 from app.bot.pending_actions import pending_action_request_context
 # Import app.sheets.client so this module can use its helpers.
-from app.sheets.client import sheets_transaction
+from app.sheets.client import sheets_request_snapshot, sheets_transaction
 from app.observability import (
     correlation_scope,
     emit_event,
@@ -108,6 +108,7 @@ from app.observability import (
     new_correlation_id,
     observe_duration,
 )
+from app.application.gemini_governance import gemini_request_scope
 
 
 # Wrapper ini menjaga setiap aksi Telegram berada dalam satu konteks rollback Sheets.
@@ -162,9 +163,11 @@ def atomic_bot_handler(callback):
             increment_metric(f"telegram.handler.{callback_name}.started")
             emit_event("telegram_handler_started", handler=callback_name)
             try:
-                with pending_action_request_context(context.user_data, owner_user_id, preview_message_id):
-                    with sheets_transaction(label=callback_name):
-                        result = await callback(update, context, *args, **kwargs)
+                with gemini_request_scope():
+                    with sheets_request_snapshot():
+                        with pending_action_request_context(context.user_data, owner_user_id, preview_message_id):
+                            with sheets_transaction(label=callback_name):
+                                result = await callback(update, context, *args, **kwargs)
             except Exception as exc:
                 duration_ms = monotonic_ms() - started_ms
                 increment_metric(f"telegram.handler.{callback_name}.failed")

@@ -11,6 +11,9 @@ import random
 import re
 # Import time for this module's local operations.
 import time
+import copy
+import threading
+from dataclasses import dataclass, field
 # Import contextlib so this module can use its helpers.
 from contextlib import contextmanager
 
@@ -36,6 +39,7 @@ from app.config import (
     SHEET_RECURRING_LOGS,
     SHEET_RECURRING_RULES,
     SHEET_TRANSACTIONS,
+    SHEETS_REQUEST_ROW_BUDGET,
 )
 
 # Required scopes for reading and writing Sheets
@@ -49,6 +53,54 @@ _spreadsheet = None
 _worksheets = {}
 _schema_checked_sheets = set()
 _current_transaction = contextvars.ContextVar("sheets_current_transaction", default=None)
+_request_snapshot = contextvars.ContextVar("sheets_request_snapshot", default=None)
+
+
+class SheetsReadBudgetExceeded(RuntimeError):
+    """A logical request exceeded its configured row-transfer budget."""
+
+
+@dataclass
+class SheetsRequestSnapshot:
+    """Mutable request-local cache shared with worker context copies."""
+
+    row_budget: int = SHEETS_REQUEST_ROW_BUDGET
+    records: dict[str, list[dict]] = field(default_factory=dict)
+    values: dict[str, list[list]] = field(default_factory=dict)
+    rows_read: int = 0
+    calls_by_sheet: dict[str, int] = field(default_factory=dict)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def record_read(self, sheet_name: str, rows: int) -> None:
+        with self.lock:
+            next_total = self.rows_read + max(0, int(rows))
+            if next_total > self.row_budget:
+                raise SheetsReadBudgetExceeded(
+                    f"Batas row read request terlampaui: {next_total}>{self.row_budget}."
+                )
+            self.rows_read = next_total
+            self.calls_by_sheet[sheet_name] = self.calls_by_sheet.get(sheet_name, 0) + 1
+
+    def invalidate(self) -> None:
+        with self.lock:
+            self.records.clear()
+            self.values.clear()
+
+
+@contextmanager
+def sheets_request_snapshot(*, row_budget: int | None = None):
+    """Reuse worksheet reads only for the current logical request or job."""
+
+    existing = _request_snapshot.get()
+    if existing is not None:
+        yield existing
+        return
+    snapshot = SheetsRequestSnapshot(row_budget=int(row_budget or SHEETS_REQUEST_ROW_BUDGET))
+    token = _request_snapshot.set(snapshot)
+    try:
+        yield snapshot
+    finally:
+        _request_snapshot.reset(token)
 
 
 # Central schema definition for all required Google Sheets tabs.
@@ -538,7 +590,11 @@ def _execute_write(fn, *, operation: str = "idempotent_write", reconcile=None):
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        return _call_with_retry(fn, operation=operation, reconcile=reconcile)
+        result = _call_with_retry(fn, operation=operation, reconcile=reconcile)
+        snapshot = _request_snapshot.get()
+        if snapshot is not None:
+            snapshot.invalidate()
+        return result
     # Handle an expected failure from the guarded operation above.
     except Exception as exc:
         if tx is not None:
@@ -1143,8 +1199,15 @@ def get_all_records(sheet_name: str) -> list[dict]:
     Returns:
         List of row dictionaries using the header row as keys.
     """
+    snapshot = _request_snapshot.get()
+    if snapshot is not None and sheet_name in snapshot.records:
+        return copy.deepcopy(snapshot.records[sheet_name])
     sheet = get_sheet(sheet_name)
-    return _execute_read(lambda: sheet.get_all_records(value_render_option="UNFORMATTED_VALUE"))
+    records = _execute_read(lambda: sheet.get_all_records(value_render_option="UNFORMATTED_VALUE"))
+    if snapshot is not None:
+        snapshot.record_read(sheet_name, len(records))
+        snapshot.records[sheet_name] = copy.deepcopy(records)
+    return records
 
 
 # Helper for get all values.
@@ -1157,8 +1220,25 @@ def get_all_values(sheet_name: str) -> list[list]:
     Returns:
         Two-dimensional list of cell values.
     """
+    snapshot = _request_snapshot.get()
+    if snapshot is not None and sheet_name in snapshot.values:
+        return copy.deepcopy(snapshot.values[sheet_name])
     sheet = get_sheet(sheet_name)
-    return _execute_read(lambda: sheet.get_all_values())
+    values = _execute_read(lambda: sheet.get_all_values())
+    if snapshot is not None:
+        snapshot.record_read(sheet_name, max(0, len(values) - 1))
+        snapshot.values[sheet_name] = copy.deepcopy(values)
+    return values
+
+
+def sort_range(sheet_name: str, sort_specs: tuple[tuple[int, str], ...], cell_range: str):
+    """Sort a worksheet range server-side without downloading or rewriting rows."""
+
+    sheet = get_sheet(sheet_name)
+    return _execute_write(
+        lambda: sheet.sort(*sort_specs, range=cell_range),
+        operation="idempotent_write",
+    )
 
 
 # Helper for update cell.

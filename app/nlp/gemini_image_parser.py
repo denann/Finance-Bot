@@ -455,6 +455,7 @@ def parse_transactions_from_image(image_bytes: bytes, mime_type: str = "image/jp
             mime_type=mime_type or "image/jpeg",
             model_name=GEMINI_IMAGE_MODEL,
             temperature=0.0,
+            feature="image_receipt_parser",
         )
 
         # Validate missing response text before continuing.

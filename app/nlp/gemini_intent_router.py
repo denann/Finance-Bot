@@ -278,6 +278,7 @@ Input user:
                 prompt,
                 model_name=GEMINI_INTENT_MODEL,
                 temperature=0.0,
+                feature="intent_router",
             )
         data = extract_json_object(raw_text)
         return normalize_router_result(data)

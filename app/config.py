@@ -89,12 +89,21 @@ ALLOWED_USER_ID = _parse_int_env("ALLOWED_USER_ID", 0)
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 # Keep this section separated from the surrounding flow.
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "service_account.json")
+SHEETS_TIMEOUT_SECONDS = _parse_float_env("SHEETS_TIMEOUT_SECONDS", 20.0)
+SHEETS_INTERACTIVE_CONCURRENCY = int(_parse_int_env("SHEETS_INTERACTIVE_CONCURRENCY", 2) or 0)
+GEMINI_CONCURRENCY = int(_parse_int_env("GEMINI_CONCURRENCY", 1) or 0)
+SCHEDULED_WORK_CONCURRENCY = int(_parse_int_env("SCHEDULED_WORK_CONCURRENCY", 1) or 0)
+SHEETS_REQUEST_ROW_BUDGET = int(_parse_int_env("SHEETS_REQUEST_ROW_BUDGET", 50_000) or 0)
+TRANSACTION_SORT_MODE = os.getenv("TRANSACTION_SORT_MODE", "server").strip().lower()
 
 # Keep this section separated from the surrounding flow.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_TIMEOUT_SECONDS = _parse_float_env("GEMINI_TIMEOUT_SECONDS", 30.0)
 GEMINI_MAX_OUTPUT_TOKENS = int(_parse_int_env("GEMINI_MAX_OUTPUT_TOKENS", 2048) or 0)
 GEMINI_MAX_OUTPUT_CHARS = int(_parse_int_env("GEMINI_MAX_OUTPUT_CHARS", 50000) or 0)
+GEMINI_MAX_INPUT_CHARS = int(_parse_int_env("GEMINI_MAX_INPUT_CHARS", 100000) or 0)
+GEMINI_CALLS_PER_UPDATE = int(_parse_int_env("GEMINI_CALLS_PER_UPDATE", 1) or 0)
+AI_CONTEXT_RECORD_LIMIT = int(_parse_int_env("AI_CONTEXT_RECORD_LIMIT", 40) or 0)
 
 # App
 # Keep this section separated from the surrounding flow.
@@ -112,6 +121,14 @@ if GEMINI_MAX_OUTPUT_TOKENS < 1:
     raise ValueError("GEMINI_MAX_OUTPUT_TOKENS harus minimal 1.")
 if GEMINI_MAX_OUTPUT_CHARS < 1:
     raise ValueError("GEMINI_MAX_OUTPUT_CHARS harus minimal 1.")
+if min(GEMINI_MAX_INPUT_CHARS, GEMINI_CALLS_PER_UPDATE, AI_CONTEXT_RECORD_LIMIT) < 1:
+    raise ValueError("Batas input/call/context Gemini harus minimal 1.")
+if min(SHEETS_INTERACTIVE_CONCURRENCY, GEMINI_CONCURRENCY, SCHEDULED_WORK_CONCURRENCY) < 1:
+    raise ValueError("Batas concurrency Phase 3 harus minimal 1.")
+if SHEETS_REQUEST_ROW_BUDGET < 1:
+    raise ValueError("SHEETS_REQUEST_ROW_BUDGET harus minimal 1.")
+if TRANSACTION_SORT_MODE not in {"server", "legacy"}:
+    raise ValueError("TRANSACTION_SORT_MODE harus 'server' atau 'legacy'.")
 
 # Sheet tab names — centralized here so they are easy to change
 # Keep this section separated from the surrounding flow.

@@ -173,6 +173,7 @@ from app.nlp.parse_safety import (
 )
 # Import app.services.resolver_service so this module can use its helpers.
 from app.services.resolver_service import resolve_category_name
+from app.application.external_io import run_gemini, run_sheets_read
 
 async def send_parse_clarification(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: str, parsed: dict | None, assessment: dict) -> None:
     """Ask the user to clarify a risky or ambiguous parse result.
@@ -209,7 +210,7 @@ async def send_parse_clarification(update: Update, context: ContextTypes.DEFAULT
 
 
 # Helper for try gemini draft for parse safety.
-def try_gemini_draft_for_parse_safety(raw: str, fallback_parsed: dict, assessment: dict) -> tuple[dict, dict, bool]:
+async def try_gemini_draft_for_parse_safety(raw: str, fallback_parsed: dict, assessment: dict) -> tuple[dict, dict, bool]:
     """Try Gemini as a draft parser when parse safety asks for a safer preview.
 
     Args:
@@ -234,7 +235,7 @@ def try_gemini_draft_for_parse_safety(raw: str, fallback_parsed: dict, assessmen
         draft_assessment["recommended_action"] = GEMINI_DRAFT_PREVIEW
         return fallback_parsed, draft_assessment, True
 
-    gemini_parsed = parse_with_gemini(raw)
+    gemini_parsed = await run_gemini("transaction_parser", parse_with_gemini, raw)
     # Validate missing gemini parsed before continuing.
     if not gemini_parsed:
         fallback_assessment = dict(assessment or {})
@@ -372,7 +373,7 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
         return False
 
     # Build router result for the response flow.
-    router_result = route_intent_with_gemini(user_text)
+    router_result = await run_gemini("intent_router", route_intent_with_gemini, user_text)
 
     intent = router_result.get("intent", "unknown")
     confidence = float(router_result.get("confidence", 0) or 0)
@@ -429,7 +430,7 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
     if intent == "last":
         limit, period, month, title = router_args_to_last_filter(args)
 
-        transactions = get_recent_transactions(
+        transactions = await run_sheets_read("get_recent_transactions", get_recent_transactions,
             limit=limit,
             # Extract period for validation.
             period=period,
@@ -479,7 +480,7 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
             return True
 
         # Build results for the response flow.
-        results = search_transactions(query)
+        results = await run_sheets_read("search_transactions", search_transactions, query)
 
         # Validate missing results before continuing.
         if not results:
@@ -888,7 +889,7 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
 
     if clean in last_patterns:
         # Load transactions for the current calculation.
-        transactions = get_recent_transactions(limit=10)
+        transactions = await run_sheets_read("get_recent_transactions", get_recent_transactions, limit=10)
 
         # Validate missing transactions before continuing.
         if not transactions:
@@ -921,7 +922,7 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
     }
 
     if clean in today_patterns:
-        transactions = get_recent_transactions(limit=10, period="today")
+        transactions = await run_sheets_read("get_recent_transactions", get_recent_transactions, limit=10, period="today")
 
         # Validate missing transactions before continuing.
         if not transactions:
@@ -954,7 +955,7 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
     }
 
     if clean in week_patterns:
-        transactions = get_recent_transactions(limit=10, period="week")
+        transactions = await run_sheets_read("get_recent_transactions", get_recent_transactions, limit=10, period="week")
 
         # Validate missing transactions before continuing.
         if not transactions:
@@ -987,7 +988,7 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
     }
 
     if clean in month_patterns:
-        transactions = get_recent_transactions(limit=10, period="month")
+        transactions = await run_sheets_read("get_recent_transactions", get_recent_transactions, limit=10, period="month")
 
         # Validate missing transactions before continuing.
         if not transactions:
@@ -1030,7 +1031,7 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
             return True
 
         # Build results for the response flow.
-        results = search_transactions(keyword)
+        results = await run_sheets_read("search_transactions", search_transactions, keyword)
 
         # Validate missing results before continuing.
         if not results:
@@ -1234,7 +1235,9 @@ async def image_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     caption = message.caption or ""
-    result = parse_transactions_from_image(
+    result = await run_gemini(
+        "image_receipt_parser",
+        parse_transactions_from_image,
         bytes(image_bytes),
         mime_type=mime_type,
         caption=caption,
@@ -1698,7 +1701,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     preview_mode = "normal"
     if safety_action == GEMINI_DRAFT_PREVIEW:
-        parsed, safety_assessment, gemini_used = try_gemini_draft_for_parse_safety(user_text, parsed, safety_assessment)
+        parsed, safety_assessment, gemini_used = await try_gemini_draft_for_parse_safety(user_text, parsed, safety_assessment)
         preview_mode = "gemini" if gemini_used else "warning"
     # Fall back when safety action == WARNING PREVIEW.
     elif safety_action == WARNING_PREVIEW:
@@ -1929,7 +1932,7 @@ def _build_transaksi_prefixed_period_arg(first: str, rest: str, mode: str) -> st
 
 
 # Helper for parse transaksi period.
-def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str | None]:
+async def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str | None]:
     """Parse caller input for the parse transaksi period workflow in the Telegram handler layer.
 
     Args:
@@ -1950,7 +1953,7 @@ def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str |
     # Validate missing raw before continuing.
     if not raw:
         year, month_num = parse_report_month_arg(None)
-        report = get_monthly_report(year, month_num)
+        report = await run_sheets_read("get_monthly_report", get_monthly_report, year, month_num)
         return f"Transaksi Bulan {report.get('month', '-')}", report.get("transactions", []), "month", None
 
     first = low.split()[0]
@@ -1962,7 +1965,7 @@ def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str |
         if not account_arg:
             raise ValueError("Nama rekening belum diisi. Contoh: /transaksi rekening Cash")
 
-        report = get_account_report(account_arg, period_arg)
+        report = await run_sheets_read("get_account_report", get_account_report, account_arg, period_arg)
         account_filter = report.get("account_filter") or account_arg
         period_label = report.get("period_label") or report.get("month") or "-"
         return (
@@ -1975,7 +1978,7 @@ def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str |
     if first in ["hari", "harian", "tanggal", "tgl", "tg", "day", "daily"]:
         period_source = _build_transaksi_prefixed_period_arg(first, rest, "date")
         date_arg, category_arg, account_arg = split_report_filter_args(period_source, "date")
-        report = get_daily_report(date_arg, category_arg, account_arg)
+        report = await run_sheets_read("get_daily_report", get_daily_report, date_arg, category_arg, account_arg)
         title = build_transaction_filter_title(
             f"Transaksi Tanggal {report.get('date', '-')}",
             report.get("category_filter"),
@@ -1986,7 +1989,7 @@ def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str |
     if first in ["minggu", "mingguan", "week", "weekly"]:
         period_source = _build_transaksi_prefixed_period_arg(first, rest, "date")
         date_arg, category_arg, account_arg = split_report_filter_args(period_source, "date")
-        report = get_weekly_report(date_arg, category_arg, account_arg)
+        report = await run_sheets_read("get_weekly_report", get_weekly_report, date_arg, category_arg, account_arg)
         title = build_transaction_filter_title(
             f"Transaksi Minggu {report.get('date_from', '-')} s/d {report.get('date_to', '-')}",
             report.get("category_filter"),
@@ -1998,7 +2001,7 @@ def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str |
         period_source = _build_transaksi_prefixed_period_arg(first, rest, "month")
         month_arg, category_arg, account_arg = split_report_filter_args(period_source, "month")
         year, month_num = parse_report_month_arg(month_arg)
-        report = get_monthly_report(year, month_num, category_arg, account_arg)
+        report = await run_sheets_read("get_monthly_report", get_monthly_report, year, month_num, category_arg, account_arg)
         title = build_transaction_filter_title(
             f"Transaksi Bulan {report.get('month', '-')}",
             report.get("category_filter"),
@@ -2007,16 +2010,16 @@ def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str |
         return title, report.get("transactions", []), "month", report.get("account_filter")
 
     if re.fullmatch(r"20\d{2}[-/]\d{1,2}[-/]\d{1,2}", low) or re.fullmatch(r"\d{1,2}[-/]\d{1,2}[-/]20\d{2}", low):
-        report = get_daily_report(raw)
+        report = await run_sheets_read("get_daily_report", get_daily_report, raw)
         return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day", None
 
     if re.fullmatch(r"20\d{2}[-/]\d{1,2}", low):
         year, month_num = parse_report_month_arg(raw)
-        report = get_monthly_report(year, month_num)
+        report = await run_sheets_read("get_monthly_report", get_monthly_report, year, month_num)
         return f"Transaksi Bulan {report.get('month', '-')}", report.get("transactions", []), "month", None
 
     if re.fullmatch(r"\d{1,2}", low):
-        report = get_daily_report(raw)
+        report = await run_sheets_read("get_daily_report", get_daily_report, raw)
         return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day", None
 
     # Command routing note: exact commands and aliases are checked before similarity-based typo handling.
@@ -2026,7 +2029,7 @@ def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str |
     try:
         # Extract date arg for validation.
         date_arg = parse_report_date_arg(raw)
-        report = get_daily_report(date_arg)
+        report = await run_sheets_read("get_daily_report", get_daily_report, date_arg)
         return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day", None
     # Handle an expected failure from the guarded operation above.
     except Exception:
@@ -2039,7 +2042,7 @@ def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str |
         # Handle month arg or category arg or account arg.
         if month_arg or category_arg or account_arg:
             year, month_num = parse_report_month_arg(month_arg)
-            report = get_monthly_report(year, month_num, category_arg, account_arg)
+            report = await run_sheets_read("get_monthly_report", get_monthly_report, year, month_num, category_arg, account_arg)
             title = build_transaction_filter_title(
                 f"Transaksi Bulan {report.get('month', '-')}",
                 report.get("category_filter"),
@@ -2081,7 +2084,7 @@ async def transaksi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        title, transactions, _period_type, account_filter = parse_transaksi_period(context.args)
+        title, transactions, _period_type, account_filter = await parse_transaksi_period(context.args)
     # Handle an expected failure from the guarded operation above.
     except ValueError as e:
         # Send the Telegram response before continuing.
@@ -2201,7 +2204,7 @@ async def last_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    transactions = get_recent_transactions(
+    transactions = await run_sheets_read("get_recent_transactions", get_recent_transactions,
         limit=limit,
         # Extract period for validation.
         period=period,

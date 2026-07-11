@@ -115,7 +115,7 @@ Rules:
 """.strip()
 
     # Low temperature keeps alias suggestions stable and conservative.
-    response_text = generate_text_with_gemini(prompt, temperature=0.2)
+    response_text = generate_text_with_gemini(prompt, temperature=0.2, feature="category_alias")
     # Prefer JSON parsing because it is less ambiguous than comma parsing.
     data = _extract_json_object(response_text)
     aliases = data.get("aliases") if isinstance(data, dict) else None

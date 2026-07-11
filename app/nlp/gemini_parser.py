@@ -228,6 +228,7 @@ def parse_with_gemini(user_input: str) -> dict | None:
             prompt,
             model_name=GEMINI_TEXT_MODEL,
             temperature=0.0,
+            feature="transaction_parser",
         )
 
         # Validate missing response text before continuing.

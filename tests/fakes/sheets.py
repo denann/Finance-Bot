@@ -80,3 +80,18 @@ class InMemoryWorksheet:
             return []
         headers = self.rows[0]
         return [dict(zip(headers, row)) for row in self.rows[1:]]
+
+    def sort(self, *sort_specs: tuple[int, str], range: str) -> dict:
+        """Sort body rows using one-based column/direction specifications."""
+
+        self.failure_plan.check("sort")
+        assert range.startswith("A2:")
+        header, body = self.rows[:1], self.rows[1:]
+        for column, direction in reversed(sort_specs):
+            index = int(column) - 1
+            body.sort(
+                key=lambda row: str(row[index] if index < len(row) else ""),
+                reverse=str(direction).lower().startswith("des"),
+            )
+        self.rows = header + body
+        return {"sortedRange": range, "sortSpecs": list(sort_specs)}

@@ -12,6 +12,7 @@ import shlex
 from app.services.resolver_service import resolve_account_name
 from app.services.recurring_service import get_due_recurring_rules, get_recurring_rule_by_id
 from app.observability import emit_event
+from app.application.external_io import run_scheduled, run_sheets_read
 
 
 def create_unique_export_temp_path() -> str:
@@ -1687,7 +1688,7 @@ async def export_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     period = context.args[0] if context.args else None
 
     # Build export result for the response flow.
-    export_result = get_transactions_for_export(period)
+    export_result = await run_sheets_read("manual_export_read", get_transactions_for_export, period)
 
     if not export_result.get("success"):
         # Send the Telegram response before continuing.
@@ -1774,7 +1775,7 @@ async def scheduled_export_transactions(bot, chat_id: int, period=None):
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
     # Build export result for the response flow.
-    export_result = get_transactions_for_export(period)
+    export_result = await run_scheduled("scheduled_export_read", get_transactions_for_export, period)
 
     if not export_result.get("success"):
         # Send the Telegram response before continuing.
