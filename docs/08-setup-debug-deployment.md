@@ -45,6 +45,8 @@ Slash commands must not become expense previews.
 
 `GET /health` is the cheap, read-only liveness endpoint. It does not create worksheets, repair headers, or prove Google Sheets readiness.
 
+`GET /ready` is the deployment-readiness endpoint. It returns HTTP 200 only after runtime configuration, Google Sheets/schema startup, Telegram startup, and the enabled scheduler are ready. It returns HTTP 503 with generic component states while startup is incomplete or a required component is degraded. Neither endpoint exposes credentials or raw exceptions.
+
 The legacy `GET /test-sheets` route is now hidden and disabled by default:
 
 ```dotenv
@@ -55,6 +57,30 @@ DIAGNOSTIC_ADMIN_SECRET=
 If an administrator explicitly enables it, the caller must send the separate `X-Admin-Secret` header. The route performs only a connectivity open, returns generic status, and never returns spreadsheet title, tab names, schema actions, credential details, or raw exceptions. Schema setup remains an explicit startup/setup operation, not an anonymous HTTP diagnostic.
 
 Keep the route disabled in production unless there is a specific operational need. Do not reuse the Telegram webhook secret as the diagnostic secret.
+
+## Runtime policy
+
+Use Python 3.12, which is also the version exercised by offline CI. Finance dates use `APP_TIMEZONE=Asia/Jakarta`; operational timestamps and pending-action TTL calculations remain UTC.
+
+The scheduler currently has a single-instance contract:
+
+```dotenv
+APP_INSTANCE_COUNT=1
+SCHEDULER_ENABLED=true
+LOG_LEVEL=INFO
+```
+
+Startup rejects `APP_INSTANCE_COUNT` above 1 while the scheduler is enabled. Multi-instance deployment needs distributed locking or a separate scheduler worker before it is supported. Set `SCHEDULER_ENABLED=false` only when another approved instance or worker owns scheduled jobs.
+
+Gemini calls and Google Sheets retries can be bounded with the documented defaults:
+
+```dotenv
+GEMINI_TIMEOUT_SECONDS=30
+GEMINI_MAX_OUTPUT_TOKENS=2048
+GEMINI_MAX_OUTPUT_CHARS=50000
+SHEETS_MAX_RETRIES=3
+SHEETS_RETRY_BASE_DELAY=0.5
+```
 
 ## Test setup
 

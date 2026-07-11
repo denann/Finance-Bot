@@ -9,6 +9,7 @@ import urllib.request
 import uuid
 # Import datetime so this module can use its helpers.
 from datetime import datetime
+from app.clock import business_now
 
 # Import app.config so this module can use its helpers.
 from app.config import (
@@ -87,7 +88,7 @@ def now_str() -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return business_now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 # Helper for today str.
@@ -106,7 +107,7 @@ def today_str() -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    return datetime.now().strftime("%Y-%m-%d")
+    return business_now().strftime("%Y-%m-%d")
 
 
 # Helper for generate id.
@@ -125,7 +126,7 @@ def generate_id(prefix: str) -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    timestamp = business_now().strftime("%Y%m%d_%H%M%S_%f")
     suffix = uuid.uuid4().hex[:6]
     return f"{prefix}_{timestamp}_{suffix}"
 

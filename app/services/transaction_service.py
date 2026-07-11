@@ -3,6 +3,7 @@
 
 # Import datetime so this module can use its helpers.
 from datetime import datetime, timedelta
+from app.clock import business_now
 # Import re for this module's local operations.
 import re
 # Import uuid for this module's local operations.
@@ -123,7 +124,7 @@ TIPE_HUTANG_COL = 15
 # Helper for get current month str.
 def get_current_month_str() -> str:
     """Return the current local month in `YYYY-MM` format."""
-    return datetime.now().strftime("%Y-%m")
+    return business_now().strftime("%Y-%m")
 
 
 # Helper for normalize export period.
@@ -142,7 +143,7 @@ def normalize_export_period(period: str | None = None) -> dict:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    today = datetime.now().date()
+    today = business_now().date()
 
     # Validate missing period before continuing.
     if not period:
@@ -360,7 +361,7 @@ def generate_transaction_id() -> str:
         ID string with timestamp and random suffix, for example
         `txn_YYYYMMDD_HHMMSS_microseconds_xxxxxxxx`.
     """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    timestamp = business_now().strftime("%Y%m%d_%H%M%S_%f")
     unique_suffix = uuid.uuid4().hex[:8]
     return f"txn_{timestamp}_{unique_suffix}"
 
@@ -395,7 +396,7 @@ def build_transaction_row(parsed: dict, raw_input: str) -> tuple[str, list]:
     description = parsed.get("description") or ""
     catatan = parsed.get("catatan") or ""
     tipe_pengeluaran = parsed.get("tipe_pengeluaran") or ""
-    date = parsed.get("date") or datetime.now().strftime("%Y-%m-%d")
+    date = parsed.get("date") or business_now().strftime("%Y-%m-%d")
     parsed_by = parsed.get("parsed_by") or "regex"
     hutang_id = parsed.get("hutang_id") or parsed.get("debt_id") or ""
     tipe_hutang = parsed.get("tipe_hutang") or parsed.get("debt_type_label") or ""
@@ -614,7 +615,7 @@ def update_account_balance(account_name: str, new_balance: float) -> bool:
         SHEET_ACCOUNTS,
         row_index,
         LAST_UPDATED_COL,
-        datetime.now().strftime("%Y-%m-%d"),
+        business_now().strftime("%Y-%m-%d"),
     )
     return True
 
@@ -764,7 +765,7 @@ def apply_account_deltas(account_deltas: dict) -> dict:
 
     # Extract accounts map for validation.
     accounts_map = get_account_index_map()
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = business_now().strftime("%Y-%m-%d")
 
     new_balances = {}
     # Extract failed accounts for validation.
@@ -1218,7 +1219,7 @@ def get_recent_transactions(
     """
     # Load records for the current calculation.
     records = get_transactions_with_row_index()
-    today = datetime.now().date()
+    today = business_now().date()
 
     if month:
         records = [

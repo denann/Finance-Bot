@@ -11,3 +11,10 @@ Polling is the default runtime for this project. The API layer is useful only wh
 ## When to use it
 
 Use this folder when you want an advanced deployment setup with `BOT_MODE=webhook`. For local development or simple Wispbyte deployment, use polling mode instead.
+
+## Operational endpoints
+
+- `GET /health`: liveness only; a running process can answer even when a dependency is not ready.
+- `GET /ready`: returns 200 when configuration, Sheets/schema startup, Telegram, and the enabled scheduler are ready; otherwise returns 503.
+
+Responses contain only generic component states. Raw provider errors, credentials, spreadsheet metadata, and finance input are not returned.

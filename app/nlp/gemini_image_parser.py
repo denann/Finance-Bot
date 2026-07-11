@@ -7,6 +7,7 @@ import json
 import os
 # Import datetime so this module can use its helpers.
 from datetime import datetime
+from app.clock import business_now
 
 # Import app.config so this module can use its helpers.
 from app.config import GEMINI_API_KEY
@@ -111,7 +112,7 @@ def build_image_prompt(caption: str = "") -> str:
         Redact credential-like text from the caption before prompting. The image
         result must still go through preview-before-save in the Telegram flow.
     """
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = business_now().strftime("%Y-%m-%d")
     safe_caption = redact_sensitive_text(caption)
 
     expense_categories = get_valid_categories("expense")
@@ -279,7 +280,7 @@ def normalize_receipt(data: dict, items: list[dict]) -> dict:
         datetime.strptime(date_value, "%Y-%m-%d")
     # Handle an expected failure from the guarded operation above.
     except Exception:
-        date_value = items[0].get("date") if items else datetime.now().strftime("%Y-%m-%d")
+        date_value = items[0].get("date") if items else business_now().strftime("%Y-%m-%d")
 
     extra_charges = []
     for charge in raw_receipt.get("extra_charges") or []:
@@ -367,13 +368,13 @@ def normalize_item(item: dict) -> dict | None:
     elif tipe_pengeluaran not in VALID_SPENDING_TYPES:
         tipe_pengeluaran = "Harian"
 
-    date_value = str(item.get("date") or datetime.now().strftime("%Y-%m-%d")).strip()
+    date_value = str(item.get("date") or business_now().strftime("%Y-%m-%d")).strip()
     # Legacy compatibility note for older records or older in-memory state.
     try:
         datetime.strptime(date_value, "%Y-%m-%d")
     # Handle an expected failure from the guarded operation above.
     except Exception:
-        date_value = datetime.now().strftime("%Y-%m-%d")
+        date_value = business_now().strftime("%Y-%m-%d")
 
     raw_text = str(item.get("raw_text") or "").strip()
     catatan = str(item.get("catatan") or "").strip()

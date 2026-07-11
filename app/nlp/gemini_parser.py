@@ -8,6 +8,7 @@ import json
 import os
 # Import datetime so this module can use its helpers.
 from datetime import datetime
+from app.clock import business_now
 # Import app.config so this module can use its helpers.
 from app.config import GEMINI_API_KEY
 # Import app.nlp.gemini_langchain_client so this module can use its helpers.
@@ -84,7 +85,7 @@ def build_prompt(user_input: str) -> str:
         Gemini output is only a draft and must still go through preview or
         clarification before any save.
     """
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = business_now().strftime("%Y-%m-%d")
     safe_user_input = redact_sensitive_text(user_input)
 
     expense_categories = get_valid_categories("expense")
@@ -314,7 +315,7 @@ def parse_with_pending_fallback(user_input: str) -> dict:
             "description": None,
             "catatan": "",
             "tipe_pengeluaran": "",
-            "date": datetime.now().strftime("%Y-%m-%d"),
+            "date": business_now().strftime("%Y-%m-%d"),
         }
 
     # Keep this section separated from the surrounding flow.

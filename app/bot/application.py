@@ -88,6 +88,14 @@ from app.bot.handler_parts.state_utils import clear_pending_flow_state_before_co
 from app.bot.pending_actions import pending_action_request_context
 # Import app.sheets.client so this module can use its helpers.
 from app.sheets.client import sheets_transaction
+from app.observability import (
+    correlation_scope,
+    emit_event,
+    increment_metric,
+    monotonic_ms,
+    new_correlation_id,
+    observe_duration,
+)
 
 
 # Wrapper ini menjaga setiap aksi Telegram berada dalam satu konteks rollback Sheets.
@@ -118,6 +126,9 @@ def atomic_bot_handler(callback):
             Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
         """
         callback_name = getattr(callback, "__name__", "telegram_handler")
+        update_id = getattr(update, "update_id", None)
+        correlation_id = f"tg-{int(update_id)}" if isinstance(update_id, int) else new_correlation_id("tg")
+        started_ms = monotonic_ms()
 
         # Valid slash commands should start from a clean transient state.
         # Without this, an old wizard such as /asset_add can keep consuming the
@@ -135,9 +146,34 @@ def atomic_bot_handler(callback):
         callback_message = getattr(callback_query, "message", None)
         preview_message_id = getattr(callback_message, "message_id", None)
 
-        with pending_action_request_context(context.user_data, owner_user_id, preview_message_id):
-            with sheets_transaction(label=callback_name):
-                return await callback(update, context, *args, **kwargs)
+        with correlation_scope(correlation_id):
+            increment_metric(f"telegram.handler.{callback_name}.started")
+            emit_event("telegram_handler_started", handler=callback_name)
+            try:
+                with pending_action_request_context(context.user_data, owner_user_id, preview_message_id):
+                    with sheets_transaction(label=callback_name):
+                        result = await callback(update, context, *args, **kwargs)
+            except Exception as exc:
+                duration_ms = monotonic_ms() - started_ms
+                increment_metric(f"telegram.handler.{callback_name}.failed")
+                observe_duration(f"telegram.handler.{callback_name}.latency_ms", duration_ms)
+                emit_event(
+                    "telegram_handler_failed",
+                    handler=callback_name,
+                    duration_ms=round(duration_ms, 3),
+                    error_type=type(exc).__name__,
+                )
+                raise
+
+            duration_ms = monotonic_ms() - started_ms
+            increment_metric(f"telegram.handler.{callback_name}.completed")
+            observe_duration(f"telegram.handler.{callback_name}.latency_ms", duration_ms)
+            emit_event(
+                "telegram_handler_completed",
+                handler=callback_name,
+                duration_ms=round(duration_ms, 3),
+            )
+            return result
 
     return wrapped
 
@@ -335,7 +371,7 @@ async def scheduled_data_export(context):
         )
     # Handle an expected failure from the guarded operation above.
     except Exception as exc:
-        print(f"[AUTO EXPORT ERROR] {exc}")
+        emit_event("scheduled_export_job_failed", error_type=type(exc).__name__)
 
 
 # Helper for register job queue jobs.

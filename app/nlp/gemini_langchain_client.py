@@ -19,12 +19,19 @@ from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 # Import app.config so this module can use its helpers.
-from app.config import GEMINI_API_KEY
+from app.config import (
+    GEMINI_API_KEY,
+    GEMINI_MAX_OUTPUT_CHARS,
+    GEMINI_MAX_OUTPUT_TOKENS,
+    GEMINI_TIMEOUT_SECONDS,
+)
+from app.observability import emit_event, increment_metric, monotonic_ms, observe_duration
 
 
 DEFAULT_TEXT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 DEFAULT_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash")
 DEFAULT_INSIGHT_MODEL = os.getenv("GEMINI_INSIGHT_MODEL", "gemini-2.5-flash")
+GEMINI_CLIENT_VERSION = "phase1b-v1"
 
 
 # Helper for require api key.
@@ -72,6 +79,8 @@ def get_gemini_llm(model_name: str, temperature: float = 0.0) -> ChatGoogleGener
         model=model_name,
         google_api_key=_require_api_key(),
         temperature=temperature,
+        timeout=GEMINI_TIMEOUT_SECONDS,
+        max_output_tokens=GEMINI_MAX_OUTPUT_TOKENS,
     )
 
 
@@ -81,7 +90,7 @@ def _extract_text(response: Any) -> str:
     content = getattr(response, "content", "")
 
     if isinstance(content, str):
-        return content.strip()
+        return content.strip()[:GEMINI_MAX_OUTPUT_CHARS]
 
     if isinstance(content, list):
         parts: list[str] = []
@@ -96,9 +105,72 @@ def _extract_text(response: Any) -> str:
                 if text:
                     # Append the current value to parts.
                     parts.append(str(text))
-        return "\n".join(parts).strip()
+        return "\n".join(parts).strip()[:GEMINI_MAX_OUTPUT_CHARS]
 
-    return str(content or "").strip()
+    return str(content or "").strip()[:GEMINI_MAX_OUTPUT_CHARS]
+
+
+def _extract_usage(response: Any) -> dict[str, int | None]:
+    """Extract provider usage only when the response exposes numeric metadata."""
+
+    usage = getattr(response, "usage_metadata", None) or {}
+    if not isinstance(usage, dict):
+        usage = {
+            "input_tokens": getattr(usage, "input_tokens", None),
+            "output_tokens": getattr(usage, "output_tokens", None),
+            "total_tokens": getattr(usage, "total_tokens", None),
+        }
+
+    def numeric(*keys: str) -> int | None:
+        for key in keys:
+            value = usage.get(key)
+            if isinstance(value, (int, float)):
+                return int(value)
+        return None
+
+    return {
+        "input_tokens": numeric("input_tokens", "prompt_token_count", "prompt_tokens"),
+        "output_tokens": numeric("output_tokens", "candidates_token_count", "completion_tokens"),
+        "total_tokens": numeric("total_tokens", "total_token_count"),
+    }
+
+
+def _invoke_with_observability(llm: Any, message: HumanMessage, *, model_name: str, modality: str) -> Any:
+    """Invoke Gemini with bounded metadata logging and no prompt content."""
+
+    started = monotonic_ms()
+    increment_metric("gemini.calls")
+    try:
+        response = llm.invoke([message])
+    except Exception as exc:
+        duration_ms = monotonic_ms() - started
+        increment_metric("gemini.errors")
+        observe_duration("gemini.latency_ms", duration_ms)
+        emit_event(
+            "gemini_call_failed",
+            model=model_name,
+            modality=modality,
+            client_version=GEMINI_CLIENT_VERSION,
+            duration_ms=round(duration_ms, 3),
+            error_type=type(exc).__name__,
+        )
+        raise
+
+    duration_ms = monotonic_ms() - started
+    usage = _extract_usage(response)
+    observe_duration("gemini.latency_ms", duration_ms)
+    increment_metric("gemini.success")
+    emit_event(
+        "gemini_call_completed",
+        model=model_name,
+        modality=modality,
+        client_version=GEMINI_CLIENT_VERSION,
+        duration_ms=round(duration_ms, 3),
+        input_tokens=usage["input_tokens"],
+        output_tokens=usage["output_tokens"],
+        total_tokens=usage["total_tokens"],
+    )
+    return response
 
 
 # Helper for generate text with gemini.
@@ -124,8 +196,14 @@ def generate_text_with_gemini(
     Flow constraints:
         Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
     """
-    llm = get_gemini_llm(model_name or DEFAULT_TEXT_MODEL, float(temperature))
-    response = llm.invoke([HumanMessage(content=prompt)])
+    selected_model = model_name or DEFAULT_TEXT_MODEL
+    llm = get_gemini_llm(selected_model, float(temperature))
+    response = _invoke_with_observability(
+        llm,
+        HumanMessage(content=prompt),
+        model_name=selected_model,
+        modality="text",
+    )
     return _extract_text(response)
 
 
@@ -181,7 +259,8 @@ def generate_text_from_image_with_gemini(
     if not image_bytes:
         raise ValueError("File gambar kosong atau gagal dibaca.")
 
-    llm = get_gemini_llm(model_name or DEFAULT_IMAGE_MODEL, float(temperature))
+    selected_model = model_name or DEFAULT_IMAGE_MODEL
+    llm = get_gemini_llm(selected_model, float(temperature))
     data_url = _make_data_url(image_bytes, mime_type)
 
     # Format standar LangChain multimodal.
@@ -192,7 +271,12 @@ def generate_text_from_image_with_gemini(
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        response = llm.invoke([HumanMessage(content=content)])
+        response = _invoke_with_observability(
+            llm,
+            HumanMessage(content=content),
+            model_name=selected_model,
+            modality="image",
+        )
         return _extract_text(response)
     # Handle an expected failure from the guarded operation above.
     except Exception as first_error:
@@ -202,7 +286,12 @@ def generate_text_from_image_with_gemini(
         ]
         # Run this operation in a guarded block so failures can be handled.
         try:
-            response = llm.invoke([HumanMessage(content=alt_content)])
+            response = _invoke_with_observability(
+                llm,
+                HumanMessage(content=alt_content),
+                model_name=selected_model,
+                modality="image_fallback",
+            )
             return _extract_text(response)
         # Handle an expected failure from the guarded operation above.
         except Exception:

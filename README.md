@@ -338,6 +338,9 @@ GEMINI_TEXT_MODEL=gemini-3.1-flash-lite
 GEMINI_INTENT_MODEL=gemini-3.1-flash-lite
 GEMINI_IMAGE_MODEL=gemini-3.1-flash-lite
 GEMINI_INSIGHT_MODEL=gemini-3.1-flash-lite
+GEMINI_TIMEOUT_SECONDS=30
+GEMINI_MAX_OUTPUT_TOKENS=2048
+GEMINI_MAX_OUTPUT_CHARS=50000
 ```
 
 At the moment, Gemini is the only LLM provider supported out of the box. Other providers need a new adapter or client implementation.
@@ -602,6 +605,9 @@ BOT_MODE=webhook
 WEBHOOK_URL=https://your-domain.com
 TELEGRAM_WEBHOOK_SECRET=your_secret
 APP_PORT=8000
+APP_TIMEZONE=Asia/Jakarta
+APP_INSTANCE_COUNT=1
+SCHEDULER_ENABLED=true
 ```
 
 Run:
@@ -611,6 +617,8 @@ BOT_MODE=webhook python main.py
 ```
 
 Polling mode is still the recommended default for local use and simple 24/7 deployment.
+
+For webhook monitoring, use `GET /health` as liveness and `GET /ready` as dependency readiness. The built-in scheduler currently supports one application instance only; startup rejects multiple instances while scheduling is enabled. Python 3.12 is the supported CI runtime.
 
 ## Author
 

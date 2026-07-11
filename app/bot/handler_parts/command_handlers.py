@@ -4,6 +4,7 @@
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
+from app.clock import business_now
 from app.services.pending_expense_service import find_pending_by_ref
 # Import pathlib so /manual can resolve docs relative to the project root.
 from pathlib import Path
@@ -4085,7 +4086,7 @@ def build_selected_debt_settle_transaction(payload: dict, result: dict) -> dict:
         "description": desc,
         "catatan": build_selected_settle_catatan(payload, result),
         "tipe_pengeluaran": "",
-        "date": datetime.now().strftime("%Y-%m-%d"),
+        "date": business_now().strftime("%Y-%m-%d"),
         "hutang_id": ", ".join([x for x in affected_ids if x]),
         "tipe_hutang": tipe_hutang,
         "parsed_by": "debt_settle",

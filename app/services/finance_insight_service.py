@@ -10,6 +10,7 @@ import re
 from collections import Counter, defaultdict
 # Import datetime so this module can use its helpers.
 from datetime import datetime, timedelta
+from app.clock import business_now
 # Import statistics so this module can use its helpers.
 from statistics import mean, median
 
@@ -185,7 +186,7 @@ def current_month() -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    return datetime.now().strftime("%Y-%m")
+    return business_now().strftime("%Y-%m")
 
 
 # Helper for normalize month arg.
@@ -204,7 +205,7 @@ def normalize_month_arg(value: str | None = None) -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    today = datetime.now()
+    today = business_now()
     # Validate missing value before continuing.
     if not value:
         return current_month()
@@ -292,7 +293,7 @@ def parse_period_from_text(text: str) -> dict:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
     raw = str(text or "").lower()
-    today = datetime.now().date()
+    today = business_now().date()
 
     m = re.search(r"(20\d{2})[-/](0?[1-9]|1[0-2])", raw)
     if m:

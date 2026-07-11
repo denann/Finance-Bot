@@ -5,6 +5,7 @@
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
+from app.clock import business_now
 # Import app.bot.handler_parts.networth_assets so this module can use its helpers.
 from app.bot.handler_parts.networth_assets import build_asset_confirm_preview
 # Import app.services.resolver_service so this module can use its helpers.
@@ -5343,7 +5344,7 @@ def build_debt_cashflow_transaction(
     person = debt_parsed.get("person_name") or ""
     amount = debt_parsed.get("amount") or 0
     raw = debt_parsed.get("raw_input") or ""
-    transaction_date = debt_parsed.get("date") or datetime.now().strftime("%Y-%m-%d")
+    transaction_date = debt_parsed.get("date") or business_now().strftime("%Y-%m-%d")
     hutang_id = debt_parsed.get("hutang_id") or debt_parsed.get("debt_id") or debt_parsed.get("target_debt_id") or ""
     tipe_hutang = debt_parsed.get("tipe_hutang") or ""
     # Validate missing tipe hutang before continuing.

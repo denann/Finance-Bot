@@ -3,6 +3,7 @@
 
 # Import datetime so this module can use its helpers.
 from datetime import datetime, date, timedelta
+from app.clock import business_now
 # Import re for this module's local operations.
 import re
 
@@ -44,7 +45,7 @@ def get_current_month() -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    return datetime.now().strftime("%Y-%m")
+    return business_now().strftime("%Y-%m")
 
 
 # Helper for normalize month.
@@ -280,7 +281,7 @@ def set_budget(category: str, amount: float, month: str = None) -> dict:
 
     # Load records for the current calculation.
     records = get_all_records(SHEET_BUDGETS)
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = business_now().strftime("%Y-%m-%d")
 
     # Iterate through each i, record.
     for i, record in enumerate(records):

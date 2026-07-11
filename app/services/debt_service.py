@@ -3,6 +3,7 @@
 
 # Import datetime so this module can use its helpers.
 from datetime import datetime
+from app.clock import business_now
 # Import re for this module's local operations.
 import re
 # Import app.sheets.client so this module can use its helpers.
@@ -83,7 +84,7 @@ def format_rupiah(amount: float) -> str:
 # Helper for generate debt id.
 def generate_debt_id() -> str:
     """Generate a unique debt ID for the debts sheet."""
-    return datetime.now().strftime("debt_%Y%m%d_%H%M%S_%f")
+    return business_now().strftime("debt_%Y%m%d_%H%M%S_%f")
 
 
 # Helper for generate payment id.
@@ -102,7 +103,7 @@ def generate_payment_id() -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    return datetime.now().strftime("pay_%Y%m%d_%H%M%S_%f")
+    return business_now().strftime("pay_%Y%m%d_%H%M%S_%f")
 
 
 # Helper for normalize person name.
@@ -253,7 +254,7 @@ def append_debt_mutation(
         generate_payment_id(),
         debt_id,
         amount,
-        datetime.now().strftime("%Y-%m-%d"),
+        business_now().strftime("%Y-%m-%d"),
         f"[{mutation_type}] {note}".strip(),
     ]
     append_row(SHEET_DEBT_PAYMENTS, payment_row)
@@ -335,7 +336,7 @@ def add_debt(
         description,
         due_date,
         "FALSE",
-        datetime.now().strftime("%Y-%m-%d"),
+        business_now().strftime("%Y-%m-%d"),
         "",
         source_transaction_id or "",
         cashflow_mode or "",
@@ -397,7 +398,7 @@ def add_debt(
             description,
             due_date,
             "FALSE",
-            datetime.now().strftime("%Y-%m-%d"),
+            business_now().strftime("%Y-%m-%d"),
             "",
         ]
 
@@ -495,7 +496,7 @@ def add_debt(
             SHEET_DEBTS,
             existing_row,
             SETTLED_AT_COL,
-            datetime.now().strftime("%Y-%m-%d") if is_settled else "",
+            business_now().strftime("%Y-%m-%d") if is_settled else "",
         )
 
         append_debt_mutation(
@@ -641,7 +642,7 @@ def add_payment(debt_id: str, amount: float, note: str = "") -> dict:
                 SHEET_DEBTS,
                 debt_row_index,
                 SETTLED_AT_COL,
-                datetime.now().strftime("%Y-%m-%d"),
+                business_now().strftime("%Y-%m-%d"),
             )
 
         append_debt_mutation(
@@ -1171,7 +1172,7 @@ def offset_debt_by_person(
     remaining_offset = amount
     allocations = []
     affected_debt_ids = []
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = business_now().strftime("%Y-%m-%d")
     note = description or "Kompensasi hutang-piutang"
 
     # Run this operation in a guarded block so failures can be handled.
@@ -1317,7 +1318,7 @@ def _reduce_debt_remaining_for_settlement(debt: dict, amount: float, note: str, 
 
     new_remaining = max(0.0, current_remaining - amount)
     is_settled = new_remaining <= 0.0001
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = business_now().strftime("%Y-%m-%d")
 
     update_cell(SHEET_DEBTS, row_index, DEBT_REMAINING_AMOUNT_COL, 0 if is_settled else new_remaining)
     update_cell(SHEET_DEBTS, row_index, DEBT_IS_SETTLED_COL, "TRUE" if is_settled else "FALSE")
@@ -1962,7 +1963,7 @@ def _set_debt_remaining(row_index: int, new_remaining: float, original_amount: f
     is_settled = remaining <= 0.0001
     update_cell(SHEET_DEBTS, row_index, DEBT_REMAINING_AMOUNT_COL, 0 if is_settled else remaining)
     update_cell(SHEET_DEBTS, row_index, DEBT_IS_SETTLED_COL, "TRUE" if is_settled else "FALSE")
-    update_cell(SHEET_DEBTS, row_index, DEBT_SETTLED_AT_COL, datetime.now().strftime("%Y-%m-%d") if is_settled else "")
+    update_cell(SHEET_DEBTS, row_index, DEBT_SETTLED_AT_COL, business_now().strftime("%Y-%m-%d") if is_settled else "")
 
 
 # Helper for reverse debt payment transaction.
@@ -2520,7 +2521,7 @@ def upsert_overpaid_adjustment(original_debt: dict, overpaid_amount: float, debt
 
     adjustment_type = "payable" if old_type == "receivable" else "receivable"
     source_marker = f"overpaid:{debt_id}"
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = business_now().strftime("%Y-%m-%d")
     description = f"[OVERPAID_ADJUSTMENT] Kelebihan pembayaran dari {debt_id}"
     row_index, existing = find_overpaid_adjustment_for_debt(debt_id, debt_index=debt_index)
 
@@ -2616,7 +2617,7 @@ def sync_debt_charges_from_transaction_edit(old_txn: dict, new_txn: dict) -> dic
         return {"success": False, "message": "Nominal transaksi lama/baru tidak valid.", "updated": [], "overpaid": []}
 
     ratio = new_amount / old_amount
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = business_now().strftime("%Y-%m-%d")
     # Extract updated for validation.
     updated = []
     overpaid_items = []
@@ -2791,7 +2792,7 @@ def void_linked_debt_only(debt_id: str, reason: str = "Transaksi sumber dihapus"
             "debt_id": debt_id,
         }
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = business_now().strftime("%Y-%m-%d")
     old_description = str(debt.get("description", "") or "").strip()
     void_note = f"[VOID {today}] {reason}"
     new_description = f"{old_description} | {void_note}" if old_description else void_note
@@ -3370,7 +3371,7 @@ def void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
     debt_row_index = int(preview["debt_row_index"])
     cashflow_txn = preview["cashflow_txn"]
     reverse_deltas = preview.get("reverse_deltas", {})
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = business_now().strftime("%Y-%m-%d")
 
     if cashflow_txn and reverse_deltas:
         # Run this operation in a guarded block so failures can be handled.

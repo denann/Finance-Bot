@@ -12,6 +12,7 @@ import re
 import uuid
 # Import datetime so this module can use its helpers.
 from datetime import datetime, timedelta, date
+from app.clock import business_now
 
 # Import app.config so this module can use its helpers.
 from app.config import SHEET_PENDING_EXPENSES
@@ -114,7 +115,7 @@ def now_str() -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return business_now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 # Helper for today.
@@ -133,7 +134,7 @@ def today() -> date:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    return datetime.now().date()
+    return business_now().date()
 
 
 # Helper for current month.
@@ -152,7 +153,7 @@ def current_month() -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    return datetime.now().strftime("%Y-%m")
+    return business_now().strftime("%Y-%m")
 
 
 # Helper for format rupiah.
@@ -202,7 +203,7 @@ def generate_pending_id() -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    timestamp = business_now().strftime("%Y%m%d_%H%M%S_%f")
     suffix = uuid.uuid4().hex[:8]
     return f"pend_{timestamp}_{suffix}"
 
@@ -1021,7 +1022,7 @@ def mark_pending_paid(ref: str, account: str | None = None, paid_date: str | Non
     if status in CLOSED_STATUSES:
         return {"success": False, "message": f"Pending expense sudah berstatus {status}."}
 
-    paid_date = str(paid_date or "").strip() or datetime.now().strftime("%Y-%m-%d")
+    paid_date = str(paid_date or "").strip() or business_now().strftime("%Y-%m-%d")
     txn_account = str(account or item.get("account") or "").strip()
     # Validate missing txn account before continuing.
     if not txn_account:

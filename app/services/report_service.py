@@ -3,6 +3,7 @@
 
 # Import datetime so this module can use its helpers.
 from datetime import datetime, timedelta
+from app.clock import business_now
 # Import re for this module's local operations.
 import re
 
@@ -1002,7 +1003,7 @@ def parse_report_date_arg(value: str | None = None) -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    today = datetime.now().date()
+    today = business_now().date()
 
     # Validate missing value before continuing.
     if not value:
@@ -1059,7 +1060,7 @@ def parse_report_month_arg(value: str | None = None) -> tuple[int, int]:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    today = datetime.now().date()
+    today = business_now().date()
 
     # Validate missing value before continuing.
     if not value:
@@ -1148,7 +1149,7 @@ def get_month_range(year: int | None = None, month: int | None = None) -> tuple[
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    now = datetime.now()
+    now = business_now()
     year = int(year or now.year)
     month = int(month or now.month)
 
@@ -1749,7 +1750,7 @@ def get_top_expenses(month: str | None = None, top_n: int = 5) -> list[dict]:
     """
     # Validate missing month before continuing.
     if not month:
-        month = datetime.now().strftime("%Y-%m")
+        month = business_now().strftime("%Y-%m")
 
     # Load records for the current calculation.
     records = get_transaction_records_for_report()

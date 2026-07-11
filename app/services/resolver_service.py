@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 # Import datetime so this module can use its helpers.
 from datetime import datetime
+from app.clock import business_now
 # Import difflib so this module can use its helpers.
 from difflib import SequenceMatcher
 # Import typing so this module can use its helpers.
@@ -214,7 +215,7 @@ def create_account(account_name: str, initial_balance: float = 0, account_type: 
             "account_name": resolved.get("account_name"),
         }
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = business_now().strftime("%Y-%m-%d")
     append_row_raw(SHEET_ACCOUNTS, [clean_name, account_type or "bank", float(initial_balance or 0), "IDR", today])
     return {
         "success": True,

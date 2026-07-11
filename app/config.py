@@ -39,6 +39,35 @@ def _parse_int_env(name: str, default: int | None = None) -> int | None:
         raise ValueError(f"{name} harus berupa angka.") from exc
 
 
+def _parse_float_env(name: str, default: float) -> float:
+    """Parse a positive floating-point environment value."""
+
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return float(default)
+    try:
+        value = float(str(raw).strip())
+    except ValueError as exc:
+        raise ValueError(f"{name} harus berupa angka.") from exc
+    if value <= 0:
+        raise ValueError(f"{name} harus lebih dari 0.")
+    return value
+
+
+def _parse_bool_env(name: str, default: bool) -> bool:
+    """Parse a strict boolean environment value with a safe default."""
+
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return bool(default)
+    normalized = str(raw).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} harus berupa true/false.")
+
+
 # App runtime
 # Keep this section separated from the surrounding flow.
 BOT_MODE = os.getenv("BOT_MODE", "polling").strip().lower()
@@ -63,12 +92,26 @@ GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "service_
 
 # Keep this section separated from the surrounding flow.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_TIMEOUT_SECONDS = _parse_float_env("GEMINI_TIMEOUT_SECONDS", 30.0)
+GEMINI_MAX_OUTPUT_TOKENS = int(_parse_int_env("GEMINI_MAX_OUTPUT_TOKENS", 2048) or 0)
+GEMINI_MAX_OUTPUT_CHARS = int(_parse_int_env("GEMINI_MAX_OUTPUT_CHARS", 50000) or 0)
 
 # App
 # Keep this section separated from the surrounding flow.
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip().rstrip("/")
 # Keep this section separated from the surrounding flow.
 APP_PORT = _parse_int_env("APP_PORT", 8000) or 8000
+APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Jakarta").strip() or "Asia/Jakarta"
+APP_INSTANCE_COUNT = int(_parse_int_env("APP_INSTANCE_COUNT", 1) or 0)
+SCHEDULER_ENABLED = _parse_bool_env("SCHEDULER_ENABLED", True)
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO"
+
+if APP_INSTANCE_COUNT < 1:
+    raise ValueError("APP_INSTANCE_COUNT harus minimal 1.")
+if GEMINI_MAX_OUTPUT_TOKENS < 1:
+    raise ValueError("GEMINI_MAX_OUTPUT_TOKENS harus minimal 1.")
+if GEMINI_MAX_OUTPUT_CHARS < 1:
+    raise ValueError("GEMINI_MAX_OUTPUT_CHARS harus minimal 1.")
 
 # Sheet tab names — centralized here so they are easy to change
 # Keep this section separated from the surrounding flow.

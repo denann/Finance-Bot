@@ -5,6 +5,10 @@
 - External services: not called
 - Live AI evaluation: `NOT_RUN`
 
+## Post-report owner decisions
+
+Phase 1B closed both owner decisions recorded by this Phase 1A report. Explicit `dari DANA` debt cashflow now retains DANA as the account, and budget mutations keep the existing final preview with `Simpan / Batal` before any write. The historical findings below describe the state at Phase 1A completion.
+
 ## What changed
 
 - Added fixture-driven parser, slash routing, parse-safety, preview readiness, split-bill, multi-input, manual-edit, and multi-step confirmation regressions.

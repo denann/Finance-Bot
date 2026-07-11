@@ -79,3 +79,19 @@ def test_message_date_guard_runs_before_early_debt_route() -> None:
     guard_position = source.index("explicit_date = detect_date_result(user_text)")
     debt_position = source.index("early_debt_parsed = parse_debt_input(user_text)")
     assert guard_position < debt_position
+
+
+def test_budget_handler_builds_preview_without_writing() -> None:
+    """Owner-approved budget mutations must remain preview-before-write."""
+
+    calls = _called_names(
+        ROOT / "app/bot/handler_parts/command_handlers.py",
+        "set_budget_handler",
+    )
+    assert "confirm_keyboard" in calls
+    assert "set_budget" not in calls
+
+    callback_source = (ROOT / "app/bot/handler_parts/callback_handler.py").read_text(encoding="utf-8")
+    budget_branch = callback_source.index('if confirm_target == "budget"')
+    budget_write = callback_source.index("result = set_budget", budget_branch)
+    assert budget_branch < budget_write

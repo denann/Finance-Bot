@@ -31,7 +31,7 @@ def test_parser_case(case: dict, monkeypatch: pytest.MonkeyPatch) -> None:
 
     reference_date = RealDateTime.fromisoformat(case.get("reference_date", "2026-07-10"))
     FixedDateTime.current = reference_date
-    monkeypatch.setattr(regex_parser, "datetime", FixedDateTime)
+    monkeypatch.setattr(regex_parser, "business_now", lambda: FixedDateTime.current)
 
     parser_name = case.get("parser", "transaction")
     if parser_name == "debt":

@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 # Import fastapi so this module can use its helpers.
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 
 # Import app.api.webhook so this module can use its helpers.
 from app.api.webhook import router as webhook_router, set_telegram_app
@@ -26,6 +27,7 @@ from app.bot.application import build_telegram_app
 from app.config import (
     # Include this value in the surrounding collection or call.
     ALLOWED_USER_ID,
+    APP_INSTANCE_COUNT,
     # Include this value in the surrounding collection or call.
     APP_PORT,
     # Include this value in the surrounding collection or call.
@@ -42,12 +44,15 @@ from app.config import (
     TELEGRAM_WEBHOOK_SECRET,
     # Include this value in the surrounding collection or call.
     WEBHOOK_URL,
+    SCHEDULER_ENABLED,
 # Close the structure that was opened above.
 )
 # Import app.scheduler.jobs so this module can use its helpers.
 from app.scheduler.jobs import create_scheduler
 # Import app.sheets.client so this module can use its helpers.
 from app.sheets.client import get_spreadsheet, ensure_spreadsheet_schema
+from app.observability import configure_logging, emit_event
+from app.operations import RuntimeStateStore, validate_instance_policy
 
 
 # Implementation section
@@ -60,6 +65,8 @@ set_telegram_app(telegram_app)
 scheduler = create_scheduler()
 # Prepare webhook telegram started for the next step.
 _webhook_telegram_started = False
+runtime_state = RuntimeStateStore(BOT_MODE, scheduler_enabled=SCHEDULER_ENABLED)
+configure_logging()
 
 
 # Define validate runtime config for callers in this flow.
@@ -105,10 +112,13 @@ def validate_runtime_config(mode: str = BOT_MODE):
         # Close the structure that was opened above.
         )
 
+    validate_instance_policy(APP_INSTANCE_COUNT, SCHEDULER_ENABLED)
+    runtime_state.update(config_ready=True)
+
 
 # Define ensure schema on startup for callers in this flow.
 def ensure_schema_on_startup():
-    """Ensure that setup is ready for schema on startup."""
+    """Check schema readiness while keeping failures generic and non-fatal."""
     # Run this operation in a guarded block so failures can be handled.
     try:
         # Prepare schema results for the next step.
@@ -129,11 +139,20 @@ def ensure_schema_on_startup():
             f" Perubahan: {len(changed)}."
         # Close the structure that was opened above.
         )
+        runtime_state.update(sheets_ready=True)
+        emit_event(
+            "sheets_schema_ready",
+            tabs_checked=len(schema_results),
+            tabs_changed=len(changed),
+        )
+        return True
     # Handle an expected failure from the guarded operation above.
     except Exception as exc:
-        # Schema compatibility note for Google Sheets headers and rows.
-        # Schema compatibility note for Google Sheets headers and rows.
-        print(f"⚠️ Google Sheets schema belum bisa dipastikan: {exc}")
+        error_type = type(exc).__name__
+        runtime_state.update(sheets_ready=False)
+        emit_event("sheets_schema_not_ready", error_type=error_type)
+        print(f"⚠️ Google Sheets schema belum siap ({error_type}).")
+        return False
 
 
 # Define start scheduler once for callers in this flow.
@@ -152,11 +171,19 @@ def start_scheduler_once():
     Flow constraints:
         Keep behavior compatible with existing callers and avoid unrelated schema or flow changes.
     """
+    if not SCHEDULER_ENABLED:
+        runtime_state.update(scheduler_ready=False)
+        emit_event("scheduler_disabled")
+        return
+
+    validate_instance_policy(APP_INSTANCE_COUNT, SCHEDULER_ENABLED)
     # Handle the missing or empty scheduler.running case.
     if not scheduler.running:
         # Run this statement as part of the current workflow.
         scheduler.start()
         print(f"✅ Scheduler started. Jobs: {[job.name for job in scheduler.get_jobs()]}")
+    runtime_state.update(scheduler_ready=True)
+    emit_event("scheduler_ready", job_count=len(scheduler.get_jobs()))
 
 
 # Define shutdown scheduler once for callers in this flow.
@@ -179,6 +206,7 @@ def shutdown_scheduler_once():
     if scheduler.running:
         # Run this statement as part of the current workflow.
         scheduler.shutdown()
+    runtime_state.update(scheduler_ready=False)
 
 
 # ── FastAPI startup & shutdown, only active when webhook mode is used ──────
@@ -213,6 +241,7 @@ async def startup():
     await telegram_app.start()
     # Prepare webhook telegram started for the next step.
     _webhook_telegram_started = True
+    runtime_state.update(telegram_ready=True)
     # Run this statement as part of the current workflow.
     ensure_schema_on_startup()
 
@@ -226,6 +255,7 @@ async def startup():
 
     # Run this statement as part of the current workflow.
     start_scheduler_once()
+    runtime_state.update(startup_complete=True)
     print(f"✅ Bot started. Webhook: {WEBHOOK_URL}/webhook")
 
 
@@ -250,6 +280,7 @@ async def shutdown():
 
     # Run this statement as part of the current workflow.
     shutdown_scheduler_once()
+    runtime_state.update(startup_complete=False, telegram_ready=False)
     # Handle the case where _webhook_telegram_started.
     if _webhook_telegram_started:
         # Wait for telegram_app.stop before continuing this flow.
@@ -303,6 +334,15 @@ async def health_check():
     return {"status": "ok", "mode": BOT_MODE}
 
 
+@app.get("/ready")
+async def readiness_check():
+    """Return generic dependency readiness without raw exception details."""
+
+    snapshot = runtime_state.snapshot()
+    status_code = 200 if snapshot["status"] == "ready" else 503
+    return JSONResponse(status_code=status_code, content=snapshot)
+
+
 @app.get("/test-sheets", include_in_schema=False)
 # Handle the asynchronous test sheets workflow.
 async def test_sheets(x_admin_secret: str | None = Header(default=None)):
@@ -333,7 +373,10 @@ async def test_sheets(x_admin_secret: str | None = Header(default=None)):
     try:
         return run_read_only_sheets_diagnostic(get_spreadsheet)
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="Sheets diagnostic unavailable") from exc
+        error_type = type(exc).__name__
+        runtime_state.update(sheets_ready=False)
+        emit_event("sheets_schema_not_ready", error_type=error_type)
+        raise HTTPException(status_code=503, detail="Sheets diagnostic unavailable") from None
 
 
 # ── Polling mode ──────────────────────────────────────────────────────────────
@@ -366,8 +409,10 @@ async def run_polling_mode():
     await telegram_app.bot.delete_webhook(drop_pending_updates=True)
     # Wait for telegram_app.start before continuing this flow.
     await telegram_app.start()
+    runtime_state.update(telegram_ready=True)
     # Run this statement as part of the current workflow.
     start_scheduler_once()
+    runtime_state.update(startup_complete=True)
 
     # Handle the missing or empty telegram_app.updater case.
     if not telegram_app.updater:
@@ -389,6 +434,7 @@ async def run_polling_mode():
             await telegram_app.updater.stop()
         # Run this statement as part of the current workflow.
         shutdown_scheduler_once()
+        runtime_state.update(startup_complete=False, telegram_ready=False)
         # Wait for telegram_app.stop before continuing this flow.
         await telegram_app.stop()
         # Wait for telegram_app.shutdown before continuing this flow.

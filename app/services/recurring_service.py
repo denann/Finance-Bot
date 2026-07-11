@@ -11,6 +11,7 @@ import uuid
 import threading
 # Import datetime so this module can use its helpers.
 from datetime import datetime, date
+from app.clock import business_now
 
 # Import app.config so this module can use its helpers.
 from app.config import SHEET_RECURRING_RULES, SHEET_RECURRING_LOGS
@@ -103,7 +104,7 @@ def now_str() -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return business_now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 # Helper for today str.
@@ -122,7 +123,7 @@ def today_str() -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    return datetime.now().strftime("%Y-%m-%d")
+    return business_now().strftime("%Y-%m-%d")
 
 
 # Helper for generate recurring id.
@@ -141,7 +142,7 @@ def generate_recurring_id() -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    timestamp = business_now().strftime("%Y%m%d_%H%M%S_%f")
     suffix = uuid.uuid4().hex[:6]
     return f"rec_{timestamp}_{suffix}"
 
@@ -162,7 +163,7 @@ def generate_recurring_log_id() -> str:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    timestamp = business_now().strftime("%Y%m%d_%H%M%S_%f")
     suffix = uuid.uuid4().hex[:6]
     return f"reclog_{timestamp}_{suffix}"
 
@@ -389,7 +390,7 @@ def calculate_next_monthly_run(day_of_month: int, from_date: date | None = None)
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    base = from_date or datetime.now().date()
+    base = from_date or business_now().date()
 
     target_day = clamp_day(base.year, base.month, day_of_month)
     target = date(base.year, base.month, target_day)
@@ -417,7 +418,7 @@ def calculate_next_run_after_execution(rule: dict, run_date: date | None = None)
     frequency = normalize_frequency(rule.get("frequency"))
     day_of_month = normalize_day_of_month(rule.get("day_of_month"))
 
-    base = run_date or datetime.now().date()
+    base = run_date or business_now().date()
 
     if frequency == "monthly":
         if base.month == 12:
@@ -572,7 +573,7 @@ def get_due_recurring_rules(target_date: date | None = None) -> list[dict]:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    target = target_date or datetime.now().date()
+    target = target_date or business_now().date()
     active_rules = get_recurring_rules(active_only=True)
 
     due_rules = []
@@ -1027,7 +1028,7 @@ def mark_recurring_rule_paid(
             "rule": rule,
         }
 
-    target = run_date or datetime.now().date()
+    target = run_date or business_now().date()
     current_due = parse_date(rule.get("next_run_date"))
     requested_due = scheduled_run_date or current_due
     if not current_due or not requested_due:
@@ -1163,7 +1164,7 @@ def process_due_recurring_rules(target_date: date | None = None) -> dict:
     Flow constraints:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
-    target = target_date or datetime.now().date()
+    target = target_date or business_now().date()
     run_date = target.strftime("%Y-%m-%d")
 
     due_rules = get_due_recurring_rules(target)

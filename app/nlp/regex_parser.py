@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 # Import datetime so this module can use its helpers.
 from datetime import datetime, timedelta
+from app.clock import business_now
 # Import app.nlp.normalizer so this module can use its helpers.
 from app.nlp.normalizer import extract_amount_from_text, normalize_text
 
@@ -920,14 +921,14 @@ def parse_debt_input(text: str) -> dict | None:
                 person = extract_person_after(text_lower, kw)
 
             if person:
-                return {
+                return attach_debt_account_payload({
                     "intent": "add_receivable",
                     "person_name": person,
                     "amount": amount,
                     "description": extract_description(text, amount),
                     "date": detect_date(text),
                     "raw_input": text,
-                }
+                }, text)
 
     return None
 
@@ -1302,7 +1303,7 @@ def parse_day_only_date(day_text: str) -> str | None:
     if not re.fullmatch(r"0?[1-9]|[12]\d|3[01]", clean):
         return None
 
-    today = datetime.now().date()
+    today = business_now().date()
     day = int(clean)
 
     # Run this operation in a guarded block so failures can be handled.
@@ -1466,7 +1467,7 @@ def detect_relative_date(text: str) -> str | None:
         Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
     """
     clean = str(text or "").strip().lower()
-    today = datetime.now().date()
+    today = business_now().date()
 
     if re.search(r"\bhari\s+ini\b", clean):
         return today.strftime("%Y-%m-%d")
@@ -1561,7 +1562,7 @@ def detect_date_result(text: str) -> DateDetectionResult:
     """
 
     clean = str(text or "").strip().lower()
-    today = datetime.now().date()
+    today = business_now().date()
 
     explicit_pattern = (
         r"20\d{2}[-/]\d{1,2}[-/]\d{1,2}"

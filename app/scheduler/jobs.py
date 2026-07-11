@@ -8,6 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 # Import datetime so this module can use its helpers.
 from datetime import datetime
+from app.clock import business_now
 # Import telegram so this module can use its helpers.
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 # Import app.config so this module can use its helpers.
@@ -53,7 +54,7 @@ async def job_recurring_run():
         if not due_rules:
             return
 
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = business_now().strftime("%Y-%m-%d")
         lines = [
             "🔁 Recurring Transaction Reminder\n",
             f"📅 Tanggal cek: {today}",
@@ -303,7 +304,7 @@ async def job_monthly_summary():
     # Run this operation in a guarded block so failures can be handled.
     try:
         # Date parsing note: keep explicit and relative Indonesian date formats predictable.
-        now = datetime.now()
+        now = business_now()
         if now.month == 1:
             year, month = now.year - 1, 12
         # Use the fallback path when no earlier branch matched.
@@ -368,7 +369,7 @@ async def job_debt_reminder():
     # Run this operation in a guarded block so failures can be handled.
     try:
         active_debts = get_active_debts(debt_type="payable")
-        today = datetime.now().date()
+        today = business_now().date()
         reminders = []
 
         # Iterate through each debt.

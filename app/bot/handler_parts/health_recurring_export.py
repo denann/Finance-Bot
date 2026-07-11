@@ -5,11 +5,30 @@
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
+from app.clock import business_now
 # Import shlex for this module's local operations.
 import shlex
 # Import app.services.resolver_service so this module can use its helpers.
 from app.services.resolver_service import resolve_account_name
 from app.services.recurring_service import get_due_recurring_rules, get_recurring_rule_by_id
+from app.observability import emit_event
+
+
+def create_unique_export_temp_path() -> str:
+    """Create one collision-resistant CSV path for a single export attempt.
+
+    Returns:
+        Absolute temporary path owned by the caller. The caller must remove it
+        in ``finally`` after Telegram delivery succeeds or fails.
+
+    Side effects:
+        Creates one empty temporary file without exposing finance metadata in
+        its filename.
+    """
+
+    descriptor, file_path = tempfile.mkstemp(prefix="finance_export_", suffix=".csv")
+    os.close(descriptor)
+    return file_path
 
 # Helper for health status icon.
 def health_status_icon(ok: bool) -> str:
@@ -1696,11 +1715,10 @@ async def export_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    filename_suffix = filter_info.get("filename_suffix", datetime.now().strftime("%Y-%m"))
+    filename_suffix = filter_info.get("filename_suffix", business_now().strftime("%Y-%m"))
     filename = f"transactions_{filename_suffix}.csv"
 
-    temp_dir = tempfile.gettempdir()
-    file_path = os.path.join(temp_dir, filename)
+    file_path = create_unique_export_temp_path()
 
     # Run this operation in a guarded block so failures can be handled.
     try:
@@ -1720,9 +1738,10 @@ async def export_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Handle an expected failure from the guarded operation above.
     except Exception as e:
+        emit_event("manual_export_failed", error_type=type(e).__name__)
         # Send the Telegram response before continuing.
         await update.message.reply_text(
-            f"❌ Gagal membuat file CSV: {str(e)}"
+            "❌ Gagal membuat file CSV. Silakan coba lagi atau cek log operasional."
         )
 
     # Run cleanup that must happen after the guarded operation.
@@ -1782,12 +1801,11 @@ async def scheduled_export_transactions(bot, chat_id: int, period=None):
 
     filename_suffix = filter_info.get(
         "filename_suffix",
-        datetime.now().strftime("%Y-%m"),
+        business_now().strftime("%Y-%m"),
     )
     filename = f"transactions_{filename_suffix}.csv"
 
-    temp_dir = tempfile.gettempdir()
-    file_path = os.path.join(temp_dir, filename)
+    file_path = create_unique_export_temp_path()
 
     # Run this operation in a guarded block so failures can be handled.
     try:
@@ -1811,10 +1829,11 @@ async def scheduled_export_transactions(bot, chat_id: int, period=None):
 
     # Handle an expected failure from the guarded operation above.
     except Exception as e:
+        emit_event("scheduled_export_failed", error_type=type(e).__name__)
         # Send the Telegram response before continuing.
         await bot.send_message(
             chat_id=chat_id,
-            text=f"❌ Auto export gagal membuat file CSV: {str(e)}",
+            text="❌ Auto export gagal membuat file CSV. Cek log operasional.",
         )
 
     # Run cleanup that must happen after the guarded operation.
