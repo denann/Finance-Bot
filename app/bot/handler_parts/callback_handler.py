@@ -4,7 +4,61 @@
 # Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
-from app.bot.handler_parts.common_imports import *
+from app.bot.handler_parts.common_imports import (
+    ContextTypes,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    SKIP_ACCOUNT_CALLBACK_VALUE,
+    SKIP_ACCOUNT_NAME,
+    Update,
+    account_keyboard,
+    add_asset,
+    add_debt,
+    add_payment,
+    add_payment_by_person,
+    build_pending_expense_from_text,
+    calculate_account_deltas,
+    cancel_keyboard,
+    check_budget_after_transaction,
+    clear_transaction_debt_relation,
+    confirm_keyboard,
+    datetime,
+    delete_transactions_by_refs,
+    detect_date,
+    edit_transaction_by_ref,
+    estimate_payment_outcome,
+    format_debt_net_position_lines,
+    format_month_label,
+    format_rupiah,
+    get_account_balance,
+    get_debt_by_person,
+    is_authorized,
+    md_code_text,
+    md_safe,
+    normalize_month,
+    offset_debt_by_person,
+    parse_debt_input,
+    parse_human_amount,
+    parse_sheet_number,
+    parse_with_regex,
+    preview_edit_transaction_by_ref,
+    re,
+    reject_unauthorized,
+    safe_edit_message,
+    save_pending_expense,
+    save_transaction,
+    save_transactions_batch,
+    set_budget,
+    settle_selected_debt_ids,
+    short_debt_id,
+    show_callback_loading,
+    strip_date_phrases,
+    update_account_balance,
+    update_transaction_debt_relation,
+    void_debt,
+    void_debt_ids,
+    void_debts_for_transaction,
+)
 # Import app.services.resolver_service so this module can use its helpers.
 from app.services.resolver_service import create_account
 from app.services.operation_errors import PartialMutationError
@@ -900,7 +954,7 @@ async def start_bulk_edit_category_add_wizard(query, context: ContextTypes.DEFAU
     )
 
 
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Route Telegram inline button callbacks to the right pending flow.
 
     Args:

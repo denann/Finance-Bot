@@ -21,6 +21,7 @@ from app.config import (
 from app.sheets.client import append_row, get_all_records, update_cell
 # Import app.services.transaction_service so this module can use its helpers.
 from app.services.transaction_service import get_all_accounts
+from app.services.debt_service import get_active_debts, parse_sheet_number
 
 
 ASSET_COLUMNS = [
@@ -44,18 +45,6 @@ ASSET_COLUMNS = [
 ]
 
 
-LIABILITY_COLUMNS = [
-    "id",
-    "name",
-    "category",
-    "current_balance",
-    "description",
-    "is_active",
-    "created_at",
-    "updated_at",
-]
-
-
 NET_WORTH_SNAPSHOT_COLUMNS = [
     "id",
     "snapshot_date",
@@ -65,12 +54,6 @@ NET_WORTH_SNAPSHOT_COLUMNS = [
     "net_worth",
     "created_at",
 ]
-
-LIABILITY_FEATURE_REMOVED_MESSAGE = (
-    "Fitur liabilities sudah tidak aktif. "
-    "Kewajiban antar orang dikelola lewat /hutang, sedangkan net worth hanya memakai saldo rekening + aset aktif."
-)
-
 
 # Helper for now str.
 def now_str() -> str:
@@ -445,12 +428,6 @@ def build_asset_row(asset: dict) -> list:
     return [asset.get(col, "") for col in ASSET_COLUMNS]
 
 
-# Helper for build liability row.
-def build_liability_row(liability: dict) -> list:
-    """Build the data structure or message text for liability row."""
-    return [liability.get(col, "") for col in LIABILITY_COLUMNS]
-
-
 # Helper for build snapshot row.
 def build_snapshot_row(snapshot: dict) -> list:
     """Build the data structure or message text for snapshot row."""
@@ -567,33 +544,6 @@ def add_asset(
     return asset
 
 
-# Helper for add liability.
-def add_liability(
-    name: str,
-    current_balance: float,
-    category: str = "Other Liability",
-    description: str = "",
-) -> dict:
-    """Coordinate the add liability logic in the service layer.
-
-    Args:
-        name: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-        current_balance: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-        category: Category name or category-like value from user input or sheet data.
-        description: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-
-    Returns:
-        `dict` value as defined by the function signature.
-
-    Side effects:
-        None beyond the side effects already performed by the existing implementation.
-
-    Flow constraints:
-        Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
-    """
-    # Raise a clear error so the caller can stop this invalid flow.
-    raise NotImplementedError(LIABILITY_FEATURE_REMOVED_MESSAGE)
-
 # Helper for refresh gold assets.
 def refresh_gold_assets(records: list[dict]) -> list[dict]:
     """Coordinate the refresh gold assets logic in the service layer.
@@ -643,24 +593,6 @@ def get_assets(active_only: bool = True, refresh_gold: bool = True) -> list[dict
 
     return [r for r in records if is_active_record(r)]
 
-
-# Helper for get liabilities.
-def get_liabilities(active_only: bool = True) -> list[dict]:
-    """Retrieve data needed by the get liabilities workflow in the service layer.
-
-    Args:
-        active_only: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-
-    Returns:
-        `list[dict]` value as defined by the function signature.
-
-    Side effects:
-        None beyond the side effects already performed by the existing implementation.
-
-    Flow constraints:
-        Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
-    """
-    return []
 
 # Helper for get record by id.
 def get_record_by_id(sheet_name: str, record_id: str) -> dict | None:
@@ -830,50 +762,6 @@ def normalize_asset_update_field(field: str) -> str | None:
     return aliases.get(key)
 
 
-# Helper for normalize liability update field.
-def normalize_liability_update_field(field: str) -> str | None:
-    """Normalize input values for the normalize liability update field workflow in the service layer.
-
-    Args:
-        field: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-
-    Returns:
-        `str | None` value as defined by the function signature.
-
-    Side effects:
-        None beyond the side effects already performed by the existing implementation.
-
-    Flow constraints:
-        Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
-    """
-    key = str(field or "").strip().lower()
-
-    aliases = {
-        "name": "name",
-        "nama": "name",
-
-        "category": "category",
-        "kategori": "category",
-
-        "balance": "current_balance",
-        "current_balance": "current_balance",
-        "amount": "current_balance",
-        "nominal": "current_balance",
-        "sisa": "current_balance",
-
-        "description": "description",
-        "deskripsi": "description",
-        "desc": "description",
-        "keterangan": "description",
-
-        "active": "is_active",
-        "is_active": "is_active",
-        "aktif": "is_active",
-    }
-
-    return aliases.get(key)
-
-
 # Helper for normalize common update value.
 def normalize_common_update_value(field: str, value):
     """Normalize input values for the normalize common update value workflow in the service layer.
@@ -1019,31 +907,6 @@ def update_asset(asset_id: str, updates: dict) -> dict:
     }
 
 
-# Helper for update liability.
-def update_liability(liability_id: str, updates: dict) -> dict:
-    """Apply the update liability operation in the service layer.
-
-    Args:
-        liability_id: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-        updates: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-
-    Returns:
-        `dict` value as defined by the function signature.
-
-    Side effects:
-        May read from or write to the configured Google Sheets/client state according to the existing implementation.
-
-    Flow constraints:
-        Do not change Google Sheets schema or bypass explicit confirmation in caller-managed write flows.
-    """
-    return {
-        "success": False,
-        "before": {},
-        "after": {},
-        "updates": {},
-        "message": LIABILITY_FEATURE_REMOVED_MESSAGE,
-    }
-
 # Helper for deactivate asset.
 def deactivate_asset(asset_id: str) -> bool:
     """Coordinate the deactivate asset logic in the service layer.
@@ -1071,24 +934,6 @@ def deactivate_asset(asset_id: str) -> bool:
     )
 
 
-# Helper for deactivate liability.
-def deactivate_liability(liability_id: str) -> bool:
-    """Coordinate the deactivate liability logic in the service layer.
-
-    Args:
-        liability_id: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-
-    Returns:
-        `bool` value as defined by the function signature.
-
-    Side effects:
-        None beyond the side effects already performed by the existing implementation.
-
-    Flow constraints:
-        Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
-    """
-    return False
-
 # Helper for calculate net worth.
 def calculate_net_worth() -> dict:
     """Coordinate the calculate net worth logic in the service layer.
@@ -1108,6 +953,7 @@ def calculate_net_worth() -> dict:
     # Extract accounts for validation.
     accounts = get_all_accounts()
     assets = get_assets(active_only=True)
+    payable_debts = get_active_debts("payable")
 
     total_accounts = sum(
         safe_float(acc.get("balance", 0))
@@ -1121,8 +967,11 @@ def calculate_net_worth() -> dict:
         for asset in assets
     )
 
-    total_liabilities = 0.0
-    net_worth = total_accounts + total_assets
+    total_liabilities = sum(
+        parse_sheet_number(debt.get("remaining_amount", 0))
+        for debt in payable_debts
+    )
+    net_worth = total_accounts + total_assets - total_liabilities
 
     return {
         "total_accounts": total_accounts,
@@ -1131,7 +980,7 @@ def calculate_net_worth() -> dict:
         "net_worth": net_worth,
         "accounts": accounts,
         "assets": assets,
-        "liabilities": [],
+        "liabilities": payable_debts,
     }
 
 # Helper for create net worth snapshot.

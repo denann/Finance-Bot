@@ -1,8 +1,14 @@
 """Pending expense service for planned expenses or bills that should not immediately affect account balances."""
 
-
 # Import __future__ so this module can use its helpers.
 from __future__ import annotations
+
+from functools import partial
+
+from app.formatting import format_rupiah as _format_rupiah
+
+
+format_rupiah = partial(_format_rupiah, preserve_decimals=False)
 
 # Import calendar for this module's local operations.
 import calendar
@@ -154,12 +160,6 @@ def current_month() -> str:
         Keep calculations consistent with report, debt, category, and transaction semantics already used by command handlers.
     """
     return business_now().strftime("%Y-%m")
-
-
-# Helper for format rupiah.
-def format_rupiah(amount: float) -> str:
-    """Format data into a readable display for rupiah."""
-    return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
 
 
 # Helper for safe float.

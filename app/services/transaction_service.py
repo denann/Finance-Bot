@@ -1536,7 +1536,12 @@ def preview_delete_transactions(txn_ids: list[str]) -> dict:
 
 
 # Helper for delete transactions by ids.
-def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
+def delete_transactions_by_ids(
+    txn_ids: list[str],
+    *,
+    void_debts_for_transaction_fn=None,
+    reverse_debt_payment_transaction_fn=None,
+) -> dict:
     """Apply the delete transactions by ids operation in the service layer.
 
     Args:
@@ -1602,9 +1607,6 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
     reversed_payment_debt_items = []
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Import app.services.debt_service so this module can use its helpers.
-        from app.services.debt_service import void_debts_for_transaction, reverse_debt_payment_transaction
-
         # Iterate through each txn.
         for txn in deletable:
             txn_id = str(txn.get("id", "") or "").strip()
@@ -1613,8 +1615,13 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
 
             # Account flow section
             if category in {"Pembayaran Piutang", "Bayar Utang"}:
+                if reverse_debt_payment_transaction_fn is None:
+                    raise PartialMutationError(
+                        "Debt payment collaborator tidak tersedia.",
+                        operation="delete_transaction_reverse_debt_payment",
+                    )
                 # Build reverse result for the response flow.
-                reverse_result = reverse_debt_payment_transaction(txn)
+                reverse_result = reverse_debt_payment_transaction_fn(txn)
                 if not reverse_result.get("success"):
                     return {
                         "success": False,
@@ -1635,7 +1642,12 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
                 continue
 
             # Build linked result for the response flow.
-            linked_result = void_debts_for_transaction(txn_id, linked_ids)
+            if void_debts_for_transaction_fn is None:
+                raise PartialMutationError(
+                    "Debt void collaborator tidak tersedia.",
+                    operation="delete_transaction_void_linked_debt",
+                )
+            linked_result = void_debts_for_transaction_fn(txn_id, linked_ids)
             if not linked_result.get("success"):
                 return {
                     "success": False,
@@ -1707,6 +1719,9 @@ def delete_transactions_by_ids(txn_ids: list[str]) -> dict:
 def delete_transactions_by_refs(
     row_indices: list[int] | None = None,
     txn_ids: list[str] | None = None,
+    *,
+    void_debts_for_transaction_fn=None,
+    reverse_debt_payment_transaction_fn=None,
 ) -> dict:
     """Apply the delete transactions by refs operation in the service layer.
 
@@ -1765,9 +1780,6 @@ def delete_transactions_by_refs(
     reversed_payment_debt_items = []
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Import app.services.debt_service so this module can use its helpers.
-        from app.services.debt_service import void_debts_for_transaction, reverse_debt_payment_transaction
-
         # Iterate through each txn.
         for txn in deletable:
             txn_id = str(txn.get("id", "") or "").strip()
@@ -1775,8 +1787,13 @@ def delete_transactions_by_refs(
             category = str(txn.get("category", "") or "").strip()
 
             if category in {"Pembayaran Piutang", "Bayar Utang"}:
+                if reverse_debt_payment_transaction_fn is None:
+                    raise PartialMutationError(
+                        "Debt payment collaborator tidak tersedia.",
+                        operation="delete_transaction_reverse_debt_payment",
+                    )
                 # Build reverse result for the response flow.
-                reverse_result = reverse_debt_payment_transaction(txn)
+                reverse_result = reverse_debt_payment_transaction_fn(txn)
                 require_success_after_write(
                     reverse_result,
                     operation="delete_transaction_reverse_debt_payment",
@@ -1792,7 +1809,12 @@ def delete_transactions_by_refs(
                 continue
 
             # Build linked result for the response flow.
-            linked_result = void_debts_for_transaction(txn_id, linked_ids)
+            if void_debts_for_transaction_fn is None:
+                raise PartialMutationError(
+                    "Debt void collaborator tidak tersedia.",
+                    operation="delete_transaction_void_linked_debt",
+                )
+            linked_result = void_debts_for_transaction_fn(txn_id, linked_ids)
             require_success_after_write(
                 linked_result,
                 operation="delete_transaction_void_linked_debt",
@@ -2330,7 +2352,12 @@ def _payment_allocation_note(raw: str, allocations: list[dict], overpayment: flo
 
 
 # Helper for edit debt payment transaction amount.
-def edit_debt_payment_transaction_amount(preview: dict) -> dict:
+def edit_debt_payment_transaction_amount(
+    preview: dict,
+    *,
+    reverse_debt_payment_transaction_fn=None,
+    add_payment_by_person_fn=None,
+) -> dict:
     """Apply an approved amount edit for a debt payment transaction.
 
     Args:
@@ -2364,17 +2391,20 @@ def edit_debt_payment_transaction_amount(preview: dict) -> dict:
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        # Import app.services.debt_service so this module can use its helpers.
-        from app.services.debt_service import reverse_debt_payment_transaction, add_payment_by_person
+        if reverse_debt_payment_transaction_fn is None or add_payment_by_person_fn is None:
+            raise PartialMutationError(
+                "Debt payment collaborators tidak tersedia.",
+                operation="edit_debt_payment_sync",
+            )
         # Build reverse result for the response flow.
-        reverse_result = reverse_debt_payment_transaction(old_txn)
+        reverse_result = reverse_debt_payment_transaction_fn(old_txn)
         require_success_after_write(
             reverse_result,
             operation="edit_debt_payment_reverse_old",
             default_message="Gagal reverse payment lama.",
         )
 
-        payment_result = add_payment_by_person(
+        payment_result = add_payment_by_person_fn(
             person,
             new_amount,
             note=f"Edit payment dari transaksi {old_txn.get('id') or '-'}",
@@ -2445,6 +2475,9 @@ def edit_transaction_by_ref(
     updates: dict,
     row_index: int | None = None,
     txn_id: str | None = None,
+    *,
+    edit_debt_payment_transaction_fn=None,
+    sync_debt_charges_from_transaction_edit_fn=None,
 ) -> dict:
     """Apply an approved edit to one transaction reference.
 
@@ -2477,7 +2510,12 @@ def edit_transaction_by_ref(
 
     old_payment_category = str(old_txn.get("category", "") or "").strip()
     if old_payment_category in {"Pembayaran Piutang", "Bayar Utang"}:
-        return edit_debt_payment_transaction_amount(preview)
+        if edit_debt_payment_transaction_fn is None:
+            raise PartialMutationError(
+                "Debt payment edit collaborator tidak tersedia.",
+                operation="edit_debt_payment_sync",
+            )
+        return edit_debt_payment_transaction_fn(preview)
 
     # Run this operation in a guarded block so failures can be handled.
     try:
@@ -2526,11 +2564,13 @@ def edit_transaction_by_ref(
     if transaction_has_debt_relation(old_txn) or transaction_has_debt_relation(new_txn):
         # Run this operation in a guarded block so failures can be handled.
         try:
-            # Import app.services.debt_service so this module can use its helpers.
-            from app.services.debt_service import sync_debt_charges_from_transaction_edit
-
+            if sync_debt_charges_from_transaction_edit_fn is None:
+                raise PartialMutationError(
+                    "Debt charge sync collaborator tidak tersedia.",
+                    operation="edit_transaction_sync_debt",
+                )
             # Build debt sync result for the response flow.
-            debt_sync_result = sync_debt_charges_from_transaction_edit(old_txn, new_txn)
+            debt_sync_result = sync_debt_charges_from_transaction_edit_fn(old_txn, new_txn)
         # Handle an expected failure from the guarded operation above.
         except Exception as e:
             raise PartialMutationError(

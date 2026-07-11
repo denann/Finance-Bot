@@ -14,11 +14,18 @@ class FakeMessage:
     text: str = ""
     message_id: int = 1
     replies: list[dict[str, Any]] = field(default_factory=list)
+    edits: list[dict[str, Any]] = field(default_factory=list)
 
     async def reply_text(self, text: str, **kwargs: Any) -> "FakeMessage":
         """Record a text response in memory."""
 
         self.replies.append({"text": text, **kwargs})
+        return self
+
+    async def edit_text(self, text: str, **kwargs: Any) -> "FakeMessage":
+        """Record an edited text response in memory."""
+
+        self.edits.append({"text": text, **kwargs})
         return self
 
 

@@ -1,5 +1,12 @@
 """Reporting service for daily, weekly, monthly, account-based, category-based, and search reports."""
 
+from functools import partial
+
+from app.formatting import format_rupiah as _format_rupiah
+
+
+format_rupiah = partial(_format_rupiah, preserve_decimals=False)
+
 
 # Import datetime so this module can use its helpers.
 from datetime import datetime, timedelta
@@ -44,12 +51,6 @@ def get_transaction_records_for_report() -> list[dict]:
         result.append(item)
 
     return result
-
-
-# Helper for format rupiah.
-def format_rupiah(amount: float) -> str:
-    """Format data into a readable display for rupiah."""
-    return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
 
 
 # Helper for safe float.

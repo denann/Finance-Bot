@@ -11,6 +11,7 @@ from tests.fakes.external_modules import install_external_stubs
 install_external_stubs()
 
 from app.services import debt_service, transaction_service
+from app.application import transaction_debt
 from app.services.operation_errors import PartialMutationError, require_success_after_write
 from app.sheets.client import sheets_transaction
 
@@ -63,7 +64,7 @@ def test_delete_debt_result_failure_raises_after_balance_reverse() -> None:
         patch.object(debt_service, "void_debts_for_transaction", return_value={"success": False, "message": "debt failed"}),
     ):
         with pytest.raises(PartialMutationError) as error:
-            transaction_service.delete_transactions_by_refs(txn_ids=["txn_1"])
+            transaction_debt.delete_transactions_by_refs(txn_ids=["txn_1"])
 
     assert error.value.operation == "delete_transaction_void_linked_debt"
 

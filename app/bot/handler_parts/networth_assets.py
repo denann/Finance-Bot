@@ -4,7 +4,31 @@
 # Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
-from app.bot.handler_parts.common_imports import *
+from app.bot.handler_parts.common_imports import (
+    ContextTypes,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+    ast,
+    calculate_asset_gain,
+    calculate_net_worth,
+    cancel_keyboard,
+    clear_tracked_inline_keyboard,
+    detect_date,
+    format_rupiah,
+    get_assets,
+    get_net_worth_snapshots,
+    is_authorized,
+    md_code_text,
+    md_safe,
+    operator,
+    re,
+    reject_unauthorized,
+    reply_tracked_inline_keyboard,
+    safe_edit_message,
+    send_financial_mutation_preview,
+    shlex,
+)
 
 # Helper for parse asset quantity input.
 def parse_asset_quantity_input(value: str) -> dict | None:
@@ -292,9 +316,9 @@ def parse_add_key_value_args(args: list[str], item_type: str) -> dict:
     """Parse one-line add commands that use the project-wide `key=value` style.
 
     Args:
-        args: Command arguments after `/asset_add` or `/liability_add`. Values
+        args: Command arguments after `/asset_add`. Values
             may be quoted, for example `name="Laptop Kerja" amount=8jt`.
-        item_type: Supported value is `asset` or `liability`.
+        item_type: Supported value is `asset`.
 
     Returns:
         Dict shaped like `parse_pipe_add_args`, ready for preview or service
@@ -310,6 +334,8 @@ def parse_add_key_value_args(args: list[str], item_type: str) -> dict:
         structured one-line add commands and does not write to Google Sheets.
     """
     raw = " ".join(args or []).strip()
+    if item_type != "asset":
+        raise ValueError(f"Tipe add tidak dikenal: `{item_type}`")
     if not raw:
         raise ValueError("Format kosong. Contoh: `/asset_add name=Botol amount=100k category=Barang`")
 
@@ -432,18 +458,6 @@ def parse_add_key_value_args(args: list[str], item_type: str) -> dict:
             "needs_unit_price": False,
         }
 
-    if item_type == "liability":
-        name = values.get("name") or values.get("nama")
-        amount = parse_human_amount(values.get("amount") or values.get("balance") or values.get("nominal"))
-        if not name or amount <= 0:
-            raise ValueError("Format liability: `/liability_add name=Paylater amount=1200000 category=Paylater`")
-        return {
-            "name": name,
-            "amount": amount,
-            "category": values.get("category") or values.get("kategori") or "Other Liability",
-            "description": values.get("description") or values.get("desc") or values.get("deskripsi") or "",
-        }
-
     raise ValueError(f"Tipe add tidak dikenal: `{item_type}`")
 
 
@@ -535,6 +549,8 @@ def parse_pipe_add_args(args: list[str], item_type: str) -> dict:
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
     raw = " ".join(args).strip()
+    if item_type != "asset":
+        raise ValueError(f"Tipe add tidak dikenal: `{item_type}`")
 
     # Validate missing raw before continuing.
     if not raw:
@@ -558,11 +574,9 @@ def parse_pipe_add_args(args: list[str], item_type: str) -> dict:
     name = parts[0]
     # Extract amount raw for validation.
     amount_raw = parts[1]
-    category = parts[2] if len(parts) >= 3 else (
-        "Other Asset" if item_type == "asset" else "Other Liability"
-    )
+    category = parts[2] if len(parts) >= 3 else "Other Asset"
     description = parts[3] if len(parts) >= 4 else ""
-    asset_extra = parse_asset_extra_fields(parts[4:]) if item_type == "asset" else {}
+    asset_extra = parse_asset_extra_fields(parts[4:])
 
     if item_type == "asset":
         qty_info = parse_asset_quantity_input(amount_raw)
@@ -964,38 +978,6 @@ def build_assets_text(assets: list[dict]) -> str:
 
     return "\n".join(lines)
 
-# Helper for build liabilities text.
-def build_liabilities_text(liabilities: list[dict]) -> str:
-    """Build the data structure or message text for liabilities text."""
-    # Validate missing liabilities before continuing.
-    if not liabilities:
-        return (
-            "📭 Belum ada liabilitas aktif.\n\n"
-            "Tambah liabilitas:\n"
-            "`/liability_add Paylater | 1200000 | Paylater | Cicilan aktif`"
-        )
-
-    lines = ["💳 *Daftar Liabilitas Aktif*\n"]
-
-    total = 0
-
-    # Iterate through each i, liability.
-    for i, liability in enumerate(liabilities, 1):
-        balance = float(liability.get("current_balance", 0) or 0)
-        total += balance
-
-        lines.append(
-            f"{i}. *{liability.get('name', '-')}*\n"
-            f"   💰 {format_rupiah(balance)} | {liability.get('category', '-')}\n"
-            f"   📝 {liability.get('description', '-') or '-'}\n"
-            f"   🔖 `{liability.get('id', '-')}`"
-        )
-
-    lines.append(f"\n💳 Total liabilitas aktif: *{format_rupiah(total)}*")
-
-    return "\n".join(lines)
-
-
 # Helper for build update result text.
 def build_update_result_text(result: dict, label: str) -> str:
     """Build the data structure or message text for update result text."""
@@ -1103,37 +1085,6 @@ async def assets_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Send the Telegram response before continuing.
     await update.message.reply_text(
         build_assets_text(assets),
-        parse_mode="Markdown",
-    )
-
-
-async def liabilities_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle the asynchronous liabilities handler flow in the Telegram handler layer.
-
-    Args:
-        update: Telegram Update object supplied by python-telegram-bot.
-        context: Telegram callback context containing args, bot data, user data, and job data.
-
-    Returns:
-        Awaitable result from the async flow. Most Telegram handlers return `None` after sending a response.
-
-    Side effects:
-        May send or edit Telegram messages and may update `context.user_data` according to the active conversation flow.
-
-    Flow constraints:
-        Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
-    """
-    # Validate missing is authorized(update) before continuing.
-    if not is_authorized(update):
-        # Await reject unauthorized before continuing.
-        await reject_unauthorized(update)
-        return
-
-    liabilities = get_liabilities(active_only=True)
-
-    # Send the Telegram response before continuing.
-    await update.message.reply_text(
-        build_liabilities_text(liabilities),
         parse_mode="Markdown",
     )
 
@@ -1737,63 +1688,6 @@ async def asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-async def liability_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle the asynchronous liability add handler flow in the Telegram handler layer.
-
-    Args:
-        update: Telegram Update object supplied by python-telegram-bot.
-        context: Telegram callback context containing args, bot data, user data, and job data.
-
-    Returns:
-        Awaitable result from the async flow. Most Telegram handlers return `None` after sending a response.
-
-    Side effects:
-        May send or edit Telegram messages and may update `context.user_data` according to the active conversation flow.
-
-    Flow constraints:
-        Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
-    """
-    # Validate missing is authorized(update) before continuing.
-    if not is_authorized(update):
-        # Await reject unauthorized before continuing.
-        await reject_unauthorized(update)
-        return
-
-    # Run this operation in a guarded block so failures can be handled.
-    try:
-        raw_arg = " ".join(context.args or []).strip()
-        data = parse_pipe_add_args(context.args, "liability") if "|" in raw_arg else parse_add_key_value_args(context.args, "liability")
-
-        liability = add_liability(
-            name=data["name"],
-            current_balance=data["amount"],
-            category=data["category"],
-            description=data["description"],
-        )
-
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            "✅ *Liabilitas berhasil ditambahkan!*\n\n"
-            f"💳 Nama: *{liability.get('name')}*\n"
-            f"💰 Nominal: *{format_rupiah(float(liability.get('current_balance', 0) or 0))}*\n"
-            f"📁 Kategori: *{liability.get('category')}*\n"
-            f"📝 Deskripsi: {liability.get('description') or '-'}\n"
-            f"🔖 ID: `{liability.get('id')}`",
-            parse_mode="Markdown",
-        )
-
-    # Handle an expected failure from the guarded operation above.
-    except Exception as e:
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            "❌ Gagal tambah liabilitas.\n\n"
-            f"{str(e)}\n\n"
-            "Contoh:\n"
-            "`/liability_add name=Paylater amount=1200000 category=Paylater desc=\"Cicilan aktif\"`",
-            parse_mode="Markdown",
-        )
-
-
 async def asset_update_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the asynchronous asset update handler flow in the Telegram handler layer.
 
@@ -1859,62 +1753,6 @@ async def asset_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
 
-async def liability_update_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle the asynchronous liability update handler flow in the Telegram handler layer.
-
-    Args:
-        update: Telegram Update object supplied by python-telegram-bot.
-        context: Telegram callback context containing args, bot data, user data, and job data.
-
-    Returns:
-        Awaitable result from the async flow. Most Telegram handlers return `None` after sending a response.
-
-    Side effects:
-        May send or edit Telegram messages and may update `context.user_data` according to the active conversation flow.
-
-    Flow constraints:
-        Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
-    """
-    # Validate missing is authorized(update) before continuing.
-    if not is_authorized(update):
-        # Await reject unauthorized before continuing.
-        await reject_unauthorized(update)
-        return
-
-    # Run this operation in a guarded block so failures can be handled.
-    try:
-        liability_id, updates = parse_pipe_update_args(context.args, "liability_update")
-        # Build result for the response flow.
-        result = update_liability(liability_id, updates)
-
-        if not result.get("success"):
-            # Send the Telegram response before continuing.
-            await update.message.reply_text(
-                f"❌ {result.get('message')}\n\n"
-                "Cek ID dengan command:\n"
-                "`/liabilities`",
-                parse_mode="Markdown",
-            )
-            return
-
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            build_update_result_text(result, "Liabilitas")
-        )
-
-    # Handle an expected failure from the guarded operation above.
-    except Exception as e:
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            "❌ Gagal update liabilitas.\n\n"
-            f"{str(e)}\n\n"
-            "Contoh:\n"
-            "`/liability_update liab_xxx | balance=1000000`\n"
-            "`/liability_update liab_xxx | name=Paylater Shopee | balance=500000`",
-            parse_mode="Markdown",
-        )
-
-
 async def asset_off_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the asynchronous asset off handler flow in the Telegram handler layer.
 
@@ -1966,54 +1804,6 @@ async def asset_off_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 Nilai saat ini: *{format_rupiah(float(asset.get('current_value') or 0))}*\n\n"
             "Simpan perubahan ini atau batal?"
         ),
-    )
-
-
-async def liability_off_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle the asynchronous liability off handler flow in the Telegram handler layer.
-
-    Args:
-        update: Telegram Update object supplied by python-telegram-bot.
-        context: Telegram callback context containing args, bot data, user data, and job data.
-
-    Returns:
-        Awaitable result from the async flow. Most Telegram handlers return `None` after sending a response.
-
-    Side effects:
-        May send or edit Telegram messages and may update `context.user_data` according to the active conversation flow.
-
-    Flow constraints:
-        Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
-    """
-    # Validate missing is authorized(update) before continuing.
-    if not is_authorized(update):
-        # Await reject unauthorized before continuing.
-        await reject_unauthorized(update)
-        return
-
-    # Validate missing context.args before continuing.
-    if not context.args:
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            "❌ Masukkan liability ID.\n\n"
-            "Contoh:\n"
-            "`/liability_off liab_xxx`",
-            parse_mode="Markdown",
-        )
-        return
-
-    liability_id = context.args[0].strip()
-    success = deactivate_liability(liability_id)
-
-    # Validate missing success before continuing.
-    if not success:
-        await update.message.reply_text("❌ Liability tidak ditemukan.")
-        return
-
-    # Send the Telegram response before continuing.
-    await update.message.reply_text(
-        f"✅ Liability berhasil dinonaktifkan:\n`{liability_id}`",
-        parse_mode="Markdown",
     )
 
 

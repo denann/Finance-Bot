@@ -80,6 +80,18 @@ from app.bot.handlers import (
     transaksi_handler,
     unknown_command_handler,
 )
+from app.bot.command_registry import (
+    AI_COMMANDS,
+    BASIC_COMMANDS,
+    BUDGET_COMMANDS,
+    CATEGORY_COMMANDS,
+    DEBT_COMMANDS,
+    EXPORT_COMMANDS,
+    NET_WORTH_COMMANDS,
+    PENDING_COMMANDS,
+    RECURRING_COMMANDS,
+    TRANSACTION_COMMANDS,
+)
 # Import app.config so this module can use its helpers.
 from app.config import ALLOWED_USER_ID, TELEGRAM_BOT_TOKEN
 # Import app.bot.handler_parts.state_utils so this module can use its helpers.
@@ -223,93 +235,46 @@ def register_handlers(telegram_app: Application) -> Application:
         """
         telegram_app.add_handler(MessageHandler(message_filter, atomic_bot_handler(callback)))
 
+    def add_command_group(bindings) -> None:
+        """Register one ordered group from the pure public command registry."""
+
+        for command_name, callback_name in bindings:
+            callback = globals().get(callback_name)
+            if callback is None:
+                raise RuntimeError(f"Handler registry tidak menemukan {callback_name}.")
+            add_command(command_name, callback)
+
     # Basic commands for onboarding and bot checks.
-    add_command("start", start_handler)
-    add_command("quickstart", quickstart_handler)
-    add_command("cancel", cancel_handler)
-    add_command("batal", cancel_handler)
-    add_command("help", help_handler)
-    add_command("manual", manual_handler)
-    add_command("privacy", privacy_handler)
-    add_command("examples", examples_handler)
-    add_command("contoh", examples_handler)
-    add_command("health", health_handler)
+    add_command_group(BASIC_COMMANDS)
 
     # Frequently used transaction and reporting commands.
-    add_command("saldo", saldo_handler)
-    add_command("set_saldo", set_saldo_handler)
-    add_command("saldo_set", set_saldo_handler)
-    add_command("set_balance", set_saldo_handler)
-    add_command("rekening", rekening_handler)
-    add_command("harian", harian_handler)
-    add_command("mingguan", mingguan_handler)
-    add_command("bulanan", bulanan_handler)
-    add_command("grafik", grafik_handler)
-    add_command("chart", grafik_handler)
-    add_command("cari", cari_handler)
-    add_command("last", last_handler)
-    add_command("transaksi", transaksi_handler)
-    add_command("delete_txn", delete_txn_handler)
-    add_command("edit_txn", edit_txn_handler)
+    add_command_group(TRANSACTION_COMMANDS)
 
     # Export commands for backup or further analysis.
-    add_command("download_data", export_handler)
-    add_command("export", export_handler)
+    add_command_group(EXPORT_COMMANDS)
 
     # Budget commands. The regex handler supports natural input such as "budget makan 1jt".
-    add_command("budget", budget_handler)
-    add_command("set_budget", set_budget_handler)
-    add_command("budget_history", budget_history_handler)
+    add_command_group(BUDGET_COMMANDS)
     add_message(filters.Regex(r"(?i)^budget\b"), set_budget_handler)
 
     # Category management commands route add/edit kategori into the guided wizard.
-    add_command("kategori", kategori_handler)
-    add_command("categories", kategori_handler)
-    add_command("list_kategori", kategori_handler)
-    add_command("add_kategori", add_kategori_handler)
-    add_command("tambah_kategori", add_kategori_handler)
-    add_command("add_category", add_kategori_handler)
-    # Edit category aliases/type/symbol uses a separate wizard from add flow.
-    add_command("edit_kategori", edit_kategori_handler)
-    add_command("ubah_kategori", edit_kategori_handler)
-    add_command("edit_category", edit_kategori_handler)
+    add_command_group(CATEGORY_COMMANDS)
 
     # Pending expense commands for planned expenses or unpaid bills.
-    add_command("pending", pending_handler)
-    add_command("pending_add", pending_add_handler)
-    add_command("rencana", pending_add_handler)
-    add_command("pending_paid", pending_paid_handler)
-    add_command("pending_cancel", pending_cancel_handler)
+    add_command_group(PENDING_COMMANDS)
     add_message(filters.Regex(r"(?i)^(pending|rencana)\b"), pending_add_handler)
 
     # Debt and settlement commands.
-    add_command("hutang", hutang_handler)
-    add_command("ringkasan_hutang", ringkasan_hutang_handler)
-    add_command("debt_void", debt_void_handler)
-    add_command("debt_edit", debt_edit_handler)
-    add_command("debt_settle", debt_settle_handler)
+    add_command_group(DEBT_COMMANDS)
 
     # Recurring commands for repeated transactions or bills.
-    add_command("recurring", recurring_handler)
-    add_command("recurring_add", recurring_add_handler)
-    add_command("recurring_run", recurring_run_handler)
-    add_command("recurring_edit", recurring_edit_handler)
-    add_command("recurring_off", recurring_off_handler)
+    add_command_group(RECURRING_COMMANDS)
 
     # Net worth and asset management commands.
-    add_command("networth", networth_handler)
-    add_command("assets", assets_handler)
-    add_command("asset_add", asset_add_handler)
-    add_command("asset_update", asset_update_handler)
-    add_command("asset_off", asset_off_handler)
-    add_command("networth_snapshot", networth_snapshot_handler)
-    add_command("networth_history", networth_history_handler)
+    add_command_group(NET_WORTH_COMMANDS)
 
     # AI insight commands based on transaction data. These commands are read-only.
-    add_command("insight", insight_handler)
-    add_command("ask", ask_handler)
-    add_command("audit", audit_handler)
-    add_command("coach", coach_handler)
+    add_command_group(AI_COMMANDS)
 
     # Fallback guard for slash commands that may not be caught by CommandHandler in some runtimes.
     # This prevents commands such as /set_saldo from being parsed as normal expenses.

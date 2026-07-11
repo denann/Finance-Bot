@@ -3,7 +3,24 @@
 # Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
-from app.bot.handler_parts.common_imports import *
+from app.bot.handler_parts.common_imports import (
+    ALLOWED_USER_ID,
+    ContextTypes,
+    SequenceMatcher,
+    Update,
+    append_net_gross_note,
+    build_transaction_display_lines,
+    enrich_transactions_with_debt_info,
+    escape_markdown,
+    re,
+)
+from functools import partial
+
+from app.formatting import format_rupiah as _format_rupiah
+from app.bot.command_registry import LIABILITY_UNAVAILABLE_COMMANDS
+
+
+format_rupiah = partial(_format_rupiah, preserve_decimals=False)
 
 # Helper for build gemini low confidence text.
 def build_gemini_low_confidence_text(router_result: dict) -> str:
@@ -112,11 +129,6 @@ def extract_edit_updates_from_router(args: dict) -> dict:
         cleaned[str(key).strip()] = str(value).strip()
 
     return cleaned
-
-# Helper for format rupiah.
-def format_rupiah(amount: float) -> str:
-    """Format data into a readable display for rupiah."""
-    return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
 
 # Helper for md safe.
 def md_safe(value) -> str:
@@ -518,6 +530,7 @@ COMMAND_ALIASES = {
 
 
 UNAVAILABLE_COMMANDS = {
+    **LIABILITY_UNAVAILABLE_COMMANDS,
     "kuartalan": (
         "Fitur laporan kuartalan belum tersedia.\n"
         "Yang tersedia saat ini: `/harian`, `/mingguan`, `/bulanan`."

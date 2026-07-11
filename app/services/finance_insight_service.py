@@ -1,8 +1,14 @@
 """Context builder service for AI finance insight, audit, coach, and ask commands."""
 
-
 # Import __future__ so this module can use its helpers.
 from __future__ import annotations
+
+from functools import partial
+
+from app.formatting import format_rupiah as _format_rupiah
+
+
+format_rupiah = partial(_format_rupiah, preserve_decimals=False)
 
 # Import re for this module's local operations.
 import re
@@ -162,12 +168,6 @@ def safe_float(value, default: float = 0.0) -> float:
     # Handle an expected failure from the guarded operation above.
     except Exception:
         return default
-
-
-# Helper for format rupiah.
-def format_rupiah(amount: float) -> str:
-    """Format data into a readable display for rupiah."""
-    return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
 
 
 # Helper for current month.
@@ -939,18 +939,23 @@ def get_net_worth_compact() -> dict:
 
     # Extract accounts for validation.
     accounts = get_accounts_summary()
+    debts = get_debt_summary_compact()
+    total_liabilities = float(debts.get("total_payable") or 0)
+    net_worth = accounts["total"] + total_assets - total_liabilities
     return {
         "total_accounts": accounts["total"],
         "total_accounts_display": format_rupiah(accounts["total"]),
         "total_assets": total_assets,
         "total_assets_display": format_rupiah(total_assets),
-        "total_liabilities": 0.0,
-        "total_liabilities_display": format_rupiah(0),
-        "net_worth": accounts["total"] + total_assets,
-        "net_worth_display": format_rupiah(accounts["total"] + total_assets),
+        "total_liabilities": total_liabilities,
+        "total_liabilities_display": format_rupiah(total_liabilities),
+        "net_worth": net_worth,
+        "net_worth_display": format_rupiah(net_worth),
         "top_assets": sorted(active_assets, key=lambda x: x["value"], reverse=True)[:8],
-        "top_liabilities": [],
-        "note": "Liabilities sudah dihapus dari fitur net worth; kewajiban antar orang dikelola via /hutang.",
+        "top_liabilities": [
+            debt for debt in debts.get("top_active", []) if debt.get("type") == "payable"
+        ],
+        "note": "Liability net worth berasal dari debt payable aktif yang dikelola melalui /hutang.",
     }
 
 

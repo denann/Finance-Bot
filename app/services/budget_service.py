@@ -1,5 +1,12 @@
 """Budget service for monthly budget setup, actual spending calculation, remaining budget, and budget history."""
 
+from functools import partial
+
+from app.formatting import format_rupiah as _format_rupiah
+
+
+format_rupiah = partial(_format_rupiah, preserve_decimals=False)
+
 
 # Import datetime so this module can use its helpers.
 from datetime import datetime, date, timedelta
@@ -164,12 +171,6 @@ def format_month_label(month: str) -> str:
     month = normalize_month(month)
     dt = datetime.strptime(month, "%Y-%m")
     return dt.strftime("%B %Y")
-
-
-# Helper for format rupiah.
-def format_rupiah(amount: float) -> str:
-    """Format data into a readable display for rupiah."""
-    return f"Rp{int(float(amount or 0)):,}".replace(",", ".")
 
 
 # Helper for get budget status emoji.

@@ -8,14 +8,28 @@ An autouse pytest guard removes external credentials and blocks socket, HTTP, Te
 
 | Test area | Coverage |
 | :--- | :--- |
-| Unit | Date states, parser baseline, immutable action lifecycle, evaluation metrics, report comparison, and gates |
-| Service | Save outcome semantics, rollback propagation, recurring exactly-once, and append reconciliation |
-| Integration | Diagnostic route policy and public command confirmation inventory |
+| Unit | Date states, parser baseline, immutable action lifecycle, typed results, bulk item state, formatting, evaluation metrics, report comparison, and gates |
+| Service | Save outcomes, transaction/debt use cases, debt-backed net worth, rollback propagation, recurring exactly-once, and append reconciliation |
+| Integration | Diagnostic route policy, public command/callback contracts, confirmation inventory, and bulk clarification translation |
+| Architecture | Dependency direction, callback ownership, canonical utilities, and no-Telegram application boundaries |
 | Regression | JSONL parser, routing, safety, preview, split-bill, multi-input, manual-edit, and scenario cases |
 | Fakes | In-memory worksheet/failure plan, Telegram objects, frozen clock, and optional import stubs |
 | Live evaluation | Explicit opt-in Gemini draft parsing with versioned reports; excluded from pytest |
 
 The matrix coverage inventory is maintained in [`docs/testing/debug-matrix-coverage.md`](testing/debug-matrix-coverage.md).
+
+### Regression expansion
+
+The owner-provided expansion adds 49 deterministic cases in `tests/regression/fixtures/expansion_cases.jsonl`:
+
+- 26 active cases that must pass normally.
+- 23 known-gap cases that remain strict `xfail` until the implementation satisfies their recorded contracts.
+
+Coverage includes historical Telegram inputs and high-risk nominal, transfer, date, debt, split-bill, multi-input, safety, and confirmation behavior. `test_expansion_fixture_has_unique_ids_and_no_legacy_input_duplicates` rejects duplicate IDs, duplicate expansion inputs, and exact input duplicates against the earlier regression corpus.
+
+The historical integration snapshot is documented in [`docs/testing/regression-expansion-2026-07-11.md`](testing/regression-expansion-2026-07-11.md). Use current pytest collection output for repository-wide totals because later Phase 2 tests increase the count beyond that snapshot.
+
+After Phase 2 integration and callback-fallback containment, the verified merged suite collects 276 tests: 253 pass and 23 remain strict expected failures. There are no failures, unexpected passes, or skipped tests.
 
 ## Install dependencies
 
@@ -42,6 +56,7 @@ python -m pytest -q tests/unit
 python -m pytest -q tests/service
 python -m pytest -q tests/integration
 python -m pytest -q tests/regression
+python -m pytest -q tests/architecture
 ```
 
 Filter by case ID, tag-like keyword, or flow name:

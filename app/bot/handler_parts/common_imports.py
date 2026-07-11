@@ -21,6 +21,7 @@ from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
 # Import telegram.error so this module can use its helpers.
 from telegram.error import BadRequest
+from app.formatting import format_rupiah
 # Import shlex for this module's local operations.
 import shlex
 # Import os for this module's local operations.
@@ -80,9 +81,7 @@ from app.services.transaction_service import (
     update_account_balance,
     get_recent_transactions,
     preview_delete_transactions_by_refs,
-    delete_transactions_by_refs,
     preview_edit_transaction_by_ref,
-    edit_transaction_by_ref,
     get_transactions_for_export,
     calculate_account_deltas,
     update_transaction_debt_relation,
@@ -152,13 +151,17 @@ from app.services.debt_service import (
     get_debt_by_id_any_status,
     normalize_person_name,
     is_voided_debt,
+    void_debts_for_transaction,
+    update_debt,
+)
+from app.application.transaction_debt import (
+    delete_transactions_by_refs,
+    edit_transaction_by_ref,
     preview_void_debt,
     preview_void_debts_by_person,
     void_debt,
     void_debt_ids,
     void_debts_by_person,
-    void_debts_for_transaction,
-    update_debt,
 )
 # Import csv for this module's local operations.
 import csv
@@ -191,31 +194,6 @@ from app.services.pending_expense_service import (
 TELEGRAM_SAFE_MESSAGE_LIMIT = 3800
 GEMINI_INTENT_CONFIDENCE_EXECUTE = 0.80
 GEMINI_INTENT_CONFIDENCE_CLARIFY = 0.60
-
-
-# Helper for format rupiah.
-def format_rupiah(amount: float) -> str:
-    """Format data into a readable display for rupiah."""
-    # Extract raw amount for validation.
-    raw_amount = amount
-    if isinstance(raw_amount, str):
-        raw = raw_amount.strip().replace("Rp", "").replace("rp", "").replace(" ", "")
-        if "," in raw and "." in raw:
-            raw = raw.replace(".", "").replace(",", ".")
-        elif "," in raw:
-            raw = raw.replace(",", ".")
-        value = float(raw or 0)
-    # Use the fallback path when no earlier branch matched.
-    else:
-        value = float(raw_amount or 0)
-    if abs(value - round(value)) < 1e-9:
-        return f"Rp{int(round(value)):,}".replace(",", ".")
-
-    sign = "-" if value < 0 else ""
-    value = abs(value)
-    integer_part = int(value)
-    decimal_part = (f"{value:.2f}".split(".", 1)[1]).rstrip("0")
-    return f"Rp{sign}{integer_part:,}".replace(",", ".") + f",{decimal_part}"
 
 
 # Helper for short debt id.

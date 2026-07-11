@@ -4,6 +4,7 @@
 # Import datetime so this module can use its helpers.
 from datetime import datetime
 from app.clock import business_now
+from app.formatting import format_rupiah
 # Import re for this module's local operations.
 import re
 # Import app.sheets.client so this module can use its helpers.
@@ -65,20 +66,6 @@ def parse_sheet_number(value, default: float = 0.0) -> float:
     # Handle an expected failure from the guarded operation above.
     except Exception:
         return default
-
-
-# Helper for format rupiah.
-def format_rupiah(amount: float) -> str:
-    """Format data into a readable display for rupiah."""
-    value = float(amount or 0)
-    if abs(value - round(value)) < 1e-9:
-        return f"Rp{int(round(value)):,}".replace(",", ".")
-
-    sign = "-" if value < 0 else ""
-    value = abs(value)
-    integer_part = int(value)
-    decimal_part = (f"{value:.2f}".split(".", 1)[1]).rstrip("0")
-    return f"Rp{sign}{integer_part:,}".replace(",", ".") + f",{decimal_part}"
 
 
 # Helper for generate debt id.
@@ -2211,14 +2198,13 @@ def expected_initial_cashflow_category(debt: dict) -> str:
 
 
 # Helper for find debt initial cashflow candidates.
-def find_debt_initial_cashflow_candidates(debt: dict) -> list[dict]:
+def find_debt_initial_cashflow_candidates(
+    debt: dict,
+    *,
+    transactions: list[dict],
+    is_debt_cashflow_transaction_fn,
+) -> list[dict]:
     """Find a record for debt initial cashflow candidates."""
-    # Import app.services.transaction_service so this module can use its helpers.
-    from app.services.transaction_service import (
-        get_transactions_with_row_index,
-        is_debt_cashflow_transaction,
-    )
-
     person = normalize_person_name(debt.get("person_name", ""))
     amount = parse_sheet_number(debt.get("original_amount", 0))
     # Extract category for validation.
@@ -2229,9 +2215,9 @@ def find_debt_initial_cashflow_candidates(debt: dict) -> list[dict]:
     candidates = []
 
     # Iterate through each txn.
-    for txn in get_transactions_with_row_index():
+    for txn in transactions:
         # Validate missing is debt cashflow transaction(txn) before continuing.
-        if not is_debt_cashflow_transaction(txn):
+        if not is_debt_cashflow_transaction_fn(txn):
             # Skip the rest of this loop iteration after handling this case.
             continue
 
@@ -2814,7 +2800,14 @@ def void_linked_debt_only(debt_id: str, reason: str = "Transaksi sumber dihapus"
 
 
 # Helper for preview void debt.
-def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
+def preview_void_debt(
+    debt_ref: str,
+    last_debt_map: dict | None = None,
+    *,
+    transactions: list[dict],
+    is_debt_cashflow_transaction_fn,
+    calculate_reverse_deltas_for_delete_fn,
+) -> dict:
     """Preview voiding one debt reference before mutating Sheets.
 
     Args:
@@ -2879,7 +2872,11 @@ def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
         }
 
     # Extract candidates for validation.
-    candidates = find_debt_initial_cashflow_candidates(debt)
+    candidates = find_debt_initial_cashflow_candidates(
+        debt,
+        transactions=transactions,
+        is_debt_cashflow_transaction_fn=is_debt_cashflow_transaction_fn,
+    )
 
     if len(candidates) == 0:
         # Split bill parsing note: separate the paid transaction from each person share.
@@ -2931,9 +2928,7 @@ def preview_void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
 
     cashflow_txn = candidates[0]
 
-    # Import app.services.transaction_service so this module can use its helpers.
-    from app.services.transaction_service import calculate_reverse_deltas_for_delete
-    reverse_deltas = calculate_reverse_deltas_for_delete([cashflow_txn])
+    reverse_deltas = calculate_reverse_deltas_for_delete_fn([cashflow_txn])
 
     return {
         "success": True,
@@ -3026,7 +3021,14 @@ def resolve_person_debt_targets(person_name: str, detail_ref: str | None = None)
 
 
 # Helper for preview void debts by person.
-def preview_void_debts_by_person(person_name: str, detail_ref: str | None = None) -> dict:
+def preview_void_debts_by_person(
+    person_name: str,
+    detail_ref: str | None = None,
+    *,
+    transactions: list[dict],
+    is_debt_cashflow_transaction_fn,
+    calculate_reverse_deltas_for_delete_fn,
+) -> dict:
     """Preview voiding all or selected active debts for one person.
 
     Args:
@@ -3066,7 +3068,13 @@ def preview_void_debts_by_person(person_name: str, detail_ref: str | None = None
     for debt in resolved.get("targets") or []:
         debt_id = str(debt.get("id", "")).strip()
         # Build item preview for the response flow.
-        item_preview = preview_void_debt(debt_id, {})
+        item_preview = preview_void_debt(
+            debt_id,
+            {},
+            transactions=transactions,
+            is_debt_cashflow_transaction_fn=is_debt_cashflow_transaction_fn,
+            calculate_reverse_deltas_for_delete_fn=calculate_reverse_deltas_for_delete_fn,
+        )
         # Append the current value to previews.
         previews.append(item_preview)
 
@@ -3124,7 +3132,7 @@ def preview_void_debts_by_person(person_name: str, detail_ref: str | None = None
 
 
 # Helper for void debt ids.
-def void_debt_ids(debt_ids: list[str]) -> dict:
+def void_debt_ids(debt_ids: list[str], *, void_debt_fn) -> dict:
     """Void multiple debt IDs after user confirmation.
 
     Args:
@@ -3159,7 +3167,7 @@ def void_debt_ids(debt_ids: list[str]) -> dict:
     # Iterate through each debt id.
     for debt_id in clean_ids:
         # Append the current value to results.
-        results.append(void_debt(debt_id, {}))
+        results.append(void_debt_fn(debt_id, {}))
 
     failed = [r for r in results if not r.get("success")]
     success_results = [r for r in results if r.get("success")]
@@ -3203,7 +3211,13 @@ def void_debt_ids(debt_ids: list[str]) -> dict:
 
 
 # Helper for void debts by person.
-def void_debts_by_person(person_name: str, detail_ref: str | None = None) -> dict:
+def void_debts_by_person(
+    person_name: str,
+    detail_ref: str | None = None,
+    *,
+    preview_void_debts_by_person_fn,
+    void_debt_ids_fn,
+) -> dict:
     """Void all or selected active debts for one person after preview approval.
 
     Args:
@@ -3218,11 +3232,11 @@ def void_debts_by_person(person_name: str, detail_ref: str | None = None) -> dic
         account/cashflow state.
     """
     # Build preview for the response flow.
-    preview = preview_void_debts_by_person(person_name, detail_ref)
+    preview = preview_void_debts_by_person_fn(person_name, detail_ref)
     if not preview.get("success"):
         return preview
 
-    result = void_debt_ids(preview.get("target_debt_ids") or [])
+    result = void_debt_ids_fn(preview.get("target_debt_ids") or [])
     result.update({
         "person_name": preview.get("person_name"),
         "scope": preview.get("scope"),
@@ -3346,7 +3360,13 @@ def update_debt(debt_ref: str, updates: dict, last_debt_map: dict | None = None)
 
 
 # Helper for void debt.
-def void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
+def void_debt(
+    debt_ref: str,
+    last_debt_map: dict | None = None,
+    *,
+    preview: dict,
+    apply_account_deltas_fn,
+) -> dict:
     """Void one debt after preview approval.
 
     Args:
@@ -3361,9 +3381,6 @@ def void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
         May reverse account balance deltas, mark the debt settled/voided, append
         a void mutation, and update linked state.
     """
-    # Build preview for the response flow.
-    preview = preview_void_debt(debt_ref, last_debt_map)
-
     if not preview.get("success"):
         return preview
 
@@ -3376,10 +3393,8 @@ def void_debt(debt_ref: str, last_debt_map: dict | None = None) -> dict:
     if cashflow_txn and reverse_deltas:
         # Run this operation in a guarded block so failures can be handled.
         try:
-            # Import app.services.transaction_service so this module can use its helpers.
-            from app.services.transaction_service import apply_account_deltas
             # Build balance result for the response flow.
-            balance_result = apply_account_deltas(reverse_deltas)
+            balance_result = apply_account_deltas_fn(reverse_deltas)
             if balance_result.get("failed_accounts"):
                 return {
                     "success": False,

@@ -58,7 +58,7 @@ def test_recurring_reminder_callback_no_longer_writes_directly() -> None:
 
     calls = _called_names(
         ROOT / "app/bot/handler_parts/callback_handler.py",
-        "callback_handler",
+        "legacy_callback_handler",
     )
     assert "mark_recurring_rule_paid" not in calls
     assert "create_pending_action" in calls

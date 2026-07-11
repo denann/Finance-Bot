@@ -41,8 +41,10 @@ except Exception:
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.bot.command_registry import PUBLIC_COMMANDS
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -385,15 +387,7 @@ class CommandRun:
     import_warnings: list[str] = field(default_factory=list)
 
 
-KNOWN_SLASH_COMMANDS = {
-    "start", "quickstart", "help", "saldo", "set_saldo", "saldo_set", "set_balance", "harian", "mingguan", "bulanan", "transaksi", "cari",
-    "budget", "budget_history", "set_budget", "kategori", "categories", "list_kategori", "hutang", "debt", "debt_void", "debt_edit",
-    "recurring", "recurring_add", "recurring_run", "recurring_off", "recurring_edit",
-    "export", "health", "last", "delete_txn", "edit_txn", "ask", "coach", "insight", "audit",
-    "networth", "assets", "liabilities", "asset_add", "liability_add", "asset_update",
-    "liability_update", "asset_off", "liability_off", "networth_snapshot", "networth_history",
-    "account", "account_set", "account_add", "account_rename", "account_off",
-}
+KNOWN_SLASH_COMMANDS = set(PUBLIC_COMMANDS)
 
 
 # Helper for classify known route.
@@ -442,8 +436,6 @@ def classify_known_route(text: str) -> dict[str, Any] | None:
         (r"^set\s+budget\b", "set_budget"),
         (r"^(lihat|cek|tampilkan)\s+budget\b", "budget"),
         (r"^(catat|tambah|add)\s+aset\b", "asset_add"),
-        (r"^(catat|tambah|add)\s+(liability|kewajiban)\b", "liability_add"),
-        (r"^catat\s+hutang\s+paylater\b", "liability_add"),
         (r"^net\s*worth\b", "networth"),
         (r"^(bayar|catat).+\bsetiap\s+(hari|minggu|bulan|tahun)\b", "recurring_add"),
     ]

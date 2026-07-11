@@ -517,12 +517,10 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `short_networth_id(record_id: str)` | Helper for short networth id in the Telegram bot flow. |
 | `def` | `build_networth_text(summary: dict)` | Build the data structure or message text for networth text. |
 | `def` | `build_assets_text(assets: list[dict])` | Build the data structure or message text for assets text. |
-| `def` | `build_liabilities_text(liabilities: list[dict])` | Build the data structure or message text for liabilities text. |
 | `def` | `build_update_result_text(result: dict, label: str)` | Build the data structure or message text for update result text. |
 | `def` | `build_snapshots_text(snapshots: list[dict])` | Build the data structure or message text for snapshots text. |
 | `async def` | `networth_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for networth. |
 | `async def` | `assets_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for assets. |
-| `async def` | `liabilities_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for liabilities. |
 | `def` | `build_asset_added_text(asset: dict)` | Build the data structure or message text for asset added text. |
 | `def` | `asset_edit_or_continue_keyboard()` | Helper for asset edit or continue keyboard in the Telegram bot flow. |
 | `def` | `build_asset_confirm_preview(data: dict)` | Build the data structure or message text for asset confirm preview. |
@@ -533,11 +531,8 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `_build_asset_data_from_flow(data: dict)` | Build the data structure or message text for asset data from flow. |
 | `async def` | `handle_pending_asset_add_flow(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str)` | Helper for handle pending asset add flow in the Telegram bot flow. |
 | `async def` | `asset_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for asset add. |
-| `async def` | `liability_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for liability add. |
 | `async def` | `asset_update_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for asset update. |
-| `async def` | `liability_update_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for liability update. |
 | `async def` | `asset_off_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for asset off. |
-| `async def` | `liability_off_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for liability off. |
 | `async def` | `networth_snapshot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for networth snapshot. |
 | `async def` | `networth_history_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)` | Handle the Telegram request for networth history. |
 
@@ -976,23 +971,17 @@ This file is a quick reference for top-level functions and classes. It is useful
 | `def` | `is_gold_asset(record: dict)` | Check whether a condition is true for gold asset. |
 | `def` | `is_active_record(record: dict)` | Check whether a condition is true for active record. |
 | `def` | `build_asset_row(asset: dict)` | Build the data structure or message text for asset row. |
-| `def` | `build_liability_row(liability: dict)` | Build the data structure or message text for liability row. |
 | `def` | `build_snapshot_row(snapshot: dict)` | Build the data structure or message text for snapshot row. |
 | `def` | `add_asset(name: str, current_value: float \| None, category: str='Other Asset', description: str='', asset_type: str='manual', quantity: float \| None=None, unit: str='', price_source: str='', price_per_unit: float \| None=None, purchase_price_per_unit: float \| None=None, purchase_date: str='')` | Helper for add asset in the finance service layer. |
-| `def` | `add_liability(name: str, current_balance: float, category: str='Other Liability', description: str='')` | Helper for add liability in the finance service layer. |
 | `def` | `refresh_gold_assets(records: list[dict])` | Helper for refresh gold assets in the finance service layer. |
 | `def` | `get_assets(active_only: bool=True, refresh_gold: bool=True)` | Get data needed for assets. |
-| `def` | `get_liabilities(active_only: bool=True)` | Get data needed for liabilities. |
 | `def` | `get_record_by_id(sheet_name: str, record_id: str)` | Get data needed for record by id. |
 | `def` | `find_record_row_index(sheet_name: str, record_id: str)` | Find a record for record row index. |
 | `def` | `update_record_cells(sheet_name: str, columns: list[str], record_id: str, updates: dict)` | Update existing data for record cells. |
 | `def` | `normalize_asset_update_field(field: str)` | Normalize and clean input for asset update field. |
-| `def` | `normalize_liability_update_field(field: str)` | Normalize and clean input for liability update field. |
 | `def` | `normalize_common_update_value(field: str, value)` | Normalize and clean input for common update value. |
 | `def` | `update_asset(asset_id: str, updates: dict)` | Update existing data for asset. |
-| `def` | `update_liability(liability_id: str, updates: dict)` | Update existing data for liability. |
 | `def` | `deactivate_asset(asset_id: str)` | Helper for deactivate asset in the finance service layer. |
-| `def` | `deactivate_liability(liability_id: str)` | Helper for deactivate liability in the finance service layer. |
 | `def` | `calculate_net_worth()` | Calculate derived values for net worth. |
 | `def` | `create_net_worth_snapshot()` | Create a new data object for net worth snapshot. |
 | `def` | `get_net_worth_snapshots(limit: int=12)` | Get data needed for net worth snapshots. |
@@ -1223,39 +1212,7 @@ This file is a quick reference for top-level functions and classes. It is useful
 
 ## `scripts/ai_command_tester.py`
 
-| Type | Name / Signature | Purpose |
-|---|---|---|
-| `def` | `_ensure_test_env()` | Ensure that setup is ready for test env. |
-| `class` | `_Dummy` | Class used by Dummy in the developer utility script. |
-| `class` | `_DummyBadRequest` | Class used by DummyBadRequest in the developer utility script. |
-| `def` | `_module_exists(module_name: str)` | Helper for module exists in the developer utility script. |
-| `def` | `_install_optional_import_stubs()` | Helper for install optional import stubs in the developer utility script. |
-| `class` | `AssertionResult` | Result model for one assertion inside a command test case. |
-| `class` | `CommandRun` | Result model for one simulated command or user input run. |
-| `def` | `classify_known_route(text: str)` | Helper for classify known route in the developer utility script. |
-| `class` | `CommandTester` | Command test runner that loads cases, simulates bot behavior, and produces regression reports. |
-| `def` | `get_path(data: Any, path: str)` | Get data needed for path. |
-| `def` | `compare_value(actual: Any, expected: Any)` | Helper for compare value in the developer utility script. |
-| `def` | `evaluate_expectations(run: CommandRun, expect: dict[str, Any] \| None)` | Helper for evaluate expectations in the developer utility script. |
-| `def` | `_has_split_keyword(text: str)` | Check whether data has split keyword. |
-| `def` | `_split_has_friend_name(text: str)` | Helper for split has friend name in the developer utility script. |
-| `def` | `evaluate_heuristics(run: CommandRun)` | Helper for evaluate heuristics in the developer utility script. |
-| `def` | `case_status(assertions: list[AssertionResult])` | Helper for case status in the developer utility script. |
-| `def` | `deterministic_diagnosis(run: CommandRun, assertions: list[AssertionResult])` | Helper for deterministic diagnosis in the developer utility script. |
-| `def` | `ai_diagnosis(run: CommandRun, assertions: list[AssertionResult])` | Helper for ai diagnosis in the developer utility script. |
-| `def` | `command_run_to_dict(run: CommandRun)` | Helper for command run to dict in the developer utility script. |
-| `def` | `resolve_input_path(path_text: str)` | Resolve a user input or reference for input path. |
-| `def` | `load_cases(path: Path)` | Load data for cases. |
-| `def` | `load_text_cases(path: Path, *, decision: str \| None=None)` | Load data for text cases. |
-| `def` | `default_sample_cases()` | Helper for default sample cases in the developer utility script. |
-| `def` | `write_sample(path: Path)` | Helper for write sample in the developer utility script. |
-| `class` | `CaseResult` | Summary model for one test case execution. |
-| `def` | `run_one_case(tester: CommandTester, case: dict[str, Any], index: int, *, use_ai: bool)` | Run the process for one case. |
-| `def` | `print_case_report(result: CaseResult, *, show_json: bool, use_ai: bool)` | Helper for print case report in the developer utility script. |
-| `def` | `make_markdown_report(results: list[CaseResult])` | Helper for make markdown report in the developer utility script. |
-| `def` | `run_cases(cases: list[dict[str, Any]], *, show_json: bool, use_ai: bool, markdown_path: Path \| None=None)` | Run the process for cases. |
-| `def` | `parse_args()` | Parse input into structured data for args. |
-| `def` | `main()` | Helper for main in the developer utility script. |
+This path is a thin historical CLI wrapper. The canonical implementation and function inventory are in `app/scripts/ai_command_tester.py`.
 
 ## `scripts/debug_check.py`
 

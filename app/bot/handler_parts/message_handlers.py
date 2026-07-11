@@ -4,7 +4,61 @@
 # Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
-from app.bot.handler_parts.common_imports import *
+from app.bot.handler_parts.common_imports import (
+    ContextTypes,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputFile,
+    Update,
+    account_keyboard,
+    append_net_gross_note,
+    build_pending_expense_from_text,
+    build_progress_bar,
+    build_transaction_display_lines,
+    confirm_keyboard,
+    detect_date_result,
+    edit_message_safely,
+    enrich_transactions_with_debt_info,
+    estimate_payment_outcome,
+    format_expense_net_gross,
+    format_indonesian_date_group_label,
+    format_month_label,
+    format_rupiah,
+    get_account_report,
+    get_budget_summary,
+    get_daily_report,
+    get_debt_by_person,
+    get_monthly_report,
+    get_net_expense_after_receivable,
+    get_recent_transactions,
+    get_weekly_report,
+    io,
+    is_authorized,
+    is_pending_expense_text,
+    md_code_text,
+    md_safe,
+    normalize_month,
+    os,
+    parse_debt_input,
+    parse_human_amount,
+    parse_report_date_arg,
+    parse_report_month_arg,
+    parse_sheet_number,
+    parse_transactions_from_image,
+    preview_delete_transactions_by_refs,
+    preview_edit_transaction_by_ref,
+    re,
+    receipt_ownership_keyboard,
+    reject_unauthorized,
+    reply_long_markdown,
+    reply_update_safely,
+    route_intent_with_gemini,
+    search_transactions,
+    shlex,
+    should_try_gemini_intent_router,
+    split_account_period_arg,
+    split_report_filter_args,
+)
 # Import app.bot.handler_parts.common_imports so this module can use its helpers.
 from app.bot.handler_parts.common_imports import _safe_float_for_display
 # Import app.bot.handler_parts.state_utils so this module can use its helpers.
@@ -33,6 +87,7 @@ from app.bot.handler_parts.command_router import (
 )
 # Import app.bot.handler_parts.category_flow so this module can use its helpers.
 from app.bot.handler_parts.category_flow import handle_pending_category_flow
+from app.bot.handler_parts.bulk_flow import handle_pending_bulk_text, start_bulk_flow
 # Import app.bot.handler_parts.transaction_flow so this module can use its helpers.
 from app.bot.handler_parts.transaction_flow import (
     attach_split_bill_if_any,
@@ -1341,8 +1396,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    input_lines = split_user_inputs(user_text)
+    is_multi_input = bool(re.search(r"[\n\r;,]", user_text)) or len(input_lines) > 1
+
     explicit_date = detect_date_result(user_text)
-    if explicit_date.status == "invalid":
+    if not is_multi_input and explicit_date.status == "invalid":
         await update.message.reply_text(
             "❌ Tanggal yang ditulis tidak valid.\n\n"
             f"Input tanggal: `{md_code_text(explicit_date.explicit_input)}`\n"
@@ -1353,6 +1411,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     receipt_selection_handled = await handle_pending_receipt_selection(update, context, user_text)
     if receipt_selection_handled:
+        return
+
+    bulk_text_handled = await handle_pending_bulk_text(update, context, user_text)
+    if bulk_text_handled:
         return
 
     # Extract missing amount handled for validation.
@@ -1520,6 +1582,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    if is_multi_input and len(input_lines) > 1:
+        await start_bulk_flow(update, context, input_lines)
+        return
+
     selected_debt_settle_handled = await handle_natural_debt_settle(update, context, user_text)
     if selected_debt_settle_handled:
         return
@@ -1548,112 +1614,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_parse_clarification(update, context, user_text, {}, pre_parse_assessment)
         return
 
-    has_explicit_separator = bool(re.search(r"[\n\r;,]", user_text))
-    # Build input lines for the response flow.
-    input_lines = split_user_inputs(user_text)
-    is_multi_input = has_explicit_separator or len(input_lines) > 1
-
     if not is_multi_input:
         full_debt_parsed = parse_debt_input(user_text)
         if full_debt_parsed:
             debt_handled = await debt_message_handler(update, context)
             if debt_handled:
                 return
-
-    # Input multi / campuran
-    if len(input_lines) > 1:
-        mixed_items = []
-        # Build failed lines for the response flow.
-        failed_lines = []
-        # Extract missing amount indices for validation.
-        missing_amount_indices = []
-
-        # Iterate through each line.
-        for line in input_lines:
-            item = parse_mixed_item(line)
-
-            if item["kind"] == "failed":
-                # Append the current value to failed lines.
-                failed_lines.append(line)
-                # Skip the rest of this loop iteration after handling this case.
-                continue
-
-            if item["kind"] == "missing_amount":
-                # Append the current value to missing amount indices.
-                missing_amount_indices.append(len(mixed_items))
-
-            # Append the current value to mixed items.
-            mixed_items.append(item)
-
-        if failed_lines:
-            lines = ["🤔 Ada input yang belum bisa saya pahami:\n"]
-
-            # Iterate through each i, line.
-            for i, line in enumerate(failed_lines, 1):
-                lines.append(f"{i}. `{line}`")
-
-            lines.append(
-                "\nCoba format seperti:\n"
-                "`beli kopi 25rb`\n"
-                "`Budi minjem 300k`\n"
-                "`minjem Joko 100k`\n"
-                "`beli kopi 10k minjem Joko 10k`"
-            )
-
-            await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-            return
-
-        if mixed_items:
-            if missing_amount_indices:
-                context.user_data["pending_missing_amount"] = {
-                    "scope": "mixed",
-                    "mixed_items": mixed_items,
-                    "missing_indices": missing_amount_indices,
-                    "current": 0,
-                }
-                first_idx = missing_amount_indices[0]
-                first_item = mixed_items[first_idx]
-                # Send the Telegram response before continuing.
-                await update.message.reply_text(
-                    build_missing_amount_prompt(
-                        first_item.get("raw", ""),
-                        first_item.get("parsed", {}),
-                        1,
-                        len(missing_amount_indices),
-                    ),
-                    parse_mode="Markdown",
-                )
-                return
-
-            context.user_data["pending_mixed"] = mixed_items
-            context.user_data.pop("pending_parsed", None)
-            context.user_data.pop("pending_raw", None)
-            context.user_data.pop("pending_batch", None)
-            context.user_data.pop("pending_debt", None)
-            context.user_data.pop("pending_debt_batch", None)
-            context.user_data.pop("mixed_review_preview_sent", None)
-
-            # Build preview for the response flow.
-            preview = build_mixed_detail_preview(mixed_items)
-
-            if mixed_split_bill_needs_decision(mixed_items):
-                # Send the Telegram response before continuing.
-                await update.message.reply_text(
-                    build_mixed_split_bill_queue_prompt(mixed_items),
-                    parse_mode="Markdown",
-                    reply_markup=mixed_split_bill_keyboard(mixed_items),
-                )
-            # Use the fallback path when no earlier branch matched.
-            else:
-                # Send the Telegram response before continuing.
-                await reply_update_safely(
-                    update,
-                    f"{preview}\n\n{preview_action_question(False)}",
-                    parse_mode="Markdown",
-                    reply_markup=preview_action_keyboard("mixed", False),
-                )
-
-            return
 
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
