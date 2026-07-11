@@ -823,7 +823,7 @@ def _build_saved_account_balance_info(parsed: dict, result: dict) -> str:
 
 
 # Helper for apply bulk edit category decision.
-def apply_bulk_edit_category_decision(state: dict, decision: dict, category_name: str) -> dict:
+async def apply_bulk_edit_category_decision(state: dict, decision: dict, category_name: str) -> dict:
     """Apply one resolved category decision to pending bulk edit state.
 
     Args:
@@ -852,8 +852,9 @@ def apply_bulk_edit_category_decision(state: dict, decision: dict, category_name
     updates = dict(entry.get("updates") or {})
     updates["category"] = str(category_name or "").strip()
 
-    preview = preview_edit_transaction_by_ref(
-        # Extract updates for validation.
+    preview = await run_sheets_read(
+        "preview_edit_transaction_by_ref",
+        preview_edit_transaction_by_ref,
         updates=updates,
         row_index=entry.get("row_index"),
         txn_id=entry.get("txn_id"),
@@ -1042,8 +1043,9 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
         updates = dict(pending_choice.get("updates") or {})
         updates["category"] = suggested_category
-        preview = preview_edit_transaction_by_ref(
-            # Extract updates for validation.
+        preview = await run_sheets_read(
+            "preview_edit_transaction_by_ref",
+            preview_edit_transaction_by_ref,
             updates=updates,
             row_index=pending_choice.get("row_index"),
             txn_id=pending_choice.get("txn_id"),
@@ -1111,7 +1113,7 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                 await safe_edit_message(query, "❌ Sesi lanjut bulk edit tidak valid. Coba ulangi bulk `/edit_txn`.", parse_mode="Markdown")
                 context.user_data.pop(BULK_EDIT_CATEGORY_DECISION_KEY, None)
                 return
-            result = apply_bulk_edit_category_decision(state, decision, decision.get("raw_category"))
+            result = await apply_bulk_edit_category_decision(state, decision, decision.get("raw_category"))
             if not result.get("success"):
                 context.user_data.pop(BULK_EDIT_CATEGORY_DECISION_KEY, None)
                 await safe_edit_message(query, f"❌ {md_safe(result.get('message') or 'Gagal lanjut bulk edit.')}", parse_mode="Markdown")
@@ -1134,7 +1136,7 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             await safe_edit_message(query, "❌ Pilihan kategori bulk edit tidak valid.", parse_mode="Markdown")
             return
 
-        result = apply_bulk_edit_category_decision(state, decision, decision.get("suggested_category"))
+        result = await apply_bulk_edit_category_decision(state, decision, decision.get("suggested_category"))
         if not result.get("success"):
             context.user_data.pop(BULK_EDIT_CATEGORY_DECISION_KEY, None)
             await safe_edit_message(query, f"❌ {md_safe(result.get('message') or 'Gagal preview bulk edit.')}", parse_mode="Markdown")
@@ -1171,7 +1173,7 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
         if action == "use_existing":
             account_name = str(pending.get("suggested_account_name") or "").strip()
-            current_balance = get_account_balance(account_name)
+            current_balance = await run_sheets_read("get_account_balance", get_account_balance, account_name)
             if current_balance is None:
                 # Send the Telegram response before continuing.
                 await safe_edit_message(
@@ -1762,7 +1764,7 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         except ValueError:
             await safe_edit_message(query, "❌ Tanggal occurrence recurring tidak valid. Tidak ada data yang diubah.")
             return
-        rule = get_recurring_rule_by_id(rule_id)
+        rule = await run_sheets_read("get_recurring_rule_by_id", get_recurring_rule_by_id, rule_id)
         if not rule:
             await safe_edit_message(query, "❌ Recurring rule tidak ditemukan. Tidak ada data yang diubah.")
             return
@@ -2121,7 +2123,7 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
             if intent == "add_payment":
                 # Load debts for the current calculation.
-                debts = get_debt_by_person(person)
+                debts = await run_sheets_read("get_debt_by_person", get_debt_by_person, person)
 
                 # Validate missing debts before continuing.
                 if not debts:
@@ -2225,7 +2227,7 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
         if intent == "add_payment":
             # Load debts for the current calculation.
-            debts = get_debt_by_person(person)
+            debts = await run_sheets_read("get_debt_by_person", get_debt_by_person, person)
 
             # Validate missing debts before continuing.
             if not debts:
@@ -2358,7 +2360,7 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
                 if intent == "add_payment":
                     # Load debts for the current calculation.
-                    debts = get_debt_by_person(person)
+                    debts = await run_sheets_read("get_debt_by_person", get_debt_by_person, person)
 
                     # Validate missing debts before continuing.
                     if not debts:
@@ -2632,8 +2634,9 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             updates = dict(pending_edit.get("updates", {}) or {})
             updates["amount"] = split_parsed.get("amount")
 
-            preview = preview_edit_transaction_by_ref(
-                # Extract updates for validation.
+            preview = await run_sheets_read(
+                "preview_edit_transaction_by_ref",
+                preview_edit_transaction_by_ref,
                 updates=updates,
                 row_index=pending_edit.get("row_index"),
                 txn_id=pending_edit.get("txn_id"),
@@ -3121,7 +3124,9 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             target_txn_id = str(pending_edit.get("txn_id") or "").strip()
 
             if split_parsed:
-                preview_before_edit = preview_edit_transaction_by_ref(
+                preview_before_edit = await run_sheets_read(
+                    "preview_edit_transaction_by_ref",
+                    preview_edit_transaction_by_ref,
                     updates=pending_edit.get("updates", {}),
                     row_index=pending_edit.get("row_index"),
                     txn_id=pending_edit.get("txn_id"),

@@ -69,3 +69,42 @@ def install_external_stubs() -> None:
 
         langchain_google_genai.ChatGoogleGenerativeAI = ChatGoogleGenerativeAI
         sys.modules.setdefault("langchain_google_genai", langchain_google_genai)
+
+    if "apscheduler.schedulers.asyncio" not in sys.modules:
+        apscheduler = sys.modules.setdefault("apscheduler", types.ModuleType("apscheduler"))
+        schedulers = sys.modules.setdefault("apscheduler.schedulers", types.ModuleType("apscheduler.schedulers"))
+        asyncio_module = types.ModuleType("apscheduler.schedulers.asyncio")
+
+        class AsyncIOScheduler:
+            """Import-only scheduler stub for offline tests and benchmarks."""
+
+            def __init__(self, *_args, **_kwargs):
+                self.jobs = []
+
+            def add_job(self, *args, **kwargs):
+                self.jobs.append((args, kwargs))
+
+            def start(self):
+                return None
+
+        asyncio_module.AsyncIOScheduler = AsyncIOScheduler
+        schedulers.asyncio = asyncio_module
+        apscheduler.schedulers = schedulers
+        sys.modules.setdefault("apscheduler.schedulers.asyncio", asyncio_module)
+
+    if "apscheduler.triggers.cron" not in sys.modules:
+        apscheduler = sys.modules.setdefault("apscheduler", types.ModuleType("apscheduler"))
+        triggers = sys.modules.setdefault("apscheduler.triggers", types.ModuleType("apscheduler.triggers"))
+        cron_module = types.ModuleType("apscheduler.triggers.cron")
+
+        class CronTrigger:
+            """Store constructor arguments without scheduling real work."""
+
+            def __init__(self, *args, **kwargs):
+                self.args = args
+                self.kwargs = kwargs
+
+        cron_module.CronTrigger = CronTrigger
+        triggers.cron = cron_module
+        apscheduler.triggers = triggers
+        sys.modules.setdefault("apscheduler.triggers.cron", cron_module)

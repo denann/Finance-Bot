@@ -41,6 +41,8 @@ from app.bot.handler_parts.transaction_flow import (
     mixed_ready_to_save,
     needs_account,
     parse_mixed_item,
+    parse_mixed_item_async,
+    parse_mixed_items_batch,
     preview_action_keyboard,
     preview_action_question,
     split_bill_needs_decision,
@@ -102,13 +104,14 @@ def _classify_legacy_item(
     )
 
 
-def _classify_lines(input_lines: list[str]) -> list[BulkItem]:
-    """Parse every line independently and preserve its stable position."""
+async def _classify_lines(input_lines: list[str]) -> list[BulkItem]:
+    """Parse all lines while sharing one Gemini call across unresolved items."""
 
+    legacy_items = await parse_mixed_items_batch(input_lines)
     return [
         _classify_legacy_item(
             line,
-            parse_mixed_item(line),
+            legacy_items[index],
             original_index=index,
             item_id=f"i{index + 1}",
         )
@@ -238,7 +241,7 @@ async def start_bulk_flow(
     if len(input_lines) <= 1:
         return False
     clear_pending_flow_state(context)
-    session = create_bulk_session(_classify_lines(input_lines))
+    session = create_bulk_session(await _classify_lines(input_lines))
     context.user_data[BULK_SESSION_KEY] = session
     await _advance_bulk_flow(update, context, session)
     return True
@@ -278,7 +281,7 @@ async def handle_pending_bulk_text(
     elif session.awaiting_mode == "rewrite_text":
         replacement = _classify_legacy_item(
             user_text,
-            parse_mixed_item(user_text),
+            await parse_mixed_item_async(user_text),
             original_index=target.original_index,
             item_id=target.item_id,
         )

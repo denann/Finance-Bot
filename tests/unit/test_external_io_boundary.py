@@ -91,22 +91,79 @@ def test_scheduled_capacity_is_separate_from_interactive_capacity() -> None:
 
 
 def test_timeout_types_distinguish_read_from_ambiguous_mutation() -> None:
-    release = threading.Event()
+    read_release = threading.Event()
+    write_release = threading.Event()
 
-    def blocked() -> None:
-        release.wait(1)
+    def blocked_read() -> None:
+        read_release.wait(1)
+
+    def blocked_write() -> None:
+        write_release.wait(1)
 
     async def scenario() -> None:
         policy = ExternalWorkPolicy(limit=1, timeout_seconds=0.01)
         with pytest.raises(ExternalIOTimeout) as read_error:
-            await run_external_work(ExternalWorkClass.INTERACTIVE_SHEETS, "read", blocked, policy=policy)
+            await run_external_work(ExternalWorkClass.INTERACTIVE_SHEETS, "read", blocked_read, policy=policy)
         assert not isinstance(read_error.value, ExternalMutationOutcomeUnknown)
+
+        # The timed-out read still owns its slot until its real worker exits.
+        read_release.set()
+        await asyncio.sleep(0.02)
+
         with pytest.raises(ExternalMutationOutcomeUnknown) as write_error:
-            await run_external_work(ExternalWorkClass.INTERACTIVE_SHEETS, "write", blocked, mutation=True, policy=policy)
+            await run_external_work(
+                ExternalWorkClass.INTERACTIVE_SHEETS,
+                "write",
+                blocked_write,
+                mutation=True,
+                policy=policy,
+            )
         assert write_error.value.reconciliation_required is True
-        release.set()
+        write_release.set()
+        await asyncio.sleep(0.02)
 
     asyncio.run(scenario())
+
+
+def test_timed_out_workers_keep_their_concurrency_slot_until_exit() -> None:
+    lock = threading.Lock()
+    release = threading.Event()
+    first_started = threading.Event()
+    active = 0
+    maximum = 0
+
+    def blocked() -> None:
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+            first_started.set()
+        release.wait(1)
+        with lock:
+            active -= 1
+
+    async def scenario() -> None:
+        policy = ExternalWorkPolicy(limit=1, timeout_seconds=0.02)
+        with pytest.raises(ExternalIOTimeout):
+            await run_external_work(ExternalWorkClass.GEMINI, "first", blocked, policy=policy)
+        assert first_started.is_set()
+
+        # The first thread is still running, so another call must saturate
+        # instead of starting a second underlying worker.
+        from app.application.external_io import ExternalIOSaturated
+
+        with pytest.raises(ExternalIOSaturated):
+            await run_external_work(ExternalWorkClass.GEMINI, "second", blocked, policy=policy)
+        assert maximum == 1
+
+        release.set()
+        await asyncio.sleep(0.03)
+        assert active == 0
+
+        assert await run_external_work(ExternalWorkClass.GEMINI, "third", lambda: "ok", policy=policy) == "ok"
+
+    asyncio.run(scenario())
+    assert maximum == 1
 
 
 def test_correlation_context_survives_worker_boundary() -> None:

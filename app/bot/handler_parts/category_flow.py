@@ -13,6 +13,7 @@ from __future__ import annotations
 from app.bot.handler_parts.common_imports import *
 # Import app.bot.handler_parts.state_utils so this module can use its helpers.
 from app.bot.handler_parts.state_utils import BULK_EDIT_CATEGORY_DECISION_KEY, clear_pending_flow_state
+from app.application.external_io import run_gemini, run_sheets_read
 # Import app.nlp.gemini_category_aliases so this module can use its helpers.
 from app.nlp.gemini_category_aliases import generate_category_alias_candidates
 # Import app.services.resolver_service so this module can use its helpers.
@@ -511,7 +512,7 @@ async def kategori_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # This is read-only; it never writes to Google Sheets.
-    records = get_category_records_safe()
+    records = await run_sheets_read("category_records", get_category_records_safe)
     # Send the Telegram response before continuing.
     await reply_message_safely(
         update.message,
@@ -601,7 +602,7 @@ async def _accept_category_name(
 
     if mode == "edit":
         # Edit mode must target a real row so the final update is deterministic.
-        found = find_category_by_name(clean_name)
+        found = await run_sheets_read("find_category_by_name", find_category_by_name, clean_name)
         # Missing categories keep the wizard open so the user can retry.
         if not found.get("found"):
             suggestions = found.get("suggestions") or []
@@ -811,7 +812,7 @@ async def _prepare_new_category_preview(update: Update, context: ContextTypes.DE
 
     # Tell the user why there may be a short wait before preview appears.
     await update.message.reply_text("Gemini sedang generate aliases untuk kategori ini...")
-    aliases, source = _generate_aliases(category_name, txn_type)
+    aliases, source = await run_gemini("category_alias", _generate_aliases, category_name, txn_type)
 
     state["aliases"] = aliases
     state["alias_source"] = source
@@ -856,7 +857,7 @@ async def _prepare_edited_category_preview(update: Update, context: ContextTypes
     elif clean_low in {"auto", "gemini", "generate", "regenerate", "buat otomatis"}:
         # Regenerate aliases through Gemini for the edited category.
         await update.message.reply_text("Gemini sedang generate ulang aliases untuk kategori ini...")
-        aliases, source = _generate_aliases(category_name, txn_type)
+        aliases, source = await run_gemini("category_alias", _generate_aliases, category_name, txn_type)
     # Use the fallback path when no earlier branch matched.
     else:
         # Manual aliases must stay in the same comma-separated sheet format.

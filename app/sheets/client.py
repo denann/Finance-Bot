@@ -24,6 +24,7 @@ from gspread.exceptions import WorksheetNotFound
 # Import google.oauth2.service_account so this module can use its helpers.
 from google.oauth2.service_account import Credentials
 # Import app.config so this module can use its helpers.
+from app.observability import emit_event, increment_metric
 from app.config import (
     GOOGLE_SERVICE_ACCOUNT_JSON,
     GOOGLE_SHEET_ID,
@@ -360,6 +361,8 @@ class SheetsTransaction:
         self.label = label or "sheets_operation"
         self.rollback_actions = []
         self.rollback_errors = []
+        self.post_commit_actions = {}
+        self.post_commit_errors = []
         self.rolled_back = False
         self.failed = False
 
@@ -378,6 +381,38 @@ class SheetsTransaction:
         if self.rolled_back:
             return
         self.rollback_actions.append((description, action))
+
+    def add_post_commit(self, key: str, description: str, action) -> None:
+        """Register one deduplicated maintenance action after finance commit.
+
+        Post-commit maintenance must never participate in financial rollback.
+        Registering the same key again replaces nothing and keeps the first
+        action, which prevents a batch of saves from scheduling duplicate sorts.
+        """
+
+        if self.rolled_back or self.failed:
+            return
+        self.post_commit_actions.setdefault(str(key), (description, action))
+
+    def run_post_commit(self) -> bool:
+        """Run best-effort maintenance after the financial transaction commits."""
+
+        actions = list(self.post_commit_actions.values())
+        self.post_commit_actions.clear()
+        for description, action in actions:
+            try:
+                action()
+                increment_metric("sheets.post_commit.completed")
+            except Exception as exc:
+                self.post_commit_errors.append(f"{description}: {exc}")
+                increment_metric("sheets.post_commit.failed")
+                emit_event(
+                    "sheets_post_commit_failed",
+                    transaction_label=self.label,
+                    maintenance=description,
+                    error_type=type(exc).__name__,
+                )
+        return not self.post_commit_errors
 
     # Helper for rollback.
     def rollback(self) -> bool:
@@ -405,6 +440,7 @@ class SheetsTransaction:
                 self.rollback_errors.append(f"{description}: {exc}")
 
         self.rollback_actions.clear()
+        self.post_commit_actions.clear()
         return len(self.rollback_errors) == 0
 
 
@@ -441,6 +477,16 @@ def sheets_transaction(label: str | None = None):
         tx.failed = True
         tx.rollback()
         raise
+    else:
+        if not tx.failed and not tx.rolled_back:
+            # Maintenance such as worksheet sorting runs outside the rollback
+            # context.  A maintenance failure must not undo committed finance
+            # rows or account balances.
+            maintenance_token = _current_transaction.set(None)
+            try:
+                tx.run_post_commit()
+            finally:
+                _current_transaction.reset(maintenance_token)
     # Run cleanup that must happen after the guarded operation.
     finally:
         _current_transaction.reset(token)
@@ -1073,6 +1119,25 @@ def _reconcile_batch_append(sheet, logical_ids: list[str]) -> dict | None:
     return _synthetic_append_response(sheet, row_numbers[0], row_numbers[-1])
 
 
+def _delete_rows_by_logical_ids(sheet, logical_ids: list[str]) -> None:
+    """Delete exactly one current row per immutable first-column logical ID."""
+
+    normalized = [str(value or "").strip() for value in logical_ids if str(value or "").strip()]
+    values = _first_column_values(sheet)
+    positions: list[int] = []
+    for logical_id in normalized:
+        matches = [index for index, value in enumerate(values, start=1) if value == logical_id]
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"Rollback logical ID {logical_id!r} membutuhkan tepat satu row, ditemukan {len(matches)}."
+            )
+        positions.append(matches[0])
+
+    # Delete from the bottom so earlier row indexes remain valid.
+    for row_index in sorted(positions, reverse=True):
+        _call_with_retry(lambda row_index=row_index: sheet.delete_rows(row_index))
+
+
 # Helper for append row.
 def append_row(sheet_name: str, row: list):
     """Append one row to a sheet with rollback tracking.
@@ -1099,8 +1164,14 @@ def append_row(sheet_name: str, row: list):
 
     tx = _current_transaction.get()
     row_index = _extract_updated_row_index(response)
-    # Register a rollback delete for the appended row inside sheet transactions.
-    if tx is not None and row_index:
+    # Prefer immutable logical identity because post-append sorting can move the
+    # row before a later finance mutation fails.
+    if tx is not None and logical_id:
+        tx.add_rollback(
+            f"delete appended logical row {sheet_name}:{logical_id}",
+            lambda sheet=sheet, logical_id=logical_id: _delete_rows_by_logical_ids(sheet, [logical_id]),
+        )
+    elif tx is not None and row_index:
         tx.add_rollback(
             f"delete appended row {sheet_name}!{row_index}",
             lambda sheet=sheet, row_index=row_index: _call_with_retry(lambda: sheet.delete_rows(row_index)),
@@ -1135,8 +1206,12 @@ def append_row_raw(sheet_name: str, row: list):
 
     tx = _current_transaction.get()
     row_index = _extract_updated_row_index(response)
-    # Register a rollback delete for the appended raw row inside sheet transactions.
-    if tx is not None and row_index:
+    if tx is not None and logical_id:
+        tx.add_rollback(
+            f"delete appended raw logical row {sheet_name}:{logical_id}",
+            lambda sheet=sheet, logical_id=logical_id: _delete_rows_by_logical_ids(sheet, [logical_id]),
+        )
+    elif tx is not None and row_index:
         tx.add_rollback(
             f"delete appended raw row {sheet_name}!{row_index}",
             lambda sheet=sheet, row_index=row_index: _call_with_retry(lambda: sheet.delete_rows(row_index)),
@@ -1176,8 +1251,14 @@ def append_rows(sheet_name: str, rows: list[list]):
 
     tx = _current_transaction.get()
     row_range = _extract_updated_row_range(response)
-    # Register rollback writes for the updated range inside sheet transactions.
-    if tx is not None and row_range:
+    # Prefer immutable IDs because sorting can move the appended range before a
+    # later account/debt write triggers rollback.
+    if tx is not None and can_reconcile:
+        tx.add_rollback(
+            f"delete appended logical rows {sheet_name}:{','.join(logical_ids)}",
+            lambda sheet=sheet, logical_ids=tuple(logical_ids): _delete_rows_by_logical_ids(sheet, list(logical_ids)),
+        )
+    elif tx is not None and row_range:
         start_row, end_row = row_range
         tx.add_rollback(
             f"delete appended rows {sheet_name}!{start_row}:{end_row}",

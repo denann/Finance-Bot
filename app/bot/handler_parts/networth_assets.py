@@ -4,6 +4,7 @@
 # Split from app/bot/handlers.py so the main handler facade stays small.
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
+from app.application.external_io import run_sheets_read
 from app.bot.handler_parts.common_imports import (
     ContextTypes,
     InlineKeyboardButton,
@@ -1049,7 +1050,7 @@ async def networth_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Build summary for the response flow.
-    summary = calculate_net_worth()
+    summary = await run_sheets_read("calculate_net_worth", calculate_net_worth)
 
     # Send the Telegram response before continuing.
     await update.message.reply_text(
@@ -1080,7 +1081,7 @@ async def assets_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reject_unauthorized(update)
         return
 
-    assets = get_assets(active_only=True)
+    assets = await run_sheets_read("get_assets", get_assets, active_only=True)
 
     # Send the Telegram response before continuing.
     await update.message.reply_text(
@@ -1715,7 +1716,8 @@ async def asset_update_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         # Read args from the original text so fallback routing keeps quoted values intact.
         command_args = _command_args_from_update(update, context, "asset_update")
         asset_id, updates = parse_pipe_update_args(command_args, "asset_update")
-        asset = next((item for item in get_assets(active_only=False) if str(item.get("id") or "").strip() == asset_id), None)
+        assets = await run_sheets_read("get_assets", get_assets, active_only=False)
+        asset = next((item for item in assets if str(item.get("id") or "").strip() == asset_id), None)
         if not asset:
             await update.message.reply_text("❌ Asset tidak ditemukan.\n\nCek ID dengan command:\n`/assets`", parse_mode="Markdown")
             return
@@ -1787,7 +1789,8 @@ async def asset_off_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     asset_id = context.args[0].strip()
-    asset = next((item for item in get_assets(active_only=False) if str(item.get("id") or "").strip() == asset_id), None)
+    assets = await run_sheets_read("get_assets", get_assets, active_only=False)
+    asset = next((item for item in assets if str(item.get("id") or "").strip() == asset_id), None)
     if not asset:
         await update.message.reply_text("❌ Asset tidak ditemukan.")
         return
@@ -1831,7 +1834,7 @@ async def networth_snapshot_handler(update: Update, context: ContextTypes.DEFAUL
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        summary = calculate_net_worth()
+        summary = await run_sheets_read("calculate_net_worth", calculate_net_worth)
         snapshot_summary = {
             "total_accounts": float(summary.get("total_accounts") or 0),
             "total_assets": float(summary.get("total_assets") or 0),
@@ -1882,7 +1885,7 @@ async def networth_history_handler(update: Update, context: ContextTypes.DEFAULT
         await reject_unauthorized(update)
         return
 
-    snapshots = get_net_worth_snapshots(limit=12)
+    snapshots = await run_sheets_read("get_net_worth_snapshots", get_net_worth_snapshots, limit=12)
 
     # Send the Telegram response before continuing.
     await update.message.reply_text(

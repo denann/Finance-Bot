@@ -28,6 +28,8 @@ def test_optimized_profiles_have_bounded_counts() -> None:
     ai = run_benchmark(10_000, "ask", iterations=1, mode="optimized")
     multi = run_benchmark(10_000, "multi_unresolved", iterations=1, mode="optimized")
     assert (save.rows_read, save.rows_written, save.full_range_rewrites) == (0, 1, 0)
-    assert ai.selected_records == 40
+    assert ai.measurement == "observed_application"
+    assert 0 < ai.selected_records <= 40
     assert ai.duplicate_reads == 0
+    assert ai.sheets_calls > 0
     assert multi.gemini_calls == 1

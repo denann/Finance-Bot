@@ -2,7 +2,7 @@
 
 ## Method
 
-This baseline is **OFFLINE SYNTHETIC**. It uses deterministic 100, 1,000, and 10,000-row datasets and fake operation profiles. Timing values describe local Python work only. They do not represent Telegram, Google Sheets, Gemini, or production latency.
+This baseline is **OFFLINE SYNTHETIC**. It uses deterministic 100, 1,000, and 10,000-row datasets. Baseline operation profiles are historical modelled values retained for comparison; optimized mode executes current services against instrumented in-memory worksheets. Timing values describe local Python work only. They do not represent Telegram, Google Sheets, Gemini, or production latency.
 
 Run it with:
 

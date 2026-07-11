@@ -267,7 +267,7 @@ async def quickstart_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return
 
     # Extract accounts for validation.
-    accounts = get_all_accounts()
+    accounts = await run_sheets_read("get_all_accounts", get_all_accounts)
     # Extract account names for validation.
     account_names = _format_account_name_list(accounts)
     account_text = ", ".join(f"`{md_code_text(name)}`" for name in account_names) if account_names else "belum ada rekening"
@@ -348,7 +348,7 @@ async def set_saldo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Extract accounts for validation.
-    accounts = get_all_accounts()
+    accounts = await run_sheets_read("get_all_accounts", get_all_accounts)
     raw_arg = " ".join(context.args).strip() if context.args else ""
 
     # Regex fallback path: MessageHandler does not populate context.args, so parse the raw Telegram text.
@@ -429,7 +429,7 @@ async def set_saldo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    current_balance = get_account_balance(account_name)
+    current_balance = await run_sheets_read("get_account_balance", get_account_balance, account_name)
     if current_balance is None:
         # Send the Telegram response before continuing.
         await update.message.reply_text(
@@ -1528,7 +1528,7 @@ async def saldo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Extract accounts for validation.
-    accounts = get_all_accounts()
+    accounts = await run_sheets_read("get_all_accounts", get_all_accounts)
     # Validate missing accounts before continuing.
     if not accounts:
         await update.message.reply_text("❌ Tidak ada data rekening.")
@@ -1968,7 +1968,7 @@ async def bulanan_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     append_top_expense_lines(lines, report)
 
     # Build budget summary for the response flow.
-    budget_summary = get_budget_summary(month_name)
+    budget_summary = await run_sheets_read("get_budget_summary", get_budget_summary, month_name)
     if budget_summary:
         lines.append("\n*Budget vs Realisasi:*")
         # Iterate through each item.
@@ -2135,7 +2135,7 @@ async def budget_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Build summary for the response flow.
-    summary = get_budget_summary(month)
+    summary = await run_sheets_read("get_budget_summary", get_budget_summary, month)
 
     # Validate missing summary before continuing.
     if not summary:
@@ -2206,7 +2206,7 @@ async def budget_history_handler(update: Update, context: ContextTypes.DEFAULT_T
         await reject_unauthorized(update)
         return
 
-    months = get_budget_months()
+    months = await run_sheets_read("get_budget_months", get_budget_months)
 
     # Validate missing months before continuing.
     if not months:
@@ -2329,7 +2329,7 @@ async def pending_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Run this operation in a guarded block so failures can be handled.
     try:
         # Build result for the response flow.
-        result = get_pending_expenses(period=period, active_only=True)
+        result = await run_sheets_read("get_pending_expenses", get_pending_expenses, period=period, active_only=True)
     # Handle an expected failure from the guarded operation above.
     except Exception as e:
         # Send the Telegram response before continuing.
@@ -2452,7 +2452,7 @@ async def pending_paid_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     # Extract account for validation.
     account = context.args[1].strip() if len(context.args) >= 2 else None
 
-    _, item = find_pending_by_ref(pending_id)
+    _, item = await run_sheets_read("find_pending_by_ref", find_pending_by_ref, pending_id)
     if not item:
         await update.message.reply_text("❌ Pending expense tidak ditemukan.")
         return
@@ -2515,7 +2515,7 @@ async def pending_cancel_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     pending_id = context.args[0].strip()
-    _, item = find_pending_by_ref(pending_id)
+    _, item = await run_sheets_read("find_pending_by_ref", find_pending_by_ref, pending_id)
     if not item:
         await update.message.reply_text("❌ Pending expense tidak ditemukan.")
         return
@@ -2997,12 +2997,12 @@ async def debt_void_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         person_name = parsed.get("person_name") or ""
         detail_ref = parsed.get("detail_ref")
         # Build preview for the response flow.
-        preview = preview_void_debts_by_person(person_name, detail_ref)
+        preview = await run_sheets_read("preview_void_debts_by_person", preview_void_debts_by_person, person_name, detail_ref)
     # Use the fallback path when no earlier branch matched.
     else:
         debt_ref = parsed.get("debt_ref")
         # Build preview for the response flow.
-        preview = preview_void_debt(debt_ref, last_debt_map)
+        preview = await run_sheets_read("preview_void_debt", preview_void_debt, debt_ref, last_debt_map)
 
     if not preview.get("success"):
         lines = [f"❌ *Debt void tidak bisa diproses.*\n{md_safe(preview.get('message'))}"]
@@ -3829,7 +3829,7 @@ def build_selected_settle_catatan(payload: dict, result: dict) -> str:
 
 
 # Helper for prepare selected debt settle payload.
-def prepare_selected_debt_settle_payload(context: ContextTypes.DEFAULT_TYPE, parsed: dict) -> dict:
+async def prepare_selected_debt_settle_payload(context: ContextTypes.DEFAULT_TYPE, parsed: dict) -> dict:
     """Prepare a debt settlement preview payload from parsed command input.
 
     Args:
@@ -3859,7 +3859,11 @@ def prepare_selected_debt_settle_payload(context: ContextTypes.DEFAULT_TYPE, par
         )
     # Use the fallback path when no earlier branch matched.
     else:
-        resolved = resolve_all_active_debts_for_person(parsed.get("person_name", ""))
+        resolved = await run_sheets_read(
+            "resolve_all_active_debts_for_person",
+            resolve_all_active_debts_for_person,
+            parsed.get("person_name", ""),
+        )
     if not resolved.get("success"):
         return {"success": False, "message": resolved.get("message", "Gagal resolve debt terpilih.")}
     summary = resolved.get("summary") or {}
@@ -3940,7 +3944,7 @@ async def debt_settle_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     # Build payload for the response flow.
-    payload = prepare_selected_debt_settle_payload(context, parsed)
+    payload = await prepare_selected_debt_settle_payload(context, parsed)
     if not payload.get("success"):
         await update.message.reply_text(f"❌ {payload.get('message')}", parse_mode="Markdown")
         return
@@ -4006,7 +4010,7 @@ async def handle_natural_debt_settle(update: Update, context: ContextTypes.DEFAU
         return False
 
     # Build payload for the response flow.
-    payload = prepare_selected_debt_settle_payload(context, parsed)
+    payload = await prepare_selected_debt_settle_payload(context, parsed)
     if not payload.get("success"):
         await update.message.reply_text(f"❌ {payload.get('message')}", parse_mode="Markdown")
         return True
@@ -4104,7 +4108,7 @@ def build_selected_debt_settle_transaction(payload: dict, result: dict) -> dict:
 
 
 # Helper for collect known debt person names.
-def _collect_known_debt_person_names() -> list[str]:
+async def _collect_known_debt_person_names() -> list[str]:
     """Coordinate the collect known debt person names logic in the Telegram handler layer.
 
     Args:
@@ -4123,7 +4127,7 @@ def _collect_known_debt_person_names() -> list[str]:
     # Run this operation in a guarded block so failures can be handled.
     try:
         # Build summary for the response flow.
-        summary = get_debt_person_summary() or {}
+        summary = await run_sheets_read("get_debt_person_summary", get_debt_person_summary) or {}
         for key in ("payables", "receivables", "balanced"):
             # Iterate through each item.
             for item in summary.get(key) or []:
@@ -4297,9 +4301,9 @@ def _group_debts_for_shareable_summary(debts: list[dict], person: str, known_nam
 
 
 # Helper for build shareable debt summary text.
-def build_shareable_debt_summary_text(person_query: str) -> str:
+async def build_shareable_debt_summary_text(person_query: str) -> str:
     """Build the data structure or message text for shareable debt summary text."""
-    detail = get_debt_person_detail(person_query, include_settled=True)
+    detail = await run_sheets_read("get_debt_person_detail", get_debt_person_detail, person_query, include_settled=True)
     person = detail.get("person_name") or str(person_query or "").strip().title()
     active_details = detail.get("active_details") or []
 
@@ -4322,7 +4326,7 @@ def build_shareable_debt_summary_text(person_query: str) -> str:
     total_payable = sum(parse_sheet_number(d.get("remaining_amount", 0)) for d in payable_details)
     net = total_receivable - total_payable
 
-    known_names = _collect_known_debt_person_names()
+    known_names = await _collect_known_debt_person_names()
 
     lines = [
         f"📌 *Rekap Hutang-Piutang Denan & {md_safe(person)}*",
@@ -4414,7 +4418,7 @@ async def ringkasan_hutang_handler(update: Update, context: ContextTypes.DEFAULT
 
     # Send the Telegram response before continuing.
     await update.message.reply_text(
-        build_shareable_debt_summary_text(person_query),
+        await build_shareable_debt_summary_text(person_query),
         parse_mode="Markdown",
     )
 
@@ -4446,7 +4450,7 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if person_query:
         # Implementation note for this project-specific finance flow.
         netting_result = {"success": False, "offset_amount": 0}
-        detail = get_debt_person_detail(person_query, include_settled=True)
+        detail = await run_sheets_read("get_debt_person_detail", get_debt_person_detail, person_query, include_settled=True)
         active_details = sorted(
             detail.get("active_details") or [],
             key=debt_detail_sort_key_for_display,
@@ -4558,7 +4562,7 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
         return
 
-    summary = get_debt_person_summary()
+    summary = await run_sheets_read("get_debt_person_summary", get_debt_person_summary)
 
     if not summary["payables"] and not summary["receivables"] and not summary.get("balanced"):
         await update.message.reply_text("✅ Tidak ada utang atau piutang aktif.")

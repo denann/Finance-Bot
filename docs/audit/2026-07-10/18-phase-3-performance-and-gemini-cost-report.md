@@ -1,5 +1,7 @@
 # Phase 3 Performance and Gemini Cost Report
 
+> **Correction notice (2026-07-11):** An independent correction pass found gaps in the original implementation and benchmark. The authoritative follow-up is `19-phase-3-correction-pass-report.md`; corrected observed benchmark tables are in `docs/performance/phase-3-benchmark-results.md`.
+
 ## Executive Summary
 
 Phase 3 adds one bounded application boundary for blocking external reads, Gemini work, and scheduled work; replaces transaction full-sheet rewrite sorting with a server-side range sort; adds request-scoped Sheets snapshots and row budgets; and enforces request-scoped Gemini call, input, context, retry, prompt-version, and telemetry contracts.

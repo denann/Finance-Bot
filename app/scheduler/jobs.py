@@ -9,6 +9,8 @@ from apscheduler.triggers.cron import CronTrigger
 # Import datetime so this module can use its helpers.
 from datetime import datetime
 from app.clock import business_now
+from app.application.external_io import run_scheduled
+from app.sheets.client import sheets_request_snapshot
 # Import telegram so this module can use its helpers.
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 # Import app.config so this module can use its helpers.
@@ -22,7 +24,7 @@ from app.services.report_service import (
     get_effective_expense_amount,
 )
 # Import app.bot.handlers so this module can use its helpers.
-from app.bot.handlers import build_progress_bar
+from app.bot.handler_parts.common_imports import build_progress_bar
 # Import app.services.budget_service so this module can use its helpers.
 from app.services.budget_service import get_budget_summary
 # Import app.services.debt_service so this module can use its helpers.
@@ -31,6 +33,20 @@ from app.services.debt_service import get_active_debts
 from app.services.recurring_service import get_due_recurring_rules
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+def _load_scheduled_snapshot(function, *args):
+    """Run one scheduled read bundle with a request-local Sheets snapshot."""
+
+    with sheets_request_snapshot():
+        return function(*args)
+
+
+def _load_daily_payload():
+    return get_daily_report(), get_budget_summary()
+
+
+def _load_monthly_payload(year: int, month: int):
+    return get_monthly_report(year, month), get_budget_summary(f"{year}-{month:02d}")
+
 async def job_recurring_run():
     """Coordinate the job recurring run logic in the scheduler layer.
 
@@ -48,7 +64,9 @@ async def job_recurring_run():
     """
     # Run this operation in a guarded block so failures can be handled.
     try:
-        due_rules = get_due_recurring_rules()
+        due_rules = await run_scheduled(
+            "recurring_due_rules", _load_scheduled_snapshot, get_due_recurring_rules
+        )
 
         # Validate missing due rules before continuing.
         if not due_rules:
@@ -198,7 +216,9 @@ async def job_daily_summary():
     """
     # Run this operation in a guarded block so failures can be handled.
     try:
-        report = get_daily_report()
+        report, budget_summary = await run_scheduled(
+            "daily_summary_data", _load_scheduled_snapshot, _load_daily_payload
+        )
 
         if report["count"] == 0:
             # Send the Telegram response before continuing.
@@ -220,7 +240,7 @@ async def job_daily_summary():
                 lines.append(f"  • {cat}: {format_rupiah(amount)}")
 
         # Check budget warning
-        budget_summary = get_budget_summary()
+        # Budget data was loaded in the same request-scoped worker snapshot.
         warnings = [b for b in budget_summary if b["status"] in ["warning", "over"]]
         if warnings:
             lines.append("\n⚠️ *Budget Alert:*")
@@ -255,7 +275,9 @@ async def job_weekly_summary():
     """
     # Run this operation in a guarded block so failures can be handled.
     try:
-        report = get_weekly_report()
+        report = await run_scheduled(
+            "weekly_summary_data", _load_scheduled_snapshot, get_weekly_report
+        )
 
         lines = [
             f"📆 *Ringkasan Mingguan*\n"
@@ -311,7 +333,9 @@ async def job_monthly_summary():
         else:
             year, month = now.year, now.month - 1
 
-        report = get_monthly_report(year, month)
+        report, budget_summary = await run_scheduled(
+            "monthly_summary_data", _load_scheduled_snapshot, _load_monthly_payload, year, month
+        )
         month_name = datetime(year, month, 1).strftime("%B %Y")
 
         lines = [f"📆 *Laporan Bulanan — {month_name}*\n"]
@@ -332,7 +356,7 @@ async def job_monthly_summary():
                 lines.append(f"  • {cat}: {format_rupiah(amount)}")
 
         # Budget warning section for the same monthly period.
-        budget_summary = get_budget_summary(f"{year}-{month:02d}")
+        # Budget data was loaded together with the monthly report.
         if budget_summary:
             lines.append("\n*Budget vs Realisasi:*")
             # Iterate through each item.
@@ -368,7 +392,9 @@ async def job_debt_reminder():
     """
     # Run this operation in a guarded block so failures can be handled.
     try:
-        active_debts = get_active_debts(debt_type="payable")
+        active_debts = await run_scheduled(
+            "debt_reminder_data", _load_scheduled_snapshot, get_active_debts, "payable"
+        )
         today = business_now().date()
         reminders = []
 

@@ -134,6 +134,7 @@ from app.bot.handler_parts.transaction_flow import (
     parse_clarification_keyboard,
     parse_income_missing_amount,
     parse_input,
+    parse_input_async,
     parse_mixed_item,
     split_bill_keyboard,
     split_bill_needs_decision,
@@ -517,7 +518,7 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
             normalized_month = normalize_month(None)
 
         # Build summary for the response flow.
-        summary = get_budget_summary(normalized_month)
+        summary = await run_sheets_read("get_budget_summary", get_budget_summary, normalized_month)
 
         # Validate missing summary before continuing.
         if not summary:
@@ -590,7 +591,9 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             return True
 
-        preview = preview_delete_transactions_by_refs(
+        preview = await run_sheets_read(
+            "preview_delete_transactions_by_refs",
+            preview_delete_transactions_by_refs,
             row_indices=resolved["row_indices"],
             txn_ids=resolved["txn_ids"],
         )
@@ -670,8 +673,9 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
 
         # Run this operation in a guarded block so failures can be handled.
         try:
-            preview = preview_edit_transaction_by_ref(
-                # Extract updates for validation.
+            preview = await run_sheets_read(
+                "preview_edit_transaction_by_ref",
+                preview_edit_transaction_by_ref,
                 updates=updates,
                 row_index=row_index,
                 txn_id=txn_id,
@@ -832,7 +836,7 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
 
     if clean in budget_patterns:
         # Build summary for the response flow.
-        summary = get_budget_summary(normalize_month(None))
+        summary = await run_sheets_read("get_budget_summary", get_budget_summary, normalize_month(None))
 
         # Validate missing summary before continuing.
         if not summary:
@@ -1644,7 +1648,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Single transaction
-    parsed = parse_input(user_text)
+    parsed = await parse_input_async(user_text)
 
     if parsed.get("type") == "pending":
         # Account flow section
@@ -2292,7 +2296,9 @@ async def delete_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
-    preview = preview_delete_transactions_by_refs(
+    preview = await run_sheets_read(
+        "preview_delete_transactions_by_refs",
+        preview_delete_transactions_by_refs,
         row_indices=resolved["row_indices"],
         txn_ids=resolved["txn_ids"],
     )
@@ -3141,7 +3147,7 @@ def get_current_bulk_edit_category_decision(state: dict) -> tuple[dict | None, i
 
 
 # Helper for parse bulk edit txn entries.
-def parse_bulk_edit_txn_entries(lines: list[str], context: ContextTypes.DEFAULT_TYPE) -> tuple[list[dict], list[str], list[dict]]:
+async def parse_bulk_edit_txn_entries(lines: list[str], context: ContextTypes.DEFAULT_TYPE) -> tuple[list[dict], list[str], list[dict]]:
     """Parse caller input for the parse bulk edit txn entries workflow in the Telegram handler layer.
 
     Args:
@@ -3241,8 +3247,9 @@ def parse_bulk_edit_txn_entries(lines: list[str], context: ContextTypes.DEFAULT_
             # Skip the rest of this loop iteration after handling this case.
             continue
 
-        preview = preview_edit_transaction_by_ref(
-            # Extract updates for validation.
+        preview = await run_sheets_read(
+            "preview_edit_transaction_by_ref",
+            preview_edit_transaction_by_ref,
             updates=updates,
             row_index=row_index,
             txn_id=txn_id,
@@ -3297,7 +3304,7 @@ async def bulk_edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TY
     Flow constraints:
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
-    entries, errors, category_decisions = parse_bulk_edit_txn_entries(lines, context)
+    entries, errors, category_decisions = await parse_bulk_edit_txn_entries(lines, context)
 
     if errors or not entries:
         # Send the Telegram response before continuing.
@@ -3440,8 +3447,9 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ {md_safe(str(e))}", parse_mode="Markdown")
             return
 
-        preview = preview_edit_transaction_by_ref(
-            # Extract updates for validation.
+        preview = await run_sheets_read(
+            "preview_edit_transaction_by_ref",
+            preview_edit_transaction_by_ref,
             updates=updates,
             row_index=row_index,
             txn_id=txn_id,
@@ -3455,7 +3463,9 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        debt_check = validate_edit_debt_payment_conversion(
+        debt_check = await run_sheets_read(
+            "validate_edit_debt_payment_conversion",
+            validate_edit_debt_payment_conversion,
             debt_payment_conversion,
             float((preview.get("new_txn") or {}).get("amount", 0) or 0),
         )
@@ -3517,8 +3527,9 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     row_index = resolved["row_indices"][0] if resolved["row_indices"] else None
     txn_id = resolved["txn_ids"][0] if resolved["txn_ids"] else None
 
-    preview = preview_edit_transaction_by_ref(
-        # Extract updates for validation.
+    preview = await run_sheets_read(
+        "preview_edit_transaction_by_ref",
+        preview_edit_transaction_by_ref,
         updates=updates,
         row_index=row_index,
         txn_id=txn_id,

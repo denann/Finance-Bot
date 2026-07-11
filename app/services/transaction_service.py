@@ -1162,19 +1162,15 @@ def _legacy_rewrite_transactions_sheet_by_date(desc: bool) -> dict:
 
 # Helper for sort transactions sheet by date.
 def sort_transactions_sheet_by_date(desc: bool = True) -> dict:
-    """Sort transaction rows server-side while excluding the header.
+    """Sort transaction rows without joining financial rollback semantics.
 
-    Args:
-        desc: Whether newest transactions should appear first.
-
-    Returns:
-        Result dict with `success` and `message`.
-
-    Side effects:
-        Sends one server-side sort request without downloading row data.
+    When a Sheets transaction is active, sorting is registered as one
+    deduplicated post-commit maintenance action.  This keeps presentation
+    ordering outside the rollback group, so a later balance/debt failure cannot
+    combine a moved row with stale rollback coordinates.
     """
-    # Run this operation in a guarded block so failures can be handled.
-    try:
+
+    def execute_sort() -> dict:
         if TRANSACTION_SORT_MODE == "legacy":
             return _legacy_rewrite_transactions_sheet_by_date(desc)
 
@@ -1186,7 +1182,17 @@ def sort_transactions_sheet_by_date(desc: bool = True) -> dict:
         )
         return {"success": True, "message": "transactions sorted server-side by date and id"}
 
-    # Handle an expected failure from the guarded operation above.
+    transaction = get_current_sheets_transaction()
+    if transaction is not None:
+        transaction.add_post_commit(
+            "transactions:sort_by_date",
+            "sort transactions by date",
+            execute_sort,
+        )
+        return {"success": True, "message": "transaction sort scheduled after commit"}
+
+    try:
+        return execute_sort()
     except Exception as e:
         return {"success": False, "message": str(e)}
 

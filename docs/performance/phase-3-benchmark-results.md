@@ -1,80 +1,122 @@
-# Phase 3 Benchmark Results
+# Phase 3 Benchmark Results — Corrected Measurement
 
-## Scope
+> **OFFLINE SYNTHETIC.** `optimized` results below execute current application services against an instrumented in-memory Sheets adapter. `baseline` values are historical modelled profiles retained only for before/after comparison. Neither mode represents real Telegram, Google Sheets, Gemini, network, or production latency.
 
-These results are **OFFLINE SYNTHETIC**. They use deterministic fake operation profiles and locally generated finance rows. No Telegram, Google Sheets, Gemini, network, credentials, or user financial data were used.
+## Method
 
-Command:
+- Deterministic synthetic datasets: 100, 1,000, and 10,000 transactions.
+- Five iterations per scenario.
+- Optimized operation counts are observed from actual worksheet method calls made by the application.
+- Baseline counts are explicitly labelled `historical_modelled`; they are not presented as executed current code.
+- p50/p95/p99 are local Python timings and informational only.
 
-```powershell
-python -m benchmarks.phase3_synthetic --mode baseline --sizes 100 1000 10000 --iterations 5
-python -m benchmarks.phase3_synthetic --mode optimized --sizes 100 1000 10000 --iterations 5
-```
+## Key operation contracts
 
-Timings cover local Python fixture processing only. They are not production latency claims. Operation counts are the deterministic regression contract.
+| Contract | Observed optimized result |
+| :--- | :--- |
+| Single transaction save | 2 worksheet operations: 1 append + 1 server-side sort; 0 transaction rows downloaded; 0 full-range rewrites |
+| Five-item save | 2 worksheet operations: 1 batch append + 1 server-side sort; 5 rows written; 0 full-range rewrites |
+| Same-request AI reads | 0 duplicate worksheet reads in all measured AI scenarios |
+| Multi-input Gemini | 1 request-scoped call budget consumption |
+| Image Gemini | 1 normal call; 2 only for compatibility scenario |
 
-## Operation-Count Comparison
+## 100 rows
 
-| Scenario | Baseline | Optimized | Result |
-| :--- | :--- | :--- | :--- |
-| Single save at N rows | 3 Sheets calls; N+1 rows read; N rows written; 1 full rewrite | 2 Sheets calls; 0 rows downloaded for sorting; 1 row appended; 0 full rewrites | Full-rewrite amplification removed |
-| Five-item save at N rows | 3 Sheets calls; N+1 rows read; N rows written; 1 full rewrite | 2 Sheets calls; 0 rows downloaded for sorting; 5 rows appended; 0 full rewrites | Bounded by batch size |
-| `/last`, monthly report, search, export | 1 full logical worksheet read each | 1 full logical worksheet read each | No duplicate read; still O(N) |
-| `/ask` context | 7 logical calls; 3N transaction-row transfers; 2 duplicate reads | 5 logical calls; N transaction-row transfer; 0 duplicate reads; 40 records selected | Request snapshot removes repeats |
-| `/insight` and `/coach` context | 6 logical calls; 2N transaction-row transfers; 1 duplicate read | 5 logical calls; N transaction-row transfer; 0 duplicate reads; 40 records selected | Request snapshot removes repeats |
-| `/audit` context | 7 logical calls; 3N transaction-row transfers; 2 duplicate reads | 5 logical calls; N transaction-row transfer; 0 duplicate reads; 40 records selected | Request snapshot removes repeats |
-| Five unresolved text items | Up to 5 Gemini calls | At most 1 Gemini call | Per-update budget enforced |
-| Image success | 1 Gemini call | 1 Gemini call | Unchanged |
-| Image compatibility fallback | Up to 2 Gemini calls after broad errors | At most 2, only for recognized invocation-format compatibility errors | Retry classification bounded |
+| Scenario | Mode | Measurement | p50 ms | p95 ms | Sheets calls | Rows read | Rows written | Rewrites | Duplicate reads | Gemini | Context chars | Selected |
+| :--- | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Single save | Baseline | `historical_modelled` | 0.007 | 0.014 | 3 | 101 | 100 | 1 | 0 | 0 | 0 | 0 |
+| Single save | Optimized | `observed_application` | 0.691 | 11.576 | 2 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Five-item save | Baseline | `historical_modelled` | 0.007 | 0.008 | 3 | 101 | 100 | 1 | 0 | 0 | 0 | 0 |
+| Five-item save | Optimized | `observed_application` | 0.740 | 1.242 | 2 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
+| /last | Baseline | `historical_modelled` | 0.007 | 0.008 | 1 | 100 | 0 | 0 | 0 | 0 | 0 | 0 |
+| /last | Optimized | `observed_application` | 1.047 | 1.478 | 1 | 100 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Monthly report | Baseline | `historical_modelled` | 0.007 | 0.009 | 1 | 100 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Monthly report | Optimized | `observed_application` | 1.177 | 1.363 | 2 | 100 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Search | Baseline | `historical_modelled` | 0.007 | 0.008 | 1 | 100 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Search | Optimized | `observed_application` | 0.752 | 1.148 | 2 | 100 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Export | Baseline | `historical_modelled` | 0.007 | 0.008 | 1 | 100 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Export | Optimized | `observed_application` | 0.872 | 0.927 | 1 | 100 | 0 | 0 | 0 | 0 | 0 | 0 |
+| /ask | Baseline | `historical_modelled` | 0.007 | 0.008 | 7 | 300 | 0 | 0 | 2 | 1 | 0 | 15 |
+| /ask | Optimized | `observed_application` | 3.303 | 4.197 | 6 | 106 | 0 | 0 | 0 | 1 | 6808 | 15 |
+| /insight | Baseline | `historical_modelled` | 0.007 | 0.008 | 6 | 200 | 0 | 0 | 1 | 1 | 0 | 15 |
+| /insight | Optimized | `observed_application` | 1.877 | 2.161 | 6 | 106 | 0 | 0 | 0 | 1 | 2645 | 0 |
+| /audit | Baseline | `historical_modelled` | 0.012 | 0.014 | 7 | 300 | 0 | 0 | 2 | 1 | 0 | 15 |
+| /audit | Optimized | `observed_application` | 1.378 | 1.455 | 4 | 105 | 0 | 0 | 0 | 1 | 878 | 0 |
+| /coach | Baseline | `historical_modelled` | 0.007 | 0.008 | 6 | 200 | 0 | 0 | 1 | 1 | 0 | 15 |
+| /coach | Optimized | `observed_application` | 2.140 | 2.671 | 6 | 106 | 0 | 0 | 0 | 1 | 2709 | 0 |
+| Multi unresolved | Baseline | `historical_modelled` | 0.007 | 0.008 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
+| Multi unresolved | Optimized | `observed_application` | 0.106 | 0.135 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Image success | Baseline | `historical_modelled` | 0.007 | 0.008 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Image success | Optimized | `observed_application` | 0.101 | 0.117 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Image compatibility | Baseline | `historical_modelled` | 0.007 | 0.008 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Image compatibility | Optimized | `observed_application` | 0.099 | 0.114 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
 
-Transaction save call counts isolate the transaction append and sort-maintenance path. Account validation and balance operations remain governed by their existing financial contract.
+## 1,000 rows
 
-## 100 Rows
+| Scenario | Mode | Measurement | p50 ms | p95 ms | Sheets calls | Rows read | Rows written | Rewrites | Duplicate reads | Gemini | Context chars | Selected |
+| :--- | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Single save | Baseline | `historical_modelled` | 0.083 | 0.212 | 3 | 1001 | 1000 | 1 | 0 | 0 | 0 | 0 |
+| Single save | Optimized | `observed_application` | 1.505 | 2.144 | 2 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Five-item save | Baseline | `historical_modelled` | 0.084 | 0.092 | 3 | 1001 | 1000 | 1 | 0 | 0 | 0 | 0 |
+| Five-item save | Optimized | `observed_application` | 1.351 | 1.562 | 2 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
+| /last | Baseline | `historical_modelled` | 0.087 | 0.126 | 1 | 1000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| /last | Optimized | `observed_application` | 13.300 | 67.545 | 1 | 1000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Monthly report | Baseline | `historical_modelled` | 0.085 | 0.095 | 1 | 1000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Monthly report | Optimized | `observed_application` | 12.411 | 13.575 | 2 | 1000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Search | Baseline | `historical_modelled` | 0.086 | 0.092 | 1 | 1000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Search | Optimized | `observed_application` | 8.444 | 8.917 | 2 | 1000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Export | Baseline | `historical_modelled` | 0.085 | 0.093 | 1 | 1000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Export | Optimized | `observed_application` | 7.492 | 8.478 | 1 | 1000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| /ask | Baseline | `historical_modelled` | 0.086 | 0.096 | 7 | 3000 | 0 | 0 | 2 | 1 | 0 | 15 |
+| /ask | Optimized | `observed_application` | 31.259 | 36.930 | 6 | 1006 | 0 | 0 | 0 | 1 | 6879 | 15 |
+| /insight | Baseline | `historical_modelled` | 0.086 | 0.107 | 6 | 2000 | 0 | 0 | 1 | 1 | 0 | 15 |
+| /insight | Optimized | `observed_application` | 19.325 | 21.993 | 6 | 1006 | 0 | 0 | 0 | 1 | 10815 | 40 |
+| /audit | Baseline | `historical_modelled` | 0.111 | 0.142 | 7 | 3000 | 0 | 0 | 2 | 1 | 0 | 15 |
+| /audit | Optimized | `observed_application` | 10.778 | 12.087 | 4 | 1005 | 0 | 0 | 0 | 1 | 7542 | 24 |
+| /coach | Baseline | `historical_modelled` | 0.087 | 0.128 | 6 | 2000 | 0 | 0 | 1 | 1 | 0 | 15 |
+| /coach | Optimized | `observed_application` | 18.904 | 19.756 | 6 | 1006 | 0 | 0 | 0 | 1 | 10879 | 40 |
+| Multi unresolved | Baseline | `historical_modelled` | 0.123 | 0.151 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
+| Multi unresolved | Optimized | `observed_application` | 0.696 | 0.772 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Image success | Baseline | `historical_modelled` | 0.086 | 0.163 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Image success | Optimized | `observed_application` | 0.675 | 0.715 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Image compatibility | Baseline | `historical_modelled` | 0.133 | 0.147 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Image compatibility | Optimized | `observed_application` | 0.590 | 0.669 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
 
-| Scenario | Mode | p50 ms | p95 ms | p99 ms | Sheets | Rows read | Rows written | Rewrites | Duplicate reads | Gemini | Context chars | Selected |
-| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Single save | Baseline | 0.017 | 0.036 | 0.036 | 3 | 101 | 100 | 1 | 0 | 0 | 0 | 0 |
-| Single save | Optimized | 0.034 | 0.064 | 0.064 | 2 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
-| Monthly report | Optimized | 0.008 | 0.009 | 0.009 | 1 | 100 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `/ask` context | Optimized | 0.323 | 0.399 | 0.399 | 5 | 100 | 0 | 0 | 0 | 1 | 8,762 | 40 |
-| Multi unresolved | Optimized | 0.332 | 1.585 | 1.585 | 0 | 0 | 0 | 0 | 0 | 1 | N/A | 0 |
-| Image compatibility | Optimized | 0.371 | 0.430 | 0.430 | 0 | 0 | 0 | 0 | 0 | 2 | N/A | 0 |
+## 10,000 rows
 
-## 1,000 Rows
-
-| Scenario | Mode | p50 ms | p95 ms | p99 ms | Sheets | Rows read | Rows written | Rewrites | Duplicate reads | Gemini | Context chars | Selected |
-| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Single save | Baseline | 0.246 | 0.302 | 0.302 | 3 | 1,001 | 1,000 | 1 | 0 | 0 | 0 | 0 |
-| Single save | Optimized | 0.431 | 3.011 | 3.011 | 2 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
-| Monthly report | Optimized | 0.126 | 0.241 | 0.241 | 1 | 1,000 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `/ask` context | Optimized | 0.806 | 0.869 | 0.869 | 5 | 1,000 | 0 | 0 | 0 | 1 | 8,750 | 40 |
-| Multi unresolved | Optimized | 0.785 | 1.048 | 1.048 | 0 | 0 | 0 | 0 | 0 | 1 | N/A | 0 |
-| Image compatibility | Optimized | 0.809 | 0.951 | 0.951 | 0 | 0 | 0 | 0 | 0 | 2 | N/A | 0 |
-
-## 10,000 Rows
-
-| Scenario | Mode | p50 ms | p95 ms | p99 ms | Sheets | Rows read | Rows written | Rewrites | Duplicate reads | Gemini | Context chars | Selected |
-| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Single save | Baseline | 9.634 | 13.148 | 13.148 | 3 | 10,001 | 10,000 | 1 | 0 | 0 | 0 | 0 |
-| Single save | Optimized | 13.630 | 14.144 | 14.144 | 2 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
-| Monthly report | Optimized | 1.135 | 1.435 | 1.435 | 1 | 10,000 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `/ask` context | Optimized | 11.531 | 13.885 | 13.885 | 5 | 10,000 | 0 | 0 | 0 | 1 | 8,693 | 40 |
-| Multi unresolved | Optimized | 13.329 | 17.027 | 17.027 | 0 | 0 | 0 | 0 | 0 | 1 | N/A | 0 |
-| Image compatibility | Optimized | 12.624 | 13.585 | 13.585 | 0 | 0 | 0 | 0 | 0 | 2 | N/A | 0 |
-
-## Responsiveness Contract
-
-Deterministic event-based tests prove that a slow fake external read runs in a worker and an unrelated coroutine progresses. Separate semaphores cap interactive Sheets, Gemini, and scheduled work. No fragile developer-machine latency threshold is used in CI.
-
-The synchronous retry `time.sleep` remains inside the Sheets adapter and is off the event loop for covered read/report/AI entry points. Financial mutation callbacks remain synchronous pending a reconciliation-safe mutation timeout design.
+| Scenario | Mode | Measurement | p50 ms | p95 ms | Sheets calls | Rows read | Rows written | Rewrites | Duplicate reads | Gemini | Context chars | Selected |
+| :--- | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Single save | Baseline | `historical_modelled` | 3.444 | 52.761 | 3 | 10001 | 10000 | 1 | 0 | 0 | 0 | 0 |
+| Single save | Optimized | `observed_application` | 9.573 | 18.315 | 2 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Five-item save | Baseline | `historical_modelled` | 2.237 | 6.246 | 3 | 10001 | 10000 | 1 | 0 | 0 | 0 | 0 |
+| Five-item save | Optimized | `observed_application` | 9.085 | 14.995 | 2 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
+| /last | Baseline | `historical_modelled` | 2.182 | 3.547 | 1 | 10000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| /last | Optimized | `observed_application` | 135.012 | 199.007 | 1 | 10000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Monthly report | Baseline | `historical_modelled` | 2.210 | 4.193 | 1 | 10000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Monthly report | Optimized | `observed_application` | 123.660 | 190.793 | 2 | 10000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Search | Baseline | `historical_modelled` | 2.082 | 2.243 | 1 | 10000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Search | Optimized | `observed_application` | 83.605 | 134.450 | 2 | 10000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Export | Baseline | `historical_modelled` | 2.063 | 2.110 | 1 | 10000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Export | Optimized | `observed_application` | 73.244 | 108.146 | 1 | 10000 | 0 | 0 | 0 | 0 | 0 | 0 |
+| /ask | Baseline | `historical_modelled` | 2.488 | 3.139 | 7 | 30000 | 0 | 0 | 2 | 1 | 0 | 15 |
+| /ask | Optimized | `observed_application` | 306.021 | 359.963 | 6 | 10006 | 0 | 0 | 0 | 1 | 6865 | 15 |
+| /insight | Baseline | `historical_modelled` | 2.263 | 2.574 | 6 | 20000 | 0 | 0 | 1 | 1 | 0 | 15 |
+| /insight | Optimized | `observed_application` | 186.061 | 226.885 | 6 | 10006 | 0 | 0 | 0 | 1 | 11906 | 40 |
+| /audit | Baseline | `historical_modelled` | 2.276 | 2.419 | 7 | 30000 | 0 | 0 | 2 | 1 | 0 | 15 |
+| /audit | Optimized | `observed_application` | 96.702 | 130.695 | 4 | 10005 | 0 | 0 | 0 | 1 | 7815 | 40 |
+| /coach | Baseline | `historical_modelled` | 2.096 | 2.448 | 6 | 20000 | 0 | 0 | 1 | 1 | 0 | 15 |
+| /coach | Optimized | `observed_application` | 167.494 | 214.163 | 6 | 10006 | 0 | 0 | 0 | 1 | 11970 | 40 |
+| Multi unresolved | Baseline | `historical_modelled` | 2.083 | 2.262 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
+| Multi unresolved | Optimized | `observed_application` | 4.842 | 5.465 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Image success | Baseline | `historical_modelled` | 2.050 | 2.136 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Image success | Optimized | `observed_application` | 4.875 | 5.481 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| Image compatibility | Baseline | `historical_modelled` | 2.098 | 2.175 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| Image compatibility | Optimized | `observed_application` | 5.057 | 5.175 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
 
 ## Interpretation
 
-The operation-count improvement is meaningful even where local fixture timings fluctuate. Server-side sort removes transaction-row transfer and rewrite growth from save. Request snapshots remove duplicate same-request reads, but the first report/AI read remains O(N). AI selection is capped at 40 records and the hard input bound is 100,000 characters.
-
-| Documentation update | Status |
-| :--- | :--- |
-| Baseline method and hot paths | Updated |
-| Before/after operation counts | Updated |
-| 100/1,000/10,000 timing samples | Updated |
-| Production latency claims | Explicitly excluded |
+- The hard evidence is the observed operation count, not local runtime.
+- Save-path sorting no longer scales row transfer or rewrite volume with worksheet size.
+- Read-only report and AI preparation still perform O(N) first reads where the Google Sheets persistence model requires them.
+- Request-scoped snapshots remove repeated transfers inside the same logical request.
+- Real latency, API quotas, permissions, and server-side sort semantics still require dummy-Sheets staging.

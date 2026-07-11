@@ -1236,7 +1236,7 @@ async def recurring_edit_handler(update: Update, context: ContextTypes.DEFAULT_T
         command_args = _recurring_command_args_from_update(update, context, "recurring_edit")
         rule_id, updates = parse_recurring_edit_args(command_args)
 
-        rule = get_recurring_rule_by_id(rule_id)
+        rule = await run_sheets_read("get_recurring_rule_by_id", get_recurring_rule_by_id, rule_id)
         if not rule:
             await update.message.reply_text("❌ Recurring rule tidak ditemukan.\n\nCek ID dengan command:\n/recurring")
             return
@@ -1392,7 +1392,7 @@ async def recurring_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reject_unauthorized(update)
         return
 
-    rules = get_recurring_rules(active_only=False)
+    rules = await run_sheets_read("get_recurring_rules", get_recurring_rules, active_only=False)
 
     # Send the Telegram response before continuing.
     await update.message.reply_text(
@@ -1499,7 +1499,7 @@ async def recurring_run_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        due_rules = get_due_recurring_rules()
+        due_rules = await run_sheets_read("get_due_recurring_rules", get_due_recurring_rules)
         lines = [
             "🧾 *Preview final — jalankan recurring jatuh tempo*",
             "",
@@ -1561,7 +1561,7 @@ async def recurring_off_handler(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     rule_id = context.args[0].strip()
-    rule = get_recurring_rule_by_id(rule_id)
+    rule = await run_sheets_read("get_recurring_rule_by_id", get_recurring_rule_by_id, rule_id)
     if not rule:
         await update.message.reply_text("❌ Recurring rule tidak ditemukan.")
         return

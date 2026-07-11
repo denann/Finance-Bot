@@ -79,10 +79,17 @@ async def run_external_work(
     policy: ExternalWorkPolicy | None = None,
     **kwargs: Any,
 ) -> T:
-    """Run synchronous external work without blocking the event loop."""
+    """Run synchronous external work without blocking the event loop.
+
+    The concurrency slot belongs to the underlying worker, not only to the
+    awaiting coroutine.  ``asyncio.to_thread`` cannot stop a running thread
+    when the caller times out, so the slot is released by the worker task's
+    completion callback.  This prevents timed-out calls from silently
+    exceeding the configured concurrency limit.
+    """
 
     selected_policy = policy or _POLICIES[work_class]
-    timeout = float(timeout_seconds or selected_policy.timeout_seconds)
+    timeout = float(selected_policy.timeout_seconds if timeout_seconds is None else timeout_seconds)
     semaphore = _semaphore(work_class, selected_policy.limit)
     started = monotonic_ms()
     try:
@@ -91,27 +98,51 @@ async def run_external_work(
         increment_metric(f"external_io.{work_class.value}.saturated")
         raise ExternalIOSaturated(f"Worker {work_class.value} sedang penuh.") from exc
 
+    worker_task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    caller_timed_out = False
+
+    def release_worker_slot(completed: asyncio.Task) -> None:
+        """Release capacity only after the real thread-backed task finishes."""
+
+        semaphore.release()
+        observe_duration(f"external_io.{work_class.value}.worker_duration_ms", monotonic_ms() - started)
+        # Always retrieve the task exception.  Awaiters still receive the same
+        # exception, while this also closes the small race where the worker can
+        # finish between wait_for timing out and the timeout flag being set.
+        try:
+            completed.exception()
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    worker_task.add_done_callback(release_worker_slot)
+
     try:
         increment_metric(f"external_io.{work_class.value}.started")
-        result = await asyncio.wait_for(
-            asyncio.to_thread(function, *args, **kwargs),
-            timeout=timeout,
-        )
+        # Shield keeps the worker task alive when wait_for times out.  The
+        # remote operation may still complete, especially for mutations.
+        result = await asyncio.wait_for(asyncio.shield(worker_task), timeout=timeout)
     except TimeoutError as exc:
+        caller_timed_out = True
         increment_metric(f"external_io.{work_class.value}.timeout")
         emit_event(
             "external_io_timeout",
             work_class=work_class.value,
             operation=operation,
             mutation=mutation,
+            worker_still_running=not worker_task.done(),
         )
         error_type = ExternalMutationOutcomeUnknown if mutation else ExternalIOTimeout
         raise error_type(f"Operasi {operation} melewati batas waktu.") from exc
+    except asyncio.CancelledError:
+        caller_timed_out = True
+        increment_metric(f"external_io.{work_class.value}.cancelled")
+        raise
     except Exception:
         increment_metric(f"external_io.{work_class.value}.failed")
         raise
     finally:
-        semaphore.release()
+        # This duration measures how long the caller waited.  Worker duration
+        # is recorded separately by ``release_worker_slot``.
         observe_duration(f"external_io.{work_class.value}.duration_ms", monotonic_ms() - started)
 
     increment_metric(f"external_io.{work_class.value}.completed")

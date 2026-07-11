@@ -171,6 +171,130 @@ Balas HANYA JSON dengan format berikut:
 """.strip()
 
 
+def build_batch_prompt(user_inputs: list[str]) -> str:
+    """Build one structured Gemini prompt for all unresolved bulk items."""
+
+    today = business_now().strftime("%Y-%m-%d")
+    safe_inputs = [redact_sensitive_text(str(value or "")) for value in user_inputs]
+    expense_categories = get_valid_categories("expense")
+    income_categories = get_valid_categories("income")
+    valid_accounts = get_valid_accounts()
+    numbered = "\n".join(f"{index}: {text}" for index, text in enumerate(safe_inputs))
+    return f"""
+Kamu adalah parser batch transaksi keuangan pribadi berbahasa Indonesia.
+Parse setiap item secara independen dan balas HANYA JSON array murni.
+Jangan menghapus, menggabungkan, atau mengubah urutan item.
+Jika satu item tidak dapat dipahami sebagai expense, income, atau transfer, isi parsed dengan null.
+
+Hari ini: {today}
+Kategori pengeluaran valid: {", ".join(expense_categories)}
+Kategori pemasukan valid: {", ".join(income_categories)}
+Rekening valid: {", ".join(valid_accounts)}
+
+Aturan field transaksi sama dengan parser transaksi tunggal:
+- type: expense|income|transfer
+- amount: integer Rupiah positif
+- account adalah rekening asal; to_account hanya untuk transfer
+- date: YYYY-MM-DD
+- parsed_by: gemini
+- jangan transkrip credential atau token
+
+Item unresolved:
+{numbered}
+
+Format output:
+[
+  {{
+    "index": 0,
+    "parsed": {{
+      "type": "expense|income|transfer",
+      "amount": 0,
+      "category": "nama kategori",
+      "account": null,
+      "to_account": null,
+      "subject": "",
+      "description": "",
+      "catatan": "",
+      "tipe_pengeluaran": "",
+      "date": "{today}",
+      "parsed_by": "gemini"
+    }}
+  }}
+]
+""".strip()
+
+
+def _normalize_gemini_transaction(parsed: dict) -> dict | None:
+    """Validate and normalize one Gemini transaction draft."""
+
+    if not isinstance(parsed, dict):
+        return None
+    required_fields = ["type", "amount", "category", "date"]
+    if any(field not in parsed for field in required_fields):
+        return None
+    if parsed.get("type") not in {"expense", "income", "transfer"}:
+        return None
+    try:
+        parsed = dict(parsed)
+        parsed["amount"] = int(parsed["amount"])
+    except (TypeError, ValueError):
+        return None
+    if parsed["amount"] <= 0:
+        return None
+
+    if parsed["type"] == "transfer":
+        parsed["category"] = None
+    else:
+        parsed["category"] = ensure_category_for_transaction(parsed.get("category"), parsed.get("type"))
+
+    parsed["account"] = resolve_account_for_parser(parsed.get("account"))
+    parsed["to_account"] = resolve_account_for_parser(parsed.get("to_account"))
+    if parsed["type"] != "expense":
+        parsed["tipe_pengeluaran"] = ""
+    elif parsed.get("tipe_pengeluaran") not in VALID_SPENDING_TYPES:
+        parsed["tipe_pengeluaran"] = "Harian"
+    parsed["subject"] = parsed.get("subject") or ""
+    parsed["description"] = parsed.get("description") or "Transaksi"
+    parsed["catatan"] = parsed.get("catatan") or ""
+    parsed["parsed_by"] = "gemini"
+    return parsed
+
+
+def parse_batch_with_gemini(user_inputs: list[str]) -> dict[int, dict]:
+    """Parse all unresolved bulk lines with at most one Gemini invocation."""
+
+    if not user_inputs or not GEMINI_API_KEY:
+        return {}
+    try:
+        response_text = generate_text_with_gemini(
+            build_batch_prompt(user_inputs),
+            model_name=GEMINI_TEXT_MODEL,
+            temperature=0.0,
+            feature="transaction_batch_parser",
+        )
+        if not response_text:
+            return {}
+        payload = json.loads(clean_gemini_json(response_text))
+        if not isinstance(payload, list):
+            return {}
+        results: dict[int, dict] = {}
+        for entry in payload:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                index = int(entry.get("index"))
+            except (TypeError, ValueError):
+                continue
+            if index < 0 or index >= len(user_inputs) or index in results:
+                continue
+            normalized = _normalize_gemini_transaction(entry.get("parsed"))
+            if normalized is not None:
+                results[index] = normalized
+        return results
+    except Exception:
+        return {}
+
+
 # Helper for clean gemini json.
 def clean_gemini_json(raw_text: str) -> str:
     """Coordinate the clean gemini json logic in the NLP/parser layer.
@@ -238,43 +362,7 @@ def parse_with_gemini(user_input: str) -> dict | None:
         # Prepare raw text from the incoming input.
         raw_text = clean_gemini_json(response_text)
         parsed = json.loads(raw_text)
-
-        required_fields = ["type", "amount", "category", "date"]
-        # Iterate through each field.
-        for field in required_fields:
-            if field not in parsed:
-                return None
-
-        if parsed["type"] not in ["expense", "income", "transfer"]:
-            return None
-
-        parsed["amount"] = int(parsed["amount"])
-        if parsed["amount"] <= 0:
-            return None
-
-        if parsed["type"] == "transfer":
-            parsed["category"] = None
-        # Use the fallback path when no earlier branch matched.
-        else:
-            parsed["category"] = ensure_category_for_transaction(
-                parsed.get("category"),
-                parsed.get("type"),
-            )
-
-        parsed["account"] = resolve_account_for_parser(parsed.get("account"))
-        parsed["to_account"] = resolve_account_for_parser(parsed.get("to_account"))
-
-        if parsed["type"] != "expense":
-            parsed["tipe_pengeluaran"] = ""
-        elif parsed.get("tipe_pengeluaran") not in VALID_SPENDING_TYPES:
-            parsed["tipe_pengeluaran"] = "Harian"
-
-        parsed["subject"] = parsed.get("subject") or ""
-        parsed["description"] = parsed.get("description") or "Transaksi"
-        parsed["catatan"] = parsed.get("catatan") or ""
-        parsed["parsed_by"] = "gemini"
-
-        return parsed
+        return _normalize_gemini_transaction(parsed)
 
     # Handle an expected failure from the guarded operation above.
     except json.JSONDecodeError:

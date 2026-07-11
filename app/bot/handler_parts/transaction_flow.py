@@ -6,6 +6,8 @@
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.bot.handler_parts.common_imports import *
 from app.clock import business_now
+from app.application.external_io import ExternalIOError, run_gemini
+from app.nlp.gemini_parser import parse_batch_with_gemini, parse_with_pending_fallback
 # Import app.bot.handler_parts.networth_assets so this module can use its helpers.
 from app.bot.handler_parts.networth_assets import build_asset_confirm_preview
 # Import app.services.resolver_service so this module can use its helpers.
@@ -17,31 +19,31 @@ from app.nlp.normalizer import normalize_text
 
 
 # Helper for parse input.
-def parse_input(text: str) -> dict:
-    """Parse caller input for the parse input workflow in the Telegram handler layer.
+def parse_input_local(text: str) -> dict | None:
+    """Parse only deterministic local rules without invoking Gemini."""
 
-    Args:
-        text: Raw text input to parse, normalize, validate, or display.
-
-    Returns:
-        `dict` value as defined by the function signature.
-
-    Side effects:
-        May send or edit Telegram messages and may update `context.user_data` according to the active conversation flow.
-
-    Flow constraints:
-        Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
-    """
-    # Build result for the response flow.
     result = parse_with_regex(text)
-    if result is None:
-        # Build result for the response flow.
-        result = parse_with_pending_fallback(text)
-
     if isinstance(result, dict) and result.get("type") in {"expense", "income", "transfer"}:
         return resolve_parsed_transaction(result, text)
-
     return result
+
+
+def parse_input(text: str) -> dict:
+    """Backward-compatible synchronous parser used by CLI and offline callers."""
+
+    result = parse_input_local(text)
+    if result is None:
+        result = parse_with_pending_fallback(text)
+    return result
+
+
+async def parse_input_async(text: str) -> dict:
+    """Parse one Telegram input while keeping Gemini off the event loop."""
+
+    result = parse_input_local(text)
+    if result is not None:
+        return result
+    return await run_gemini("transaction_parser", parse_with_pending_fallback, text)
 
 
 # Helper for build progress bar.
@@ -823,61 +825,87 @@ async def handle_pending_missing_amount(update: Update, context: ContextTypes.DE
 
 
 # Helper for parse mixed item.
-def parse_mixed_item(line: str) -> dict:
-    """Parse caller input for the parse mixed item workflow in the Telegram handler layer.
+def parse_mixed_item_local(line: str) -> dict:
+    """Parse one mixed item without invoking Gemini."""
 
-    Args:
-        line: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-
-    Returns:
-        `dict` value as defined by the function signature.
-
-    Side effects:
-        May send or edit Telegram messages and may update `context.user_data` according to the active conversation flow.
-
-    Flow constraints:
-        Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
-    """
     clean = normalize_text(line)
     if re.search(r"^(?:tidak\s+jadi|nggak\s+jadi|ga\s+jadi|batal)\b|\b(?:tapi|namun)\s+batal\b|\bbatal\s*$", clean):
-        return {
-            "kind": "ignored",
-            "parsed": {},
-            "raw": line,
-        }
+        return {"kind": "ignored", "parsed": {}, "raw": line}
 
     debt_parsed = parse_debt_input(line)
     if debt_parsed:
         debt_parsed = enrich_ditalangin_split_bill_if_any(debt_parsed, line)
-        return {
-            "kind": "debt",
-            "parsed": debt_parsed,
-            "raw": line,
-        }
+        return {"kind": "debt", "parsed": debt_parsed, "raw": line}
 
-    # Extract missing amount income for validation.
     missing_amount_income = parse_income_missing_amount(line)
     if missing_amount_income:
-        return {
-            "kind": "missing_amount",
-            "parsed": missing_amount_income,
-            "raw": line,
-        }
+        return {"kind": "missing_amount", "parsed": missing_amount_income, "raw": line}
 
+    txn_parsed = parse_input_local(line)
+    if txn_parsed and txn_parsed.get("type") != "pending":
+        attach_split_bill_if_any(txn_parsed, line)
+        return {"kind": "transaction", "parsed": txn_parsed, "raw": line}
+
+    return {"kind": "failed", "parsed": {}, "raw": line}
+
+
+def parse_mixed_item(line: str) -> dict:
+    """Backward-compatible mixed parser with a synchronous Gemini fallback."""
+
+    local = parse_mixed_item_local(line)
+    if local.get("kind") != "failed":
+        return local
     txn_parsed = parse_input(line)
     if txn_parsed and txn_parsed.get("type") != "pending":
         attach_split_bill_if_any(txn_parsed, line)
-        return {
-            "kind": "transaction",
-            "parsed": txn_parsed,
-            "raw": line,
-        }
+        return {"kind": "transaction", "parsed": txn_parsed, "raw": line}
+    return local
 
-    return {
-        "kind": "failed",
-        "parsed": {},
-        "raw": line,
-    }
+
+async def parse_mixed_item_async(line: str) -> dict:
+    """Parse one rewritten bulk item without blocking the event loop."""
+
+    local = parse_mixed_item_local(line)
+    if local.get("kind") != "failed":
+        return local
+    txn_parsed = await run_gemini("transaction_parser", parse_with_pending_fallback, line)
+    if txn_parsed and txn_parsed.get("type") != "pending":
+        attach_split_bill_if_any(txn_parsed, line)
+        return {"kind": "transaction", "parsed": txn_parsed, "raw": line}
+    return local
+
+
+async def parse_mixed_items_batch(input_lines: list[str]) -> list[dict]:
+    """Parse unresolved bulk lines with one shared Gemini batch invocation."""
+
+    items = [parse_mixed_item_local(line) for line in input_lines]
+    unresolved_positions = [index for index, item in enumerate(items) if item.get("kind") == "failed"]
+    if not unresolved_positions:
+        return items
+
+    unresolved_inputs = [input_lines[index] for index in unresolved_positions]
+    try:
+        parsed_by_position = await run_gemini(
+            "transaction_batch_parser",
+            parse_batch_with_gemini,
+            unresolved_inputs,
+        )
+    except ExternalIOError:
+        # Keep unresolved items in the normal clarification flow when the
+        # governed Gemini worker is unavailable, saturated, or times out.
+        return items
+    for batch_index, parsed in parsed_by_position.items():
+        if batch_index < 0 or batch_index >= len(unresolved_positions):
+            continue
+        original_index = unresolved_positions[batch_index]
+        attach_split_bill_if_any(parsed, input_lines[original_index])
+        items[original_index] = {
+            "kind": "transaction",
+            "parsed": parsed,
+            "raw": input_lines[original_index],
+        }
+    return items
+
 
 # Helper for mixed needs account.
 def mixed_needs_account(mixed_items: list[dict]) -> bool:

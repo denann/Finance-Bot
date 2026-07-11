@@ -13,6 +13,7 @@ from app.observability import increment_metric
 
 PROMPT_VERSIONS = {
     "transaction_parser": "transaction-parser-v1",
+    "transaction_batch_parser": "transaction-batch-parser-v1",
     "intent_router": "intent-router-v1",
     "finance_ask": "finance-ask-v1",
     "finance_insight": "finance-insight-v1",
