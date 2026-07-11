@@ -838,6 +838,14 @@ def parse_mixed_item(line: str) -> dict:
     Flow constraints:
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
+    clean = normalize_text(line)
+    if re.search(r"^(?:tidak\s+jadi|nggak\s+jadi|ga\s+jadi|batal)\b|\b(?:tapi|namun)\s+batal\b|\bbatal\s*$", clean):
+        return {
+            "kind": "ignored",
+            "parsed": {},
+            "raw": line,
+        }
+
     debt_parsed = parse_debt_input(line)
     if debt_parsed:
         debt_parsed = enrich_ditalangin_split_bill_if_any(debt_parsed, line)
@@ -4302,6 +4310,39 @@ def detect_split_bill(parsed: dict, raw: str) -> dict | None:
     friend_marker = r"(?:sama|ama|dengan|bareng)"
     participant_token = r"(?:\d+|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|berdua|bertiga|berempat|berlima|berenam)"
     name_chunk = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s,;&:%./]{0,140}"
+
+    payer_match = re.search(
+        r"^(?P<item>.+?)\s+sama\s+(?P<person>[A-Za-zÀ-ÿ]+)\s+"
+        r"(?:rp\s*)?\d[\d.,]*\s*(?:rb|ribu|k|jt|juta|m)?\s+"
+        r"(?P<payer>saya|aku|gw|gue|gua|[A-Za-zÀ-ÿ]+)\s+yang\s+bayar",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if payer_match:
+        person = payer_match.group("person").strip().title()
+        payer = normalize_text(payer_match.group("payer"))
+        payer_role = "user" if payer in {"saya", "aku", "gw", "gue", "gua"} else "other"
+        item = re.sub(r"^(?:beli|bayar)\s+", "", payer_match.group("item"), flags=re.IGNORECASE).strip().title()
+        participants = 2
+        base_share_amount = amount / participants
+        parsed["amount"] = amount
+        parsed["subject"] = item
+        parsed["description"] = item
+        return {
+            "person_name": person,
+            "person_names": [person],
+            "participants": participants,
+            "payer_role": payer_role,
+            "payer_name": person if payer_role == "other" else "",
+            "share_amount": base_share_amount,
+            "user_share_amount": base_share_amount,
+            "base_share_amount": base_share_amount,
+            "person_shares": {person: base_share_amount},
+            "has_custom_share": False,
+            "total_receivable": base_share_amount if payer_role == "user" else 0.0,
+            "total_amount": amount,
+            "status": None,
+        }
 
     # Phase 2 compact split: `split bill makan Budi 80k` or `ptpt makan 80k sama Budi`.
     compact_patterns_early = [

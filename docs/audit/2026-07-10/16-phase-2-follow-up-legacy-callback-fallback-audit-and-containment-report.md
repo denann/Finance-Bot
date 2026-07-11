@@ -95,6 +95,8 @@ The existing Windows pytest cache warning does not affect collection or executio
 - Real old-message callback timing and restart behavior remain staging-only checks.
 - The 23 known gaps remain intentionally unresolved and are not accepted permanent behavior.
 
+This final residual-risk statement was superseded later on 2026-07-11 when all 23 contracts were implemented and promoted to active tests. See `17-regression-known-gap-resolution-report.md`.
+
 ## Recommended Next Step
 
 The fallback is now contained. Continue to Phase 3 after owner review; extract another legacy callback context only when its behavior has dedicated contract coverage.

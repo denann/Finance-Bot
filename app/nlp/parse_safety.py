@@ -72,11 +72,6 @@ FUTURE_OR_BILLING_PERIOD_KEYWORDS = {
     "sep", "okt", "nov", "des",
 }
 
-PENDING_EXPLICIT_KEYWORDS = {
-    "pending", "rencana", "planning", "plan", "nanti", "akan", "bakal",
-    "perlu", "butuh", "kudu", "harus",
-}
-
 PAST_OR_ACTUAL_KEYWORDS = {
     "sudah", "udah", "sdh", "barusan", "tadi", "kemarin", "baru aja",
     "telah", "dibayar", "lunas",
@@ -334,6 +329,40 @@ def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str
             f"Tanggal `{date_result.explicit_input}` tidak valid. Gunakan tanggal kalender yang benar, misalnya `29/02/2024`.",
         )
 
+    if re.search(r"\bbesok\b", clean) and re.search(r"\b(?:mau|akan|bakal|beli|bayar)\b", clean):
+        _append_unique(flags, "future_transaction_intent")
+        _add_reason(reasons, "Input menyatakan transaksi masa depan dan belum boleh dianggap sudah terjadi.")
+
+    if re.search(r"\b(?:transfer|tf|trf)\b", clean):
+        account_match = re.search(
+            rf"\bdari\s+({ACCOUNT_PATTERN})\s+ke\s+({ACCOUNT_PATTERN})\b",
+            clean,
+            flags=re.IGNORECASE,
+        )
+        if account_match and normalize_text(account_match.group(1)) == normalize_text(account_match.group(2)):
+            _append_unique(flags, "same_account_transfer")
+            _add_reason(reasons, "Rekening asal dan tujuan transfer tidak boleh sama.")
+
+    if re.search(r"^\s*kirim\s+[^\W\d_]+\s+(?:rp\s*)?\d", clean, flags=re.IGNORECASE):
+        _append_unique(flags, "person_transfer_ambiguous")
+        _add_reason(reasons, "Kirim uang ke orang perlu diklarifikasi sebagai pembayaran, hutang, atau pengeluaran.")
+
+    split_divisor = re.search(r"\b(?:dibagi|di\s*-?\s*bagi|bagi|split|share)\s+(\d+)\b", clean)
+    if split_divisor and int(split_divisor.group(1)) == 0:
+        _append_unique(flags, "invalid_split_divisor")
+        _add_reason(reasons, "Jumlah pembagi split bill harus lebih dari nol.")
+    elif split_divisor and not re.search(r"\b(?:sama|dengan|bareng)\s+[^\W\d_]", clean):
+        _append_unique(flags, "split_participants_missing")
+        _add_reason(reasons, "Nama peserta split bill belum disebutkan.")
+
+    if (
+        re.search(r"\b(?:makan|minum|ngopi)\b", clean)
+        and re.search(r"\bsama\s+[^\W\d_]+\s+dan\s+[^\W\d_]+", clean)
+        and not re.search(r"\b(?:dibagi|di\s*-?\s*bagi|bagi|split|share|patungan)\b", clean)
+    ):
+        _append_unique(flags, "possible_split_not_attached")
+        _add_reason(reasons, "Beberapa orang disebut pada transaksi makan, tetapi maksud split bill belum eksplisit.")
+
     if not _has_debt_keyword(clean):
         person_pays = re.search(
             r"^\s*(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)\s+(?:bayar|byr)\b(?=.*(?:\d|rp|idr))",
@@ -403,11 +432,9 @@ def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str
 
     # Pending expense section
     has_future_period = _has_future_or_billing_period(clean)
-    first_tokens = " ".join(clean.split()[:3])
-    has_explicit_pending = any(_contains_phrase_or_word(first_tokens, keyword) for keyword in PENDING_EXPLICIT_KEYWORDS)
     has_past_or_actual = _has_past_or_actual_keyword(clean)
-    # Handle has future period and not has explicit pending and not has pa.
-    if has_future_period and not has_explicit_pending and not has_past_or_actual:
+    # Future billing periods require clarification even when explicitly planned.
+    if has_future_period and not has_past_or_actual:
         # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
         _append_unique(flags, "possible_pending_expense")
         _add_reason(
@@ -454,6 +481,11 @@ def detect_post_parse_flags(text: str, parsed: dict[str, Any] | None) -> tuple[l
     txn_type = str(parsed.get("type") or "").strip().lower()
     category = str(parsed.get("category") or "").strip()
     parsed_by = str(parsed.get("parsed_by") or "").strip().lower()
+
+    amount = float(parsed.get("amount", 0) or 0)
+    if amount >= 1_000_000_000_000:
+        _append_unique(warning_flags, "amount_outlier")
+        _add_reason(reasons, "Nominal sangat besar dan perlu diperiksa sebelum disimpan.")
 
     topup_match = re.search(
         r"\b(?:top\s*up|topup|isi|ngisi)\s+(?P<target>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,25}?)(?=\s*(?:\d|rp|idr|dari|pakai|pake|via|ke|$))",
@@ -569,6 +601,17 @@ def assess_parse_safety(text: str, parsed: dict | None) -> dict:
     parsed = parsed or {}
     pre_flags, pre_reasons = detect_pre_parse_clarification_flags(text)
     info_flags, warning_flags, gemini_flags, post_reasons = detect_post_parse_flags(text, parsed)
+
+    split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
+    if split_bill:
+        participants = int(split_bill.get("participants", 0) or 0)
+        named_people = len(split_bill.get("person_names") or [])
+        if participants and participants != named_people + 1:
+            _append_unique(pre_flags, "split_participant_count_mismatch")
+            _add_reason(pre_reasons, "Jumlah peserta split tidak sesuai dengan nama orang yang disebutkan.")
+
+    if "person_transfer_ambiguous" in pre_flags:
+        warning_flags = [flag for flag in warning_flags if flag != "category_uncertain"]
 
     risk_flags: list[str] = []
     reasons: list[str] = []

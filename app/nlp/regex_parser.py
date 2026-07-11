@@ -2,6 +2,7 @@
 
 
 # Import re for this module's local operations.
+import calendar
 import re
 # Import dataclass for structured date detection results.
 from dataclasses import dataclass
@@ -327,6 +328,25 @@ def parse_debt_input(text: str) -> dict | None:
     if not amount:
         return None
 
+    self_borrow_match = re.search(
+        r"^\s*(?:saya|aku|gw|gue|gua)\s+(?:minjem|pinjem|pinjam)\s+"
+        r"(?:uang\s+)?(?:rp\s*)?\d[\d.,]*\s*(?:rb|ribu|k|jt|juta|m)?\s+dari\s+"
+        r"(?P<person>[^\d]+?)(?=\s*(?:tanggal|tgl|kemarin|hari\s+ini|$))",
+        text_lower,
+        flags=re.IGNORECASE,
+    )
+    if self_borrow_match:
+        person = re.sub(r"\s+", " ", self_borrow_match.group("person")).strip().title()
+        if person:
+            return attach_debt_account_payload({
+                "intent": "add_payable",
+                "person_name": person,
+                "amount": amount,
+                "description": extract_description(text, amount),
+                "date": detect_date(text),
+                "raw_input": text,
+            }, text)
+
     # Helper for extract person after.
     def extract_person_after(text_value: str, keyword: str) -> str | None:
         """Extract the required part of input for person after."""
@@ -430,7 +450,7 @@ def parse_debt_input(text: str) -> dict | None:
     person_pays_debt_match = re.search(
         r"^\s*(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)\s+"
         r"(?:bayar|byr|melunasi|lunasin|lunasi|nyicil|cicil|transfer\s+balik|kembaliin|balikin|dibalikin)\s+"
-        r"(?:hutang|utang|piutang|debt|cicilan)\b(?=.*(?:\d|rp|idr))",
+        r"(?:sebagian\s+)?(?:hutang(?:nya)?|utang(?:nya)?|piutang|debt|cicilan)\b(?=.*(?:\d|rp|idr))",
         text_lower,
         flags=re.IGNORECASE,
     )
@@ -450,7 +470,7 @@ def parse_debt_input(text: str) -> dict | None:
     # Match explicit user debt payments even when the user omits "saya".
     self_pays_debt_match = re.search(
         r"^\s*(?:(?:saya|aku|gw|gue|gua)\s+)?"
-        r"(?:bayar|byr|melunasi|lunasin|lunasi|nyicil|cicil)\s+"
+        r"(?:bayar|byr|melunasi|lunasin|lunasi|nyicil|cicil)\s+(?:sebagian\s+)?"
         r"(?:hutang|utang|debt|cicilan)\s+"
         r"(?:ke|sama)?\s*"
         r"(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr))",
@@ -1486,7 +1506,7 @@ def detect_relative_date(text: str) -> str | None:
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
     if re.search(r"\bsebulan\s+(?:yang\s+)?lalu\b", clean):
-        return (today - timedelta(days=30)).strftime("%Y-%m-%d")
+        return _subtract_calendar_months(today, 1).strftime("%Y-%m-%d")
 
     # Pattern:
     # Date parsing note: keep explicit and relative Indonesian date formats predictable.
@@ -1526,10 +1546,20 @@ def detect_relative_date(text: str) -> str | None:
             return (today - timedelta(weeks=number)).strftime("%Y-%m-%d")
 
         if unit == "bulan":
-            # Date parsing note: keep explicit and relative Indonesian date formats predictable.
-            return (today - timedelta(days=number * 30)).strftime("%Y-%m-%d")
+            return _subtract_calendar_months(today, number).strftime("%Y-%m-%d")
 
     return None
+
+
+def _subtract_calendar_months(value, months: int):
+    """Subtract calendar months and clamp to the target month's final day."""
+
+    month_index = value.year * 12 + value.month - 1 - int(months)
+    year, zero_based_month = divmod(month_index, 12)
+    month = zero_based_month + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return value.replace(year=year, month=month, day=day)
+
 
 # Helper for detect date.
 @dataclass(frozen=True)
@@ -1592,6 +1622,26 @@ def detect_date_result(text: str) -> DateDetectionResult:
         if parsed_value:
             return DateDetectionResult("valid", parsed_value, raw_value)
         return DateDetectionResult("invalid", None, raw_value)
+
+    month_names = {
+        "januari": 1, "februari": 2, "maret": 3, "april": 4,
+        "mei": 5, "juni": 6, "juli": 7, "agustus": 8,
+        "september": 9, "oktober": 10, "november": 11, "desember": 12,
+    }
+    natural_match = re.search(
+        r"\b(\d{1,2})\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)\b",
+        str(text or ""),
+        flags=re.IGNORECASE,
+    )
+    if natural_match:
+        raw_value = natural_match.group(0)
+        day = int(natural_match.group(1))
+        month = month_names[natural_match.group(2).lower()]
+        try:
+            parsed_value = datetime(today.year, month, day).date().strftime("%Y-%m-%d")
+        except ValueError:
+            return DateDetectionResult("invalid", None, raw_value)
+        return DateDetectionResult("valid", parsed_value, raw_value)
 
     relative_date = detect_relative_date(clean)
     if relative_date:
@@ -1885,6 +1935,12 @@ def parse_with_regex(text: str) -> dict | None:
         Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
     """
     if str(text or "").strip().startswith("/"):
+        return None
+
+    clean = normalize_text(text)
+    if re.search(r"^(?:tidak\s+jadi|nggak\s+jadi|ga\s+jadi|batal)\b|\b(?:tapi|namun)\s+batal\b|\bbatal\s*$", clean):
+        return None
+    if re.search(r"(?:^|\s)-\s*\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta|m|rupiah)?\b", clean):
         return None
 
     # Extract text without date for validation.

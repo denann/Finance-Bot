@@ -18,6 +18,8 @@ The complete pytest suite now collects **220 tests**. The verified offline resul
 
 > Historical snapshot: these counts predate integration with the completed Phase 2 boundary work. Use the current full-suite verification in the Phase 2 follow-up report for the merged totals.
 
+> Resolution update: all 23 known-gap contracts were implemented later on 2026-07-11 and promoted to active regression cases. See `docs/audit/2026-07-10/17-regression-known-gap-resolution-report.md`.
+
 ## Active coverage added
 
 - Decimal and thousands nominal formats: `1,5 juta`, `1.5jt`, `12.500`, and `12,500`.

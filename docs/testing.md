@@ -20,16 +20,13 @@ The matrix coverage inventory is maintained in [`docs/testing/debug-matrix-cover
 
 ### Regression expansion
 
-The owner-provided expansion adds 49 deterministic cases in `tests/regression/fixtures/expansion_cases.jsonl`:
-
-- 26 active cases that must pass normally.
-- 23 known-gap cases that remain strict `xfail` until the implementation satisfies their recorded contracts.
+The owner-provided expansion adds 49 deterministic cases in `tests/regression/fixtures/expansion_cases.jsonl`. All 49 now run as active tests: 26 passed on initial integration and the remaining 23 contracts were implemented in the subsequent known-gap resolution.
 
 Coverage includes historical Telegram inputs and high-risk nominal, transfer, date, debt, split-bill, multi-input, safety, and confirmation behavior. `test_expansion_fixture_has_unique_ids_and_no_legacy_input_duplicates` rejects duplicate IDs, duplicate expansion inputs, and exact input duplicates against the earlier regression corpus.
 
 The historical integration snapshot is documented in [`docs/testing/regression-expansion-2026-07-11.md`](testing/regression-expansion-2026-07-11.md). Use current pytest collection output for repository-wide totals because later Phase 2 tests increase the count beyond that snapshot.
 
-After Phase 2 integration and callback-fallback containment, the verified merged suite collects 276 tests: 253 pass and 23 remain strict expected failures. There are no failures, unexpected passes, or skipped tests.
+After known-gap resolution, the verified merged suite collects 276 tests and all 276 pass. There are no failures, expected failures, unexpected passes, or skipped tests.
 
 ## Install dependencies
 

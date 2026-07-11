@@ -207,6 +207,14 @@ def apply_split_operation(text: str, base_amount: int) -> int:
     if re.search(rf"\b(?:berdua|bertiga|berempat|berlima|berenam)\s+{friend_marker}\b", text_lower):
         return base_amount
 
+    # Keep the gross amount when a split divisor has no named participant yet.
+    # The clarification layer must resolve the missing people before dividing.
+    if re.search(
+        rf"\b{split_word}\s*(?:jadi\s*)?(?:\d+|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh)\s*(?:(?:tanggal|tgl)\b|\d{{1,2}}[-/]\d{{1,2}}|$)",
+        text_lower,
+    ):
+        return base_amount
+
     # Shorthand split bill: "46k/4 sama raka bagas fajar".
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     # Split bill parsing note: separate the paid transaction from each person share.
