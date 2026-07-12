@@ -99,14 +99,25 @@ def generate_pdf(source_path: Path = SOURCE_PATH, output_path: Path = OUTPUT_PAT
     with PdfPages(output_path) as pdf:
         page = None
         y = 0.95
+        page_number = 0
+
+        def save_page() -> None:
+            """Finalize one fixed-size page with a stable footer."""
+
+            nonlocal page
+            if page is None:
+                return
+            page.text(0.92, 0.025, f"Page {page_number}", fontsize=8, color="#666666", ha="right")
+            pdf.savefig(page)
+            plt.close(page)
+            page = None
 
         # Render each prepared line, opening a new page when the margin is full.
         for text, font_size, weight in lines:
             line_height = 0.032 if font_size >= 14 else 0.023
             if page is None or y < 0.07:
-                if page is not None:
-                    pdf.savefig(page, bbox_inches="tight")
-                    plt.close(page)
+                save_page()
+                page_number += 1
                 page = plt.figure(figsize=(8.27, 11.69))
                 y = 0.95
                 page.text(0.08, 0.985, "Finance Bot Manual", fontsize=8, color="#666666")
@@ -122,9 +133,7 @@ def generate_pdf(source_path: Path = SOURCE_PATH, output_path: Path = OUTPUT_PAT
             )
             y -= line_height if text else 0.014
 
-        if page is not None:
-            pdf.savefig(page, bbox_inches="tight")
-            plt.close(page)
+        save_page()
 
     return output_path
 

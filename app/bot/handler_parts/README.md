@@ -13,3 +13,7 @@ The bot has many flows: commands, natural transaction input, image parsing, debt
 - `command_router.py`: typo suggestions and command routing helpers.
 - `networth_assets.py`: asset and net worth handlers.
 - `core.py`: authorization, safe replies, and base helper functions.
+
+## Ownership Contract
+
+Each callback family has one owner and bounded predicate. The dispatcher enters legacy handling only for the audited inventory; unknown data fails closed. Cross-domain business rules, raw Sheets access, and duplicate command registries do not belong here. Handler, callback, pending-action, and regression tests verify this folder.

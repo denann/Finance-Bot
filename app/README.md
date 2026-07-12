@@ -16,3 +16,7 @@ The role of this folder is to connect user input, backend logic, Google Sheets, 
 ## Mental model
 
 Telegram handlers should decide what the user wants. Services should decide what finance operation should happen. The Sheets layer should decide how data is read or written safely.
+
+## Ownership Contract
+
+`application/` coordinates typed use cases between Telegram and services. Dependencies flow from `bot/` and `api/` toward application/services, then through governed `sheets/` or NLP boundaries. Tests live under matching unit, service, and integration suites. Deployment files, generated manuals, and ad hoc finance rules do not belong in unrelated application modules.

@@ -28,3 +28,7 @@ python evals/gates.py evals/reports/baseline.json evals/reports/candidate.json
 ```
 
 Thresholds and critical tags are centralized in `evals/gates.py`. Reports are timestamped and never overwrite an older run.
+
+## Ownership Contract
+
+Evals own opt-in provider evidence and versioned reports. They do not replace offline pytest, modify prompts/models, or use production finance data. Live execution requires explicit opt-in and a key; offline golden contracts belong in the normal test suite.

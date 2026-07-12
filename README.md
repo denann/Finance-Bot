@@ -530,6 +530,7 @@ Default pytest blocks unexpected network, Telegram, Gemini, and real gspread cal
 
 ```text
 app/
+├── application/         # Use cases, typed results, snapshots, and external-work governance
 ├── api/                 # Optional FastAPI webhook endpoint
 ├── bot/                 # Telegram Application and handler modules
 ├── nlp/                 # Parser, normalizer, parse safety, and Gemini helpers
@@ -550,20 +551,13 @@ main.py                  # Application entry point
 
 Folder-level and technical documentation are available in `docs/` and each major subfolder README.
 
-Start here:
+Start with `docs/README.md` and `docs/documentation-source-of-truth.md`. Current guides cover project overview, architecture, data model, user flows, confirmation safety, Google Sheets, Gemini, configuration/deployment, maintenance, testing, and operations. Historical audit reports are dated evidence, not current behavioral authority.
 
-- `docs/01-project-map.md`
-- `docs/02-runtime-entrypoint.md`
-- `docs/03-telegram-bot-flow.md`
-- `docs/04-parser-nlp-parse-safety.md`
-- `docs/05-transaction-preview-flow.md`
-- `docs/06-data-layer-services.md`
-- `docs/07-ai-insight-layer.md`
-- `docs/08-setup-debug-deployment.md`
-- `docs/09-function-reference.md`
-- `docs/10-glossary.md`
-- `docs/testing.md`
-- `docs/testing/debug-matrix-coverage.md`
+Run the offline documentation gate after changing commands, configuration, schemas, help, or Markdown links:
+
+```powershell
+python scripts/check_docs.py
+```
 
 ## Limitations and Troubleshooting
 

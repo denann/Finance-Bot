@@ -18,3 +18,7 @@ Use this folder when you want an advanced deployment setup with `BOT_MODE=webhoo
 - `GET /ready`: returns 200 when configuration, Sheets/schema startup, Telegram, and the enabled scheduler are ready; otherwise returns 503.
 
 Responses contain only generic component states. Raw provider errors, credentials, spreadsheet metadata, and finance input are not returned.
+
+## Ownership Contract
+
+The API owns HTTP adaptation only. Public entry points are webhook delivery, liveness, readiness, and the disabled-by-default authenticated diagnostic. It must not implement finance rules, expose raw dependency errors, or bypass confirmation. Integration and operational tests own verification.

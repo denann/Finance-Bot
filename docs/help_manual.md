@@ -2,6 +2,8 @@
 
 Panduan ini menjelaskan cara memakai Finance Bot Telegram untuk mencatat transaksi, saldo, utang/piutang, split bill, laporan, budget, kategori, pending expense, recurring, export data, aset, input gambar, dan insight AI.
 
+Semua nama orang, rekening, merchant, nominal, dan tanggal dalam contoh adalah data fiktif/dummy untuk pembelajaran, bukan data keuangan nyata.
+
 Semua flow yang menyimpan atau mengubah data memakai preview sebelum simpan. Tombol `Batal` dipakai untuk membatalkan wizard atau preview aktif.
 
 Preview final berlaku satu kali dan kedaluwarsa otomatis. Tombol dari preview lama, tombol yang sudah dipakai, atau preview yang hilang setelah bot restart akan ditolak tanpa menulis data. Command `/pending_paid`, `/pending_cancel`, `/recurring_run`, `/recurring_edit`, `/recurring_off`, `/asset_update`, `/asset_off`, dan `/networth_snapshot` tetap memakai syntax yang sama, tetapi sekarang memerlukan satu konfirmasi `Simpan` tambahan.
@@ -9,6 +11,7 @@ Preview final berlaku satu kali dan kedaluwarsa otomatis. Tombol dari preview la
 ## Daftar Isi
 
 - [Quickstart](#quickstart)
+- [Akun dan saldo](#akun-dan-saldo)
 - [Input transaksi](#input-transaksi)
 - [Utang, piutang, dan split bill](#utang-piutang-dan-split-bill)
 - [Laporan dan grafik](#laporan-dan-grafik)
@@ -23,6 +26,7 @@ Preview final berlaku satu kali dan kedaluwarsa otomatis. Tombol dari preview la
 - [Input gambar](#input-gambar)
 - [AI/RAG insight](#airag-insight)
 - [Troubleshooting](#troubleshooting)
+- [Konfirmasi, pembatalan, dan batas keselamatan](#konfirmasi-pembatalan-dan-batas-keselamatan)
 - [Daftar command lengkap](#daftar-command-lengkap)
 
 ## Quickstart
@@ -45,6 +49,14 @@ Command terkait:
 - `/examples` atau `/contoh` - contoh input.
 - `/cancel` atau `/batal` - batal flow aktif.
 - `/health` - cek status bot, env, Google Sheets, dan sheet utama.
+
+## Akun dan Saldo
+
+Gunakan `/rekening` untuk melihat akun yang tersedia dan `/saldo` untuk melihat saldo. Atur saldo awal dengan syntax seperti `/set_saldo Cash 500000`. Alias kompatibel yang terdaftar adalah `/saldo_set` dan `/set_balance`.
+
+Perubahan saldo menampilkan preview sebelum disimpan. Periksa nama akun, saldo lama, saldo baru, dan selisihnya. Transaksi historis dapat menawarkan pilihan `Sudah berlalu / jangan ubah saldo`; pilihan ini menyimpan riwayat tanpa mengubah saldo saat ini.
+
+Jangan mengulang command saldo ketika hasil write tidak dapat dipastikan. Ikuti pesan rekonsiliasi dan periksa worksheet `accounts` serta transaksi terkait terlebih dahulu.
 
 ## Input Transaksi
 
@@ -463,6 +475,18 @@ Fitur inti mengubah data. Gemini/RAG hanya membaca dan memberi insight. Data yan
 - Jika `pending_id`, `asset_id`, atau `rec_xxx` tidak diketahui, jalankan command list terkait.
 - Jika manual PDF belum tersedia, generate ulang dengan `python scripts/generate_help_manual_pdf.py`.
 - Jika font Poppins belum terpasang, generator PDF memakai fallback font sans-serif yang tersedia.
+
+## Konfirmasi, Pembatalan, dan Batas Keselamatan
+
+- Flow yang mengubah data memakai preview final dan tombol `Simpan`/`Batal`.
+- Preview memiliki ID tindakan satu kali. Tombol lama, sudah dipakai, salah pesan, kedaluwarsa, atau hilang setelah restart akan ditolak.
+- `/cancel` dan `/batal` membatalkan flow aktif sebelum mutation dimulai.
+- Pending expense tidak mengubah saldo sampai `/pending_paid` dikonfirmasi.
+- Multi input mempertahankan item yang valid sambil meminta klarifikasi item bermasalah; batch tidak ditulis sebelum preview final.
+- Google Sheets bukan database transactional penuh. Jika hasil mutation tidak dapat dipastikan, jangan ulangi command sampai transaksi, saldo, dan record terkait direkonsiliasi.
+- Timeout tidak membuktikan write sinkron berhenti. Pesan `rekonsiliasi diperlukan` harus ditangani sebagai status operasional, bukan kegagalan biasa.
+- Gemini membantu parsing/insight secara terbatas, tetapi tidak boleh menulis transaksi atau melewati konfirmasi.
+- Export CSV dan pesan Telegram dapat berisi data keuangan pribadi. Simpan dan bagikan hanya melalui kanal yang disetujui.
 
 ## Daftar Command Lengkap
 

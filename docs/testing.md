@@ -1,5 +1,16 @@
 # Testing
 
+## Official Offline Gates
+
+```powershell
+python -m pytest -q
+python scripts/check_docs.py
+python -m compileall -q app evals main.py tests scripts benchmarks
+git diff --check
+```
+
+`scripts/check_docs.py` validates Markdown links/headings, current document index coverage, command/help/manual alignment, command classifications, environment parity, worksheet/schema documentation, generated PDF ownership, historical test-count labeling, and basic credential/example privacy rules. It uses local source and AST inspection only.
+
 ## Scope and safety
 
 The default suite is offline and deterministic. It protects Phase 0 data-integrity contracts and fixture-driven Phase 1A regressions without contacting Telegram, Google Sheets, Gemini, webhooks, or production schedulers.
@@ -20,13 +31,13 @@ The matrix coverage inventory is maintained in [`docs/testing/debug-matrix-cover
 
 ### Regression expansion
 
-The owner-provided expansion adds 49 deterministic cases in `tests/regression/fixtures/expansion_cases.jsonl`. All 49 now run as active tests: 26 passed on initial integration and the remaining 23 contracts were implemented in the subsequent known-gap resolution.
+The owner-provided expansion adds 49 deterministic cases in `tests/regression/fixtures/expansion_cases.jsonl`. In the dated 2026-07-11 integration snapshot, 26 passed initially and the remaining 23 contracts were implemented in the subsequent known-gap resolution.
 
 Coverage includes historical Telegram inputs and high-risk nominal, transfer, date, debt, split-bill, multi-input, safety, and confirmation behavior. `test_expansion_fixture_has_unique_ids_and_no_legacy_input_duplicates` rejects duplicate IDs, duplicate expansion inputs, and exact input duplicates against the earlier regression corpus.
 
 The historical integration snapshot is documented in [`docs/testing/regression-expansion-2026-07-11.md`](testing/regression-expansion-2026-07-11.md). Use current pytest collection output for repository-wide totals because later Phase 2 tests increase the count beyond that snapshot.
 
-After known-gap resolution, the verified merged suite collects 276 tests and all 276 pass. There are no failures, expected failures, unexpected passes, or skipped tests.
+The 2026-07-11 known-gap report recorded a 276-test passing snapshot. Use current pytest collection output for the repository-wide total; test counts are verification snapshots, not permanent documentation contracts.
 
 ## Install dependencies
 

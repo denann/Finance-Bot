@@ -67,10 +67,19 @@ COMMAND_GROUPS = (
 )
 PUBLIC_COMMANDS = tuple(name for group in COMMAND_GROUPS for name, _handler in group)
 
+# Classification is documentation metadata only. Runtime registration continues
+# to use COMMAND_GROUPS so adding labels cannot change routing behavior.
+COMMAND_CLASSIFICATIONS = {name: "public" for name in PUBLIC_COMMANDS}
+HIDDEN_COMMANDS: frozenset[str] = frozenset()
+INTERNAL_TESTING_COMMANDS: frozenset[str] = frozenset()
+
 LIABILITY_UNAVAILABLE_COMMANDS = {
     "liabilities": "Liability tidak lagi menjadi fitur terpisah. Gunakan `/hutang` untuk melihat utang dan piutang.",
     "liability_add": "Liability tidak lagi menjadi fitur terpisah. Catat utang atau piutang melalui alur `/hutang`.",
     "liability_update": "Liability tidak lagi menjadi fitur terpisah. Kelola utang atau piutang melalui `/hutang`.",
     "liability_off": "Liability tidak lagi menjadi fitur terpisah. Kelola utang atau piutang melalui `/hutang`.",
 }
+
+COMPATIBILITY_COMMANDS = frozenset(LIABILITY_UNAVAILABLE_COMMANDS)
+DEPRECATED_COMMANDS = frozenset(LIABILITY_UNAVAILABLE_COMMANDS)
 

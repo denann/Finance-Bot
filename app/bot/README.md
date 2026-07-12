@@ -14,3 +14,7 @@ It is responsible for receiving commands, natural text input, images, and inline
 ## Receipt images
 
 Itemized receipt images are handled as a Telegram flow, not saved immediately. The bot shows OCR details first, lets the user choose all items or only selected parts, shows a detailed batch preview, asks for the account, then shows a compact final summary before saving.
+
+## Ownership Contract
+
+Public entry points are the application builder, command registry, handlers, callback dispatcher, keyboards, and pending actions. This layer owns Telegram rendering/state, not finance calculations or direct persistence. Command names and callback data are protected contracts. Coverage lives under integration and regression tests.

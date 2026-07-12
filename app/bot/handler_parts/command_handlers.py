@@ -46,39 +46,31 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = (
-        "👋 Halo! Saya Finance Bot pribadi Anda.\n\n"
-        "Saya bisa bantu mencatat, mengoreksi, dan menganalisis keuangan dari Google Sheets.\n\n"
-
+        "👋 Halo! Saya *Finance Bot* pribadi Anda.\n\n"
+        "Saya bisa membantu mencatat, mengecek, dan merapikan keuangan Anda di Google Sheets. Cukup tulis dengan bahasa sehari-hari.\n\n"
+        "🚀 *Baru pertama kali pakai?*\n"
+        "1. Cek rekening: `/rekening`\n"
+        "2. Atur saldo awal: `/set_saldo Cash 500000`\n"
+        "3. Catat transaksi: `beli kopi 25rb dari Cash`\n\n"
+        "Sebelum data disimpan, bot akan menampilkan preview. Periksa dulu nominal, rekening, kategori, dan tanggalnya. Setelah itu pilih *Simpan* atau *Batal*.\n\n"
         "🧾 *Catat transaksi*\n"
-        "• `beli kopi 25rb`\n"
-        "• `gaji masuk 8 juta`\n"
-        "• `transfer GoPay 200rb dari BRI`\n"
-        "• kirim foto struk / QRIS\n\n"
-
-        "🤝 *Utang, piutang, split bill*\n"
+        "• `beli kopi 25rb dari Cash`\n"
+        "• `gaji masuk 8 juta ke BRI`\n"
+        "• `transfer 200rb dari BRI ke DANA`\n"
+        "• kirim foto struk atau QRIS\n\n"
+        "🤝 *Utang, piutang, dan split bill*\n"
         "• `Budi minjem 300k`\n"
         "• `catat utang ke Budi 200k`\n"
-        "• `saya talangin Raka beli nasi kuning 12k`\n"
-        "• `saya ditalangin Bagas beli nasi uduk 10k`\n"
         "• `nasi goreng 30k bagi 3 sama Dimas Raka`\n\n"
-
-        "📊 *Laporan & koreksi data*\n"
-        "`/saldo`, `/rekening`, `/harian`, `/mingguan`, `/bulanan`, `/grafik`, `/last`, `/cari`\n"
-        "`/transaksi`, `/edit_txn`, `/delete_txn`, `/debt_settle`, `/download_data`\n\n"
-
-        "🕒 *Pending, budget & transaksi rutin*\n"
-        "`/pending`, `/pending_add`, `/budget`, `/budget_history`, `/kategori`, `/add_kategori`, `/edit_kategori`, `/recurring`\n"
-        "Pending tidak mengubah saldo sampai ditandai `/pending_paid`. Recurring akan muncul sebagai reminder dengan tombol `Sudah bayar`.\n\n"
-
-        "💼 *Net worth*\n"
-        "`/assets`, `/networth`, `/networth_snapshot`\n\n"
-
-        "🤖 *Analisis Gemini / RAG Finance*\n"
-        "`/insight`, `/ask`, `/audit`, `/coach`\n\n"
-
-        "🚀 *Baru pertama kali pakai bot ini?*\n"
-        "Mulai dari `/quickstart` supaya setup rekening, saldo awal, dan contoh inputnya tidak loncat-loncat.\n\n"
-        "Ketik `/examples` untuk contoh input cepat, atau `/help` untuk panduan lengkap."
+        "📊 *Laporan dan koreksi*\n"
+        "`/saldo`, `/harian`, `/mingguan`, `/bulanan`, `/grafik`, `/last`, `/cari`\n"
+        "`/transaksi`, `/edit_txn`, `/delete_txn`, `/download_data`\n\n"
+        "🕒 *Rencana dan transaksi rutin*\n"
+        "`/pending`, `/budget`, `/kategori`, `/recurring`\n"
+        "Pending belum mengubah saldo sampai ditandai sudah dibayar.\n\n"
+        "💼 *Aset dan analisis*\n"
+        "`/assets`, `/networth`, `/insight`, `/ask`, `/audit`, `/coach`\n\n"
+        "Butuh panduan? Buka `/quickstart` untuk setup singkat, `/help` untuk bantuan per topik, atau `/manual` untuk panduan lengkap."
     )
 
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -4622,4 +4614,3 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # Message handling section
-
