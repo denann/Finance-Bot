@@ -66,6 +66,10 @@ Current documents explain current tested behavior. Dated audit/implementation re
 
 Use the [Operations Runbook](operations/runbook.md). Verify Telegram responsiveness, transaction ordering, Sheets telemetry, snapshots, scheduler ownership, Gemini calls/usage, image compatibility, and redacted logs using dummy credentials only.
 
+## Scale Decision Review
+
+Review [ADR-001](architecture/adr-001-scale-and-persistence.md) on a documented RED trigger, after Phase 5 staging, after a material quota/reconciliation incident, or by its review date. A row count or local timing alone does not authorize migration. A second user requires an owner-approved tenant decision before onboarding.
+
 | Maintenance area | Owner |
 | :--- | :--- |
 | Runtime behavior | Current implementation and contract tests |

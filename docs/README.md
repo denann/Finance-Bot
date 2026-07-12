@@ -25,6 +25,14 @@ This directory contains the maintained product, architecture, operations, testin
 - [Phase 3 Corrected Benchmark Results](performance/phase-3-benchmark-results.md)
 - [Debug Matrix Coverage](testing/debug-matrix-coverage.md)
 - [Documentation Inventory](documentation-inventory.md)
+- [Phase 5 Current Scale Boundary](architecture/phase-5-current-scale-boundary.md)
+- [Persistence Contract Assessment](architecture/persistence-contract-assessment.md)
+- [Persistence Options](architecture/persistence-options.md)
+- [Scale and Migration Triggers](architecture/scale-and-migration-triggers.md)
+- [ADR-001 Scale and Persistence](architecture/adr-001-scale-and-persistence.md)
+- [Future Migration and Tenant Plan](architecture/future-migration-and-tenant-plan.md)
+- [Phase 5 Scale Evidence](performance/phase-5-scale-evidence.md)
+- [Phase 5 Scale Staging](testing/phase-5-scale-staging.md)
 
 The older numbered pages such as `01-project-map.md` and `03-telegram-bot-flow.md` remain focused compatibility references while the primary documents above own the current end-to-end narrative.
 

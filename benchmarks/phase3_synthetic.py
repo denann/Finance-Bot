@@ -243,7 +243,7 @@ def _historical_baseline_profile(size: int, scenario: str, selected_limit: int) 
     return {"sheets_calls": 0, "rows_read": 0, "rows_written": 0, "full_range_rewrites": 0, "duplicate_reads": 0, "gemini_calls": 1 if scenario == "image_success" else 2, "selected_records": 0, "context_characters": 0}
 
 
-def _run_optimized_once(rows: list[dict], scenario: str, selected_limit: int) -> dict[str, int]:
+def _run_optimized_once(rows: list[dict], scenario: str, selected_limit: int, row_budget: int | None = None) -> dict[str, int]:
     """Execute one real application scenario against instrumented adapters."""
 
     from app.application.gemini_governance import gemini_request_scope
@@ -282,7 +282,7 @@ def _run_optimized_once(rows: list[dict], scenario: str, selected_limit: int) ->
                     transaction_service.save_transactions_batch([{"parsed": parsed.copy(), "raw": f"synthetic-{i}"} for i in range(5)])
 
         else:
-            with sheets_client.sheets_request_snapshot():
+            with sheets_client.sheets_request_snapshot(row_budget=row_budget):
                 if scenario == "last":
                     transaction_service.get_recent_transactions(limit=10)
                 elif scenario == "monthly_report":
@@ -337,7 +337,15 @@ def _run_optimized_once(rows: list[dict], scenario: str, selected_limit: int) ->
     }
 
 
-def run_benchmark(size: int, scenario: str, *, iterations: int = 5, mode: str = "baseline", selected_limit: int = 40) -> BenchmarkResult:
+def run_benchmark(
+    size: int,
+    scenario: str,
+    *,
+    iterations: int = 5,
+    mode: str = "baseline",
+    selected_limit: int = 40,
+    row_budget: int | None = None,
+) -> BenchmarkResult:
     """Run one synthetic scenario and return observed or historical counts."""
 
     rows = build_synthetic_transactions(size)
@@ -346,7 +354,7 @@ def run_benchmark(size: int, scenario: str, *, iterations: int = 5, mode: str = 
     for _ in range(iterations):
         started = time.perf_counter()
         if mode == "optimized":
-            profile = _run_optimized_once(rows, scenario, selected_limit)
+            profile = _run_optimized_once(rows, scenario, selected_limit, row_budget=row_budget)
         else:
             # Preserve a cheap historical comparator without pretending it is
             # current application execution.

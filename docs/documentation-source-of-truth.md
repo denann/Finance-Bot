@@ -25,6 +25,7 @@ Documentation does not redefine finance behavior. If a current document conflict
 | Test and external-call contracts | `tests/`, `evals/`, benchmark tests | Testing and maintenance guides |
 | Manual content | `docs/help_manual.md` | Generated `docs/help_manual.pdf` |
 | Deployment invariants | `main.py`, API, scheduler, health/readiness implementation and tests | Configuration guide and runbook |
+| Scale/persistence decision | Phase 5 observed benchmark, triggers, and ADR-001 | Architecture decision and staging package |
 
 ## Current, Generated, and Historical Files
 

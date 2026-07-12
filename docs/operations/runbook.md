@@ -63,6 +63,10 @@ Search structured events by opaque correlation ID, feature, operation, duration,
 - Logs and exported files handled as sensitive.
 - Backup and rollback version remain available.
 
+## Scale Evidence Review
+
+Use `docs/testing/phase-5-scale-staging.md` for controlled scale measurements and classify results with `docs/architecture/scale-and-migration-triggers.md`. Keep one process/scheduler owner unless a separate approved architecture replaces it. Do not raise row budgets or add instances merely to hide a RED correctness/process trigger.
+
 Production rollout requires explicit owner approval after real staging. This runbook does not authorize use of production credentials by automated tests.
 
 | Runbook area | Status |
