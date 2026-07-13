@@ -171,6 +171,23 @@ Yang sehat:
 - ada `correlation_id`;
 - tidak ada raw token, API key, private key, prompt mentah, atau teks finansial pribadi yang sensitif.
 
+Untuk melihatnya sebagai tabel rapi, bukan JSON mentah:
+
+```powershell
+python scripts/view_logs.py
+python scripts/view_logs.py --summary
+python scripts/view_logs.py --errors-only
+```
+
+Untuk membuka semua hasil di Excel sebagai tabel, buat CSV:
+
+```powershell
+python scripts/view_logs.py --csv logs/finance_bot_readable.csv
+```
+
+File CSV tersebut hanya dibuat dari log lokal. Jangan ikut membagikannya jika
+berisi metadata operasional yang tidak ingin Anda sebarkan.
+
 Cek `logs/` tidak ikut Git:
 
 ```powershell

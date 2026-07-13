@@ -51,6 +51,22 @@ tokens, private keys, or production identifiers.
 | `ENABLE_TEST_SHEETS_ROUTE` | Optional; `false` | Boolean text | No | Enables hidden read-only diagnostic route; keep false in production |
 | `DIAGNOSTIC_ADMIN_SECRET` | Required if diagnostic route enabled | Opaque secret | Yes | Authenticates `/test-sheets` |
 
+## Reading Local Logs
+
+The bot appends redacted JSON events to `LOG_FILE`. Use the offline reader for
+a normal table instead of opening raw JSON lines:
+
+```powershell
+python scripts/view_logs.py
+python scripts/view_logs.py --summary
+python scripts/view_logs.py --errors-only
+python scripts/view_logs.py --csv logs/finance_bot_readable.csv
+```
+
+The CSV uses UTF-8 with BOM so it opens cleanly in Excel. It is generated from
+local logs only and does not start the bot or call Telegram, Sheets, or Gemini.
+Keep exported CSV files private because they may contain operational metadata.
+
 ## Local Development
 
 ```powershell
