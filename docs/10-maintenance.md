@@ -46,6 +46,8 @@ Run targeted tests first, then the full suite. Live external evaluation and stag
 - Preserve model, temperature, prompt meaning, and output schema unless explicitly approved.
 - Increment the feature prompt version for intentional prompt changes.
 - Update offline golden evaluation, privacy, call-budget, and malformed-output tests.
+- Update `evals/cases/gemini_parser_cases.jsonl` only with synthetic data and keep `evals/run_parser_eval.py` default-disabled.
+- Run comparison and `evals/gates.py` with fixture reports when changing live-eval metrics or thresholds.
 - Do not hard-code prices or invent usage tokens.
 
 ## Release Checklist

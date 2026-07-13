@@ -23,6 +23,7 @@ CURRENT_DOCS = (
     "07-ai-and-gemini.md", "08-configuration-and-deployment.md",
     "09-function-reference.md", "10-maintenance.md", "testing.md",
     "operations/runbook.md", "help_manual.md", "documentation-source-of-truth.md",
+    "phase-0-to-5/README.md",
 )
 LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 COMMAND_RE = re.compile(r"(?<![\w/])/([a-z][a-z0-9_]*)", re.IGNORECASE)

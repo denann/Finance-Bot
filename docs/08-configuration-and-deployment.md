@@ -12,6 +12,7 @@
 | `APP_INSTANCE_COUNT` | Optional; `1` | Positive integer | No | Must be `1` when scheduler is enabled |
 | `SCHEDULER_ENABLED` | Optional; `true` | Boolean | No | One in-process scheduler owner |
 | `LOG_LEVEL` | Optional; `INFO` | Python log level | No | Structured log threshold |
+| `LOG_FILE` | Optional; `logs/finance_bot.log` | Relative or absolute file path; empty disables file logging | No | Appends one structured JSON event per line while keeping console output |
 | `TELEGRAM_BOT_TOKEN` | Required at runtime | BotFather token | Yes | Telegram authentication; use dummy/fake values only in offline tests |
 | `ALLOWED_USER_ID` | Required for private use; default `0` | Integer Telegram user ID | Personal | Single authorized owner |
 | `TELEGRAM_WEBHOOK_SECRET` | Required in webhook mode | Opaque secret | Yes | Verifies Telegram webhook header |

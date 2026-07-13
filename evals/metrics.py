@@ -39,6 +39,8 @@ def compute_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
     failures_by_field: Counter[str] = Counter()
     input_tokens = 0
     output_tokens = 0
+    input_characters = 0
+    output_characters = 0
     usage_available = False
 
     for item in results:
@@ -65,12 +67,16 @@ def compute_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
             usage_available = True
             input_tokens += int(usage["input_tokens"])
             output_tokens += int(usage["output_tokens"])
+        input_characters += int(item.get("input_characters") or 0)
+        output_characters += int(item.get("output_characters") or 0)
 
     def rate(numerator: int, denominator: int) -> float:
         return round(numerator / denominator, 6) if denominator else 0.0
 
     metrics: dict[str, Any] = {
         "total_cases": total,
+        "passed_cases": sum(bool(item.get("passed")) for item in results),
+        "failed_cases": sum(not bool(item.get("passed")) for item in results),
         "completed_cases": len(completed),
         "valid_schema_rate": rate(sum(bool(item.get("valid_schema")) for item in results), total),
         "invalid_json_rate": rate(sum(bool(item.get("invalid_json")) for item in results), total),
@@ -86,6 +92,8 @@ def compute_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
         metrics[metric_name] = rate(field_passes[field], field_totals[field])
     metrics["destination_account_accuracy"] = metrics.pop("to_account_accuracy")
     metrics["transaction_type_accuracy"] = metrics.pop("type_accuracy")
+    metrics["input_characters"] = input_characters
+    metrics["output_characters"] = output_characters
     metrics["input_tokens"] = input_tokens if usage_available else None
     metrics["output_tokens"] = output_tokens if usage_available else None
     return metrics
@@ -98,4 +106,17 @@ def case_passed(result: dict[str, Any]) -> bool:
         return False
     expected = result.get("expected") or {}
     actual = result.get("actual") or {}
+    if "items" in expected:
+        actual_items = actual.get("items") if isinstance(actual, dict) else None
+        if not isinstance(actual_items, list) or len(actual_items) != len(expected["items"]):
+            return False
+        for index, expected_item in enumerate(expected["items"]):
+            actual_item = actual_items[index] if index < len(actual_items) else {}
+            if not all(actual_item.get(field) == value for field, value in expected_item.items()):
+                return False
+        return True
+    if "anchors" in expected:
+        output_text = str(actual.get("text") or "").lower() if isinstance(actual, dict) else ""
+        anchors = [str(anchor).lower() for anchor in expected.get("anchors") or []]
+        return all(anchor in output_text for anchor in anchors)
     return all(actual.get(field) == value for field, value in expected.items())

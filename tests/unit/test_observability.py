@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import logging
+
+import pytest
+
+import app.observability as observability
 from app.observability import (
     REDACTED,
+    configure_logging,
     correlation_scope,
     emit_event,
     increment_metric,
@@ -11,6 +18,20 @@ from app.observability import (
     observe_duration,
     reset_metrics_for_tests,
 )
+
+
+def _clear_observability_handlers() -> None:
+    logger = logging.getLogger(observability.LOGGER_NAME)
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
+
+
+@pytest.fixture(autouse=True)
+def clean_observability_handlers():
+    _clear_observability_handlers()
+    yield
+    _clear_observability_handlers()
 
 
 def test_event_redacts_credentials_and_raw_finance_payload() -> None:
@@ -49,3 +70,36 @@ def test_metrics_are_aggregate_and_resettable() -> None:
         "max_ms": 125.5,
     }
     assert "user" not in str(snapshot).lower()
+
+
+def test_configure_logging_appends_json_events_to_file(tmp_path, monkeypatch) -> None:
+    """LOG_FILE keeps terminal logging and appends structured events to disk."""
+
+    log_path = tmp_path / "finance_bot.log"
+    monkeypatch.setattr(observability, "LOG_FILE", str(log_path))
+
+    configure_logging()
+    with correlation_scope("file-log-test"):
+        emit_event("file_logging_ready", raw_input="beli kopi 20k dari Cash")
+
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["event"] == "file_logging_ready"
+    assert record["correlation_id"] == "file-log-test"
+    assert record["raw_input"] == REDACTED
+    assert "kopi" not in lines[0].lower()
+
+
+def test_configure_logging_does_not_duplicate_file_handlers(tmp_path, monkeypatch) -> None:
+    """Repeated configure calls keep one handler per configured log file."""
+
+    log_path = tmp_path / "finance_bot.log"
+    monkeypatch.setattr(observability, "LOG_FILE", str(log_path))
+
+    configure_logging()
+    configure_logging()
+    with correlation_scope("file-log-single-handler"):
+        emit_event("single_file_handler")
+
+    assert len(log_path.read_text(encoding="utf-8").splitlines()) == 1

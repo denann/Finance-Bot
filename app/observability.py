@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 import re
 import threading
 import time
@@ -13,7 +14,7 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
-from app.config import LOG_LEVEL
+from app.config import LOG_FILE, LOG_LEVEL
 
 
 LOGGER_NAME = "finance_bot"
@@ -57,10 +58,25 @@ def configure_logging() -> logging.Logger:
     logger = logging.getLogger(LOGGER_NAME)
     level = getattr(logging, LOG_LEVEL, logging.INFO)
     logger.setLevel(level)
-    if not logger.handlers:
+
+    if not any(getattr(handler, "_finance_bot_console", False) for handler in logger.handlers):
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(message)s"))
+        handler._finance_bot_console = True  # type: ignore[attr-defined]
         logger.addHandler(handler)
+
+    log_file = str(LOG_FILE or "").strip()
+    if log_file and not any(
+        getattr(handler, "_finance_bot_log_file", None) == log_file for handler in logger.handlers
+    ):
+        path = Path(log_file)
+        if path.parent and str(path.parent) not in {"", "."}:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(path, encoding="utf-8")
+        file_handler.setFormatter(logging.Formatter("%(message)s"))
+        file_handler._finance_bot_log_file = log_file  # type: ignore[attr-defined]
+        logger.addHandler(file_handler)
+
     logger.propagate = False
     return logger
 

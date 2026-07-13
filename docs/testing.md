@@ -25,7 +25,7 @@ An autouse pytest guard removes external credentials and blocks socket, HTTP, Te
 | Architecture | Dependency direction, callback ownership, canonical utilities, and no-Telegram application boundaries |
 | Regression | JSONL parser, routing, safety, preview, split-bill, multi-input, manual-edit, and scenario cases |
 | Fakes | In-memory worksheet/failure plan, Telegram objects, frozen clock, and optional import stubs |
-| Live evaluation | Explicit opt-in Gemini draft parsing with versioned reports; excluded from pytest |
+| Live evaluation | Explicit opt-in Gemini parser, batch, image, and AI-answer evaluation with versioned reports; excluded from pytest |
 
 The matrix coverage inventory is maintained in [`docs/testing/debug-matrix-coverage.md`](testing/debug-matrix-coverage.md).
 
@@ -147,7 +147,7 @@ Critical cases cannot be optional. Do not remove fields or weaken assertions mer
 
 ## Live Gemini evaluation
 
-Live evaluation is separate from pytest and default-disabled. It uses only synthetic inputs, static category/account lists, and parser draft output. It never starts Telegram, writes Sheets, or runs the scheduler.
+Live evaluation is separate from pytest and default-disabled. It uses only synthetic inputs, static category/account lists, bounded fake finance context, and draft/answer outputs. It never starts Telegram, writes Sheets, runs the scheduler, or uses production data.
 
 ```powershell
 $env:ENABLE_LIVE_AI_EVAL = "1"
@@ -155,7 +155,7 @@ $env:GEMINI_API_KEY = "<evaluation-key>"
 python evals/run_parser_eval.py
 ```
 
-The runner exits non-zero before calling Gemini when opt-in or `GEMINI_API_KEY` is missing. Reports are timestamped under `evals/reports/` and include commit, dataset version, prompt version, model configuration, metrics, and failed case IDs. Token usage remains `null` when provider metadata is unavailable; cost is not estimated.
+The runner exits non-zero before importing Gemini parser/provider paths when opt-in or `GEMINI_API_KEY` is missing. Reports are timestamped under `evals/reports/` and include commit, dataset version, feature list, prompt versions, model configuration, metrics, failed case IDs, and sanitized case results. Token usage remains `null` when provider metadata is unavailable to the runner; cost is not estimated.
 
 Compare and gate reports:
 
@@ -165,6 +165,8 @@ python evals/gates.py evals/reports/baseline.json evals/reports/candidate.json
 ```
 
 Gate thresholds and critical tags are centralized in `evals/gates.py`.
+
+The current dataset includes parser, transfer, debt-direction routing, partial debt payment routing, split-bill routing, cancellation, future intent, invalid date, malformed output, multi-input ordering, image receipt, and `/ask`/`/insight`/`/audit`/`/coach` grounding cases. Safety-routing cases are recorded as evaluator contracts; they do not authorize Gemini to bypass deterministic routing or confirmation.
 
 ## CI
 

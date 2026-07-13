@@ -17,6 +17,7 @@ This directory contains the maintained product, architecture, operations, testin
 11. [Testing](testing.md)
 12. [Operations Runbook](operations/runbook.md)
 13. [User Manual Source](help_manual.md)
+14. [Phase 0-5 Change Overview](phase-0-to-5/README.md)
 
 ## Focused Supporting Documents
 

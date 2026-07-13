@@ -54,7 +54,9 @@ Do not log or use metric labels containing prompts, raw user text, finance descr
 
 ## Evaluation and Fallback
 
-Default pytest uses fakes and an external-call guard. Live Gemini evaluation is disabled unless explicitly enabled and provided a key; see `evals/README.md`. Offline golden contracts verify schemas and context preparation, not narrative quality. If Gemini is unavailable, supported flows use deterministic fallback or clarification without weakening write safety.
+Default pytest uses fakes and an external-call guard. Live Gemini evaluation is disabled unless explicitly enabled and provided a key; see `evals/README.md`. The current live-eval dataset covers transaction parser, batch parser, image receipt parser, malformed output, safety-routing contracts, and `/ask`/`/insight`/`/audit`/`/coach` grounding anchors. Offline golden contracts verify schemas and context preparation, not narrative exact wording. If Gemini is unavailable, supported flows use deterministic fallback or clarification without weakening write safety.
+
+Live-eval reports derive prompt versions from `app/application/gemini_governance.py`, model values from the active Gemini adapters, and input/output bounds from `app/config.py`. The evaluator does not invent token usage or provider cost.
 
 | Documentation update | Status |
 | :--- | :--- |

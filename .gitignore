@@ -11,5 +11,7 @@ venv/
 token.json
 evals/reports/*.json
 evals/reports/*.md
+logs/
 
 Personal Use/
+requirements-dev.txt

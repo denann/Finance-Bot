@@ -20,10 +20,10 @@ CRITICAL_TAGS = {
     "debt",
     "split_bill",
     "invalid_date",
-    "slash_command_routing",
-    "duplicate_write",
+    "future_intent",
+    "cancellation",
     "confirmation_security",
-    "recurring_idempotency",
+    "multi_input",
 }
 
 
