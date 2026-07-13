@@ -7,15 +7,11 @@ import json
 # Import re for this module's local operations.
 import re
 # Import os for this module's local operations.
-import os
 
 # Import app.config so this module can use its helpers.
-from app.config import GEMINI_API_KEY
+from app.config import GEMINI_API_KEY, GEMINI_INTENT_MODEL
 # Import app.nlp.gemini_langchain_client so this module can use its helpers.
 from app.nlp.gemini_langchain_client import generate_text_with_gemini
-
-
-GEMINI_INTENT_MODEL = os.getenv("GEMINI_INTENT_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"))
 
 
 ALLOWED_INTENTS = {

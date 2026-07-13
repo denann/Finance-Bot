@@ -16,7 +16,11 @@ Gemini never writes directly to Google Sheets and does not bypass account select
 | `GEMINI_IMAGE_MODEL` | Receipt/image parser |
 | `GEMINI_INSIGHT_MODEL` | Finance answers and insight |
 
-The deployed model values come from environment configuration. Phase 4 does not change model selection, temperature, prompt meaning, structured output, or answer format.
+The deployed model values are loaded once through `app/config.py`; adapters use
+that shared configuration rather than reading separate process variables. Leave
+the advanced model overrides commented for normal setup. Phase 4 does not
+change model selection, temperature, prompt meaning, structured output, or
+answer format.
 
 ## Prompt Versions and Call Budgets
 

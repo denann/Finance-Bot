@@ -7,10 +7,9 @@ from __future__ import annotations
 # Import json for this module's local operations.
 import json
 # Import os for this module's local operations.
-import os
 
 # Import app.config so this module can use its helpers.
-from app.config import GEMINI_API_KEY
+from app.config import GEMINI_API_KEY, GEMINI_INSIGHT_MODEL
 # Import app.nlp.gemini_langchain_client so this module can use its helpers.
 from app.nlp.gemini_langchain_client import generate_text_with_gemini
 from app.application.gemini_governance import prompt_version
@@ -20,8 +19,6 @@ from app.services.privacy_service import sanitize_ai_context
 # Import app.services.finance_insight_service so this module can use its helpers.
 from app.services.finance_insight_service import deterministic_audit_text, deterministic_monthly_text
 
-
-GEMINI_INSIGHT_MODEL = os.getenv("GEMINI_INSIGHT_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
 
 FEATURE_BY_MODE = {
     "audit": "finance_audit",

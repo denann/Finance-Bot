@@ -19,7 +19,7 @@ Documentation does not redefine finance behavior. If a current document conflict
 | Telegram command names and handlers | `app/bot/command_registry.py` | `help_content.py`, `docs/help_manual.md`, README overview |
 | Command classifications | `COMMAND_CLASSIFICATIONS` and classification sets in the command registry | Help/manual labels and drift checks |
 | Callback ownership | `app/bot/handler_parts/callback_dispatcher.py`, `app/bot/callback_contracts.py` | Architecture and user-flow guides |
-| Environment variables | `app/config.py` and direct `os.getenv` calls under `app/` | `.env.example`, configuration guide |
+| Environment variables | `app/config.py`; diagnostic policy accepts an injected environment mapping | `.env.example`, configuration guide |
 | Worksheet names and columns | `app/config.py`, `app/sheets/client.py::SHEET_SCHEMAS` | Data-model and Sheets guides |
 | Gemini limits and prompt versions | Config loader, `app/application/gemini_governance.py`, Gemini adapters | AI/Gemini guide |
 | Test and external-call contracts | `tests/`, `evals/`, benchmark tests | Testing and maintenance guides |

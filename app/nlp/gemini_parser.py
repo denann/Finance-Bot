@@ -5,12 +5,11 @@
 # Import json for this module's local operations.
 import json
 # Import os for this module's local operations.
-import os
 # Import datetime so this module can use its helpers.
 from datetime import datetime
 from app.clock import business_now
 # Import app.config so this module can use its helpers.
-from app.config import GEMINI_API_KEY
+from app.config import GEMINI_API_KEY, GEMINI_TEXT_MODEL
 # Import app.nlp.gemini_langchain_client so this module can use its helpers.
 from app.nlp.gemini_langchain_client import generate_text_with_gemini
 # Import app.services.resolver_service so this module can use its helpers.
@@ -22,9 +21,6 @@ from app.services.resolver_service import (
 )
 # Import privacy redaction so parser prompts do not forward credential-like text.
 from app.services.privacy_service import redact_sensitive_text
-
-
-GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"))
 
 
 VALID_CATEGORIES = [

@@ -63,9 +63,22 @@ def extract_env_names() -> set[str]:
 
 
 def env_example_names() -> set[str]:
+    """Return documented variables, including optional commented settings."""
+
     names = set()
     for line in (ROOT / ".env.example").read_text(encoding="utf-8").splitlines():
-        match = re.match(r"^([A-Z][A-Z0-9_]*)=", line.strip())
+        match = re.match(r"^\s*(?:#\s*)?([A-Z][A-Z0-9_]*)=", line)
+        if match:
+            names.add(match.group(1))
+    return names
+
+
+def active_env_example_names() -> set[str]:
+    """Return the variables a first-time user must fill in the template."""
+
+    names = set()
+    for line in (ROOT / ".env.example").read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^([A-Z][A-Z0-9_]*)=", line)
         if match:
             names.add(match.group(1))
     return names

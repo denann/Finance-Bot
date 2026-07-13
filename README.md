@@ -127,7 +127,13 @@ pip install -r requirements.txt
 
 ### 2. Create `.env`
 
-Copy the example file:
+Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+macOS/Linux:
 
 ```bash
 cp .env.example .env
@@ -143,6 +149,11 @@ GOOGLE_SHEET_ID=your_google_sheet_id
 GOOGLE_SERVICE_ACCOUNT_JSON=service_account.json
 GEMINI_API_KEY=your_gemini_api_key
 ```
+
+Everything else in `.env.example` is optional. It is grouped under
+`ADVANCED / DEPLOYMENT SETTINGS` and should normally remain commented. Run
+`python scripts/setup_check.py` after filling the five values above; it checks
+the file paths and configuration without printing the full secrets.
 
 ### 3. Setup Telegram
 
@@ -333,15 +344,12 @@ GEMINI_API_KEY=your_gemini_api_key
 Optional model configuration:
 
 ```env
-GEMINI_MODEL=gemini-3.1-flash-lite
-GEMINI_TEXT_MODEL=gemini-3.1-flash-lite
-GEMINI_INTENT_MODEL=gemini-3.1-flash-lite
-GEMINI_IMAGE_MODEL=gemini-3.1-flash-lite
-GEMINI_INSIGHT_MODEL=gemini-3.1-flash-lite
-GEMINI_TIMEOUT_SECONDS=30
-GEMINI_MAX_OUTPUT_TOKENS=2048
-GEMINI_MAX_OUTPUT_CHARS=50000
+# Leave the advanced Gemini settings in .env.example commented for normal use.
+# Only copy an entry when you intentionally need to override its documented default.
 ```
+
+See [the configuration guide](docs/08-configuration-and-deployment.md) for
+model, timeout, and request-bound overrides.
 
 At the moment, Gemini is the only LLM provider supported out of the box. Other providers need a new adapter or client implementation.
 

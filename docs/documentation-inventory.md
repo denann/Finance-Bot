@@ -11,7 +11,7 @@
 | Command names and runtime bindings | `app/bot/command_registry.py` | `app/bot/handler_parts/help_content.py`, user manual |
 | Command visibility and compatibility status | Command registry plus `LIABILITY_UNAVAILABLE_COMMANDS`; metadata is incomplete | Phase 4 command metadata/check tooling |
 | Callback ownership | `app/bot/handler_parts/callback_dispatcher.py`, `app/bot/callback_contracts.py`, bounded callback modules | Architecture and flow docs |
-| Environment variables | `app/config.py` plus direct adapter `os.getenv` calls | `.env.example`, configuration guide |
+| Environment variables | `app/config.py`; diagnostic policy accepts an injected environment mapping | `.env.example`, configuration guide |
 | Worksheet names and columns | `app/config.py`, `app/sheets/client.py::SHEET_SCHEMAS` | Data-model and Sheets guides |
 | Gemini configuration and governance | `app/config.py`, `app/application/gemini_governance.py`, Gemini adapters | AI/Gemini guide |
 | Testing commands and guards | `tests/conftest.py`, pytest suites, eval scripts | `docs/testing.md` |

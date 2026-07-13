@@ -4,7 +4,6 @@
 # Import contextvars for this module's local operations.
 import contextvars
 # Import os for this module's local operations.
-import os
 # Import random for this module's local operations.
 import random
 # Import re for this module's local operations.
@@ -41,6 +40,8 @@ from app.config import (
     SHEET_RECURRING_RULES,
     SHEET_TRANSACTIONS,
     SHEETS_REQUEST_ROW_BUDGET,
+    SHEETS_MAX_RETRIES,
+    SHEETS_RETRY_BASE_DELAY,
 )
 
 # Required scopes for reading and writing Sheets
@@ -572,8 +573,8 @@ def _call_with_retry(
         The original exception when retries are exhausted or the error is not
         quota/transient.
     """
-    retries = max_retries if max_retries is not None else int(os.getenv("SHEETS_MAX_RETRIES", "5"))
-    base_delay = float(os.getenv("SHEETS_RETRY_BASE_DELAY", "1.0"))
+    retries = max_retries if max_retries is not None else SHEETS_MAX_RETRIES
+    base_delay = SHEETS_RETRY_BASE_DELAY
 
     # Iterate through each attempt.
     for attempt in range(max(1, retries)):

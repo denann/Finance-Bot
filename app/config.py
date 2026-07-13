@@ -89,6 +89,8 @@ ALLOWED_USER_ID = _parse_int_env("ALLOWED_USER_ID", 0)
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 # Keep this section separated from the surrounding flow.
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "service_account.json")
+SHEETS_MAX_RETRIES = int(_parse_int_env("SHEETS_MAX_RETRIES", 5) or 0)
+SHEETS_RETRY_BASE_DELAY = _parse_float_env("SHEETS_RETRY_BASE_DELAY", 1.0)
 SHEETS_TIMEOUT_SECONDS = _parse_float_env("SHEETS_TIMEOUT_SECONDS", 20.0)
 SHEETS_INTERACTIVE_CONCURRENCY = int(_parse_int_env("SHEETS_INTERACTIVE_CONCURRENCY", 2) or 0)
 GEMINI_CONCURRENCY = int(_parse_int_env("GEMINI_CONCURRENCY", 1) or 0)
@@ -98,6 +100,13 @@ TRANSACTION_SORT_MODE = os.getenv("TRANSACTION_SORT_MODE", "server").strip().low
 
 # Keep this section separated from the surrounding flow.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Model defaults intentionally preserve the existing adapter behavior. Individual
+# adapters may use a specialized default instead of the general text default.
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip() or "gemini-2.5-flash-lite"
+GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", GEMINI_MODEL).strip() or GEMINI_MODEL
+GEMINI_INTENT_MODEL = os.getenv("GEMINI_INTENT_MODEL", GEMINI_MODEL).strip() or GEMINI_MODEL
+GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+GEMINI_INSIGHT_MODEL = os.getenv("GEMINI_INSIGHT_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
 GEMINI_TIMEOUT_SECONDS = _parse_float_env("GEMINI_TIMEOUT_SECONDS", 30.0)
 GEMINI_MAX_OUTPUT_TOKENS = int(_parse_int_env("GEMINI_MAX_OUTPUT_TOKENS", 2048) or 0)
 GEMINI_MAX_OUTPUT_CHARS = int(_parse_int_env("GEMINI_MAX_OUTPUT_CHARS", 50000) or 0)

@@ -2,7 +2,16 @@
 
 ## Configuration Contract
 
-`.env.example` is a safe template. `app/config.py` owns central settings; the Sheets adapter and diagnostic route own a small number of direct environment reads. Never commit `.env`, service-account JSON, tokens, private keys, or production identifiers.
+`.env.example` is a safe template. For a normal private polling bot, users fill
+only five values: `TELEGRAM_BOT_TOKEN`, `ALLOWED_USER_ID`, `GOOGLE_SHEET_ID`,
+`GOOGLE_SERVICE_ACCOUNT_JSON`, and `GEMINI_API_KEY`. The remaining entries are
+commented advanced or deployment overrides and retain safe runtime defaults.
+
+`app/config.py` is the runtime configuration source for bot, Sheets, and Gemini
+settings. The diagnostic policy deliberately accepts a caller-provided
+environment mapping so its default-off security policy can be tested without
+changing process configuration. Never commit `.env`, service-account JSON,
+tokens, private keys, or production identifiers.
 
 | Name | Req/default | Allowed values | Sensitive | Purpose and guidance |
 | :--- | :--- | :--- | :--- | :--- |
@@ -26,7 +35,7 @@
 | `SCHEDULED_WORK_CONCURRENCY` | Optional; `1` | Positive integer | No | Separate scheduled capacity |
 | `SHEETS_REQUEST_ROW_BUDGET` | Optional; `50000` | Positive integer | No | Per-request transferred-row ceiling |
 | `TRANSACTION_SORT_MODE` | Optional; `server` | `server`, `legacy` | No | Server sort default; legacy emergency rollback only |
-| `GEMINI_API_KEY` | Required only for live AI | Provider key | Yes | Gemini authentication |
+| `GEMINI_API_KEY` | Required at runtime | Provider key | Yes | Gemini authentication for the currently supported AI features |
 | `GEMINI_MODEL` | Optional | Supported configured model ID | No | General text model |
 | `GEMINI_TEXT_MODEL` | Optional | Supported configured model ID | No | Transaction parser model |
 | `GEMINI_INTENT_MODEL` | Optional | Supported configured model ID | No | Intent router model |

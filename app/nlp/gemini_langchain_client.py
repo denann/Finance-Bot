@@ -7,7 +7,6 @@ from __future__ import annotations
 # Import base64 for this module's local operations.
 import base64
 # Import os for this module's local operations.
-import os
 # Import functools so this module can use its helpers.
 from functools import lru_cache
 # Import typing so this module can use its helpers.
@@ -21,9 +20,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 # Import app.config so this module can use its helpers.
 from app.config import (
     GEMINI_API_KEY,
+    GEMINI_IMAGE_MODEL,
+    GEMINI_INSIGHT_MODEL,
     GEMINI_MAX_OUTPUT_CHARS,
     GEMINI_MAX_OUTPUT_TOKENS,
     GEMINI_MAX_INPUT_CHARS,
+    GEMINI_MODEL,
     GEMINI_TIMEOUT_SECONDS,
 )
 from app.observability import emit_event, increment_metric, monotonic_ms, observe_duration
@@ -34,9 +36,9 @@ from app.application.gemini_governance import (
 )
 
 
-DEFAULT_TEXT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
-DEFAULT_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash")
-DEFAULT_INSIGHT_MODEL = os.getenv("GEMINI_INSIGHT_MODEL", "gemini-2.5-flash")
+DEFAULT_TEXT_MODEL = GEMINI_MODEL
+DEFAULT_IMAGE_MODEL = GEMINI_IMAGE_MODEL
+DEFAULT_INSIGHT_MODEL = GEMINI_INSIGHT_MODEL
 GEMINI_CLIENT_VERSION = "phase1b-v1"
 
 

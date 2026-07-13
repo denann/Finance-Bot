@@ -4,13 +4,12 @@
 # Import json for this module's local operations.
 import json
 # Import os for this module's local operations.
-import os
 # Import datetime so this module can use its helpers.
 from datetime import datetime
 from app.clock import business_now
 
 # Import app.config so this module can use its helpers.
-from app.config import GEMINI_API_KEY
+from app.config import GEMINI_API_KEY, GEMINI_IMAGE_MODEL
 # Import app.nlp.gemini_langchain_client so this module can use its helpers.
 from app.nlp.gemini_langchain_client import generate_text_from_image_with_gemini
 # Import app.services.resolver_service so this module can use its helpers.
@@ -61,9 +60,6 @@ def get_valid_accounts() -> list[str]:
 
 
 # Split bill parsing note: separate the paid transaction from each person share.
-GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash")
-
-
 # Helper for clean gemini json.
 def clean_gemini_json(raw_text: str) -> str:
     """Coordinate the clean gemini json logic in the NLP/parser layer.

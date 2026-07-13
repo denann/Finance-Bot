@@ -24,6 +24,18 @@ def test_command_environment_and_schema_inventories_are_canonical() -> None:
     assert sum(len(columns) for columns in schemas.values()) == 115
 
 
+def test_beginner_environment_template_exposes_only_required_values() -> None:
+    """Advanced overrides stay documented without burdening first-time setup."""
+
+    assert check_docs.active_env_example_names() == {
+        "TELEGRAM_BOT_TOKEN",
+        "ALLOWED_USER_ID",
+        "GOOGLE_SHEET_ID",
+        "GOOGLE_SERVICE_ACCOUNT_JSON",
+        "GEMINI_API_KEY",
+    }
+
+
 def test_manual_pdf_source_and_historical_policy_are_declared() -> None:
     source_truth = (check_docs.DOCS / "documentation-source-of-truth.md").read_text(encoding="utf-8")
     index = (check_docs.DOCS / "README.md").read_text(encoding="utf-8").lower()
