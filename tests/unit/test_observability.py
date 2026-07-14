@@ -13,6 +13,7 @@ from app.observability import (
     configure_logging,
     correlation_scope,
     emit_event,
+    emit_transaction_saved,
     increment_metric,
     metrics_snapshot,
     observe_duration,
@@ -70,6 +71,22 @@ def test_metrics_are_aggregate_and_resettable() -> None:
         "max_ms": 125.5,
     }
     assert "user" not in str(snapshot).lower()
+
+
+def test_transaction_trace_keeps_raw_input_private_until_opted_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Transaction IDs remain traceable while finance text needs explicit opt-in."""
+
+    monkeypatch.setattr(observability, "LOG_INCLUDE_FINANCE_DATA", False)
+    record = emit_transaction_saved("txn-123", "beli kopi 25rb dari Cash")
+    assert record["transaction_id"] == "txn-123"
+    assert record["raw_input"] == REDACTED
+
+    monkeypatch.setattr(observability, "LOG_INCLUDE_FINANCE_DATA", True)
+    opted_in = emit_transaction_saved("txn-123", "beli kopi 25rb dari Cash")
+    assert opted_in["raw_input"] == "beli kopi 25rb dari Cash"
+
+    protected = emit_event("test", api_key="AIza" + "x" * 30)
+    assert protected["api_key"] == REDACTED
 
 
 def test_configure_logging_appends_json_events_to_file(tmp_path, monkeypatch) -> None:

@@ -124,6 +124,7 @@ APP_INSTANCE_COUNT = int(_parse_int_env("APP_INSTANCE_COUNT", 1) or 0)
 SCHEDULER_ENABLED = _parse_bool_env("SCHEDULER_ENABLED", True)
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO"
 LOG_FILE = os.getenv("LOG_FILE", "logs/finance_bot.log").strip()
+LOG_INCLUDE_FINANCE_DATA = _parse_bool_env("LOG_INCLUDE_FINANCE_DATA", False)
 
 if APP_INSTANCE_COUNT < 1:
     raise ValueError("APP_INSTANCE_COUNT harus minimal 1.")

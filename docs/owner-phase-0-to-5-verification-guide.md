@@ -177,6 +177,7 @@ Untuk melihatnya sebagai tabel rapi, bukan JSON mentah:
 python scripts/view_logs.py
 python scripts/view_logs.py --summary
 python scripts/view_logs.py --errors-only
+python scripts/view_logs.py --transaction-id txn_your_transaction_id
 ```
 
 Untuk membuka semua hasil di Excel sebagai tabel, buat CSV:
@@ -187,6 +188,10 @@ python scripts/view_logs.py --csv logs/finance_bot_readable.csv
 
 File CSV tersebut hanya dibuat dari log lokal. Jangan ikut membagikannya jika
 berisi metadata operasional yang tidak ingin Anda sebarkan.
+
+Secara default, log transaksi menyimpan `transaction_id` tetapi menyensor input
+asli. Untuk debugging pribadi saja, tambahkan `LOG_INCLUDE_FINANCE_DATA=true`
+ke `.env`, restart bot, lalu jangan bagikan file log atau CSV-nya.
 
 Cek `logs/` tidak ikut Git:
 

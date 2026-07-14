@@ -23,7 +23,7 @@ def test_log_reader_filters_renders_and_exports_csv(tmp_path) -> None:
     )
 
     records, malformed = view_logs.load_records(source)
-    errors = view_logs.filtered_records(records, event=None, errors_only=True)
+    errors = view_logs.filtered_records(records, event=None, transaction_id=None, errors_only=True)
 
     assert malformed == 1
     assert len(errors) == 1
@@ -36,6 +36,22 @@ def test_log_reader_filters_renders_and_exports_csv(tmp_path) -> None:
     with output.open("r", encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert rows == [{"timestamp": "2026-07-13T03:01:00+00:00", "event": "handler_failed", "correlation_id": "tg-2", "error_type": "TimeoutError", "safe_note": "retry later"}]
+
+
+def test_log_reader_filters_a_specific_transaction_id() -> None:
+    """A saved transaction can be traced without searching unrelated events."""
+
+    selected = view_logs.filtered_records(
+        [
+            {"event": "transaction_saved", "transaction_id": "txn-a"},
+            {"event": "transaction_saved", "transaction_id": "txn-b"},
+        ],
+        event=None,
+        transaction_id="txn-b",
+        errors_only=False,
+    )
+
+    assert selected == [{"event": "transaction_saved", "transaction_id": "txn-b"}]
 
 
 def test_table_renderer_clips_wide_metadata() -> None:

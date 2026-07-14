@@ -14,6 +14,7 @@ from app.nlp.normalizer import extract_amount_from_text
 # Import app.services.resolver_service so this module can use its helpers.
 from app.services.resolver_service import ensure_category_for_transaction
 from app.services.operation_errors import PartialMutationError, require_success_after_write
+from app.observability import emit_transaction_saved
 
 # Import app.config so this module can use its helpers.
 from app.config import SHEET_ACCOUNTS, SHEET_TRANSACTIONS, TRANSACTION_SORT_MODE
@@ -916,6 +917,7 @@ def save_transaction(parsed: dict, raw_input: str) -> dict:
     except Exception as e:
         return _post_write_failure_result(e, candidate_ids=[txn_id])
 
+    emit_transaction_saved(txn_id, raw_input)
     return {
         "success": True,
         "commit_status": "commit_succeeded",
@@ -1049,6 +1051,8 @@ def save_transactions_batch(parsed_items: list[dict]) -> dict:
                 candidate_ids=saved_ids,
             )
 
+        for transaction_id, item in zip(saved_ids, valid_items):
+            emit_transaction_saved(transaction_id, str(item.get("raw", "") or ""))
         return {
             "success": True,
             "commit_status": "commit_succeeded",

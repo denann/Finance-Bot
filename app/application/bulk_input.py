@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -31,7 +31,7 @@ class BulkItem:
     raw_input: str
     status: BulkItemStatus
     kind: str = "failed"
-    parsed_payload: Mapping[str, Any] = MappingProxyType({})
+    parsed_payload: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     missing_fields: tuple[str, ...] = ()
     clarification_reason: str = ""
     validation_errors: tuple[str, ...] = ()

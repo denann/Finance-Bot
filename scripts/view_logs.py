@@ -23,6 +23,8 @@ DISPLAY_COLUMNS = (
     "timestamp",
     "event",
     "correlation_id",
+    "transaction_id",
+    "raw_input",
     "outcome",
     "error_type",
     "handler",
@@ -83,13 +85,15 @@ def local_timestamp(value: Any) -> str:
 
 
 def filtered_records(
-    records: Iterable[dict[str, Any]], *, event: str | None, errors_only: bool
+    records: Iterable[dict[str, Any]], *, event: str | None, transaction_id: str | None, errors_only: bool
 ) -> list[dict[str, Any]]:
     """Filter records without changing their order or discarding metadata."""
 
     result = list(records)
     if event:
         result = [record for record in result if str(record.get("event", "")) == event]
+    if transaction_id:
+        result = [record for record in result if str(record.get("transaction_id", "")) == transaction_id]
     if errors_only:
         result = [record for record in result if record.get("error_type") or record.get("outcome") == "error"]
     return result
@@ -174,6 +178,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--file", type=Path, default=DEFAULT_LOG_PATH, help="Path file JSON log.")
     parser.add_argument("--limit", type=int, default=30, help="Jumlah event terbaru untuk tabel (default: 30).")
     parser.add_argument("--event", help="Tampilkan hanya nama event ini.")
+    parser.add_argument("--transaction-id", help="Tampilkan hanya event untuk ID transaksi ini.")
     parser.add_argument("--errors-only", action="store_true", help="Tampilkan hanya event error.")
     parser.add_argument("--summary", action="store_true", help="Tampilkan ringkasan jumlah event dan error.")
     parser.add_argument("--csv", type=Path, help="Tulis seluruh hasil filter ke CSV yang siap dibuka di Excel.")
@@ -195,7 +200,12 @@ def main() -> int:
         return 2
 
     records, malformed_lines = load_records(path)
-    selected = filtered_records(records, event=args.event, errors_only=args.errors_only)
+    selected = filtered_records(
+        records,
+        event=args.event,
+        transaction_id=args.transaction_id,
+        errors_only=args.errors_only,
+    )
     if args.summary:
         print_summary(selected)
     if args.csv:

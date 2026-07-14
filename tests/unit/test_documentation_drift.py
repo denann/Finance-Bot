@@ -19,7 +19,7 @@ def test_command_environment_and_schema_inventories_are_canonical() -> None:
     }
     assert hidden == set()
     assert check_docs.extract_env_names() == check_docs.env_example_names()
-    assert len(check_docs.extract_env_names()) == 35
+    assert len(check_docs.extract_env_names()) == 36
     assert len(schemas) == 12
     assert sum(len(columns) for columns in schemas.values()) == 115
 

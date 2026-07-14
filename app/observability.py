@@ -14,7 +14,7 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
-from app.config import LOG_FILE, LOG_LEVEL
+from app.config import LOG_FILE, LOG_INCLUDE_FINANCE_DATA, LOG_LEVEL
 
 
 LOGGER_NAME = "finance_bot"
@@ -110,6 +110,11 @@ def redact_value(key: str, value: Any) -> Any:
     """Remove secret-like and raw finance values from structured event fields."""
 
     normalized_key = str(key or "").strip().lower()
+    if normalized_key == "raw_input" and LOG_INCLUDE_FINANCE_DATA:
+        sanitized = str(value or "")
+        for pattern in SECRET_PATTERNS:
+            sanitized = pattern.sub(REDACTED, sanitized)
+        return sanitized[:500]
     if normalized_key not in SAFE_METADATA_KEYS and any(part in normalized_key for part in SENSITIVE_KEY_PARTS):
         return REDACTED
     if isinstance(value, dict):
@@ -138,6 +143,21 @@ def emit_event(event: str, *, level: int = logging.INFO, **fields: Any) -> dict[
         record[str(key)] = redact_value(str(key), value)
     configure_logging().log(level, json.dumps(record, ensure_ascii=True, sort_keys=True))
     return record
+
+
+def emit_transaction_saved(transaction_id: str, raw_input: str) -> dict[str, Any]:
+    """Log one confirmed transaction with an opt-in private input trace.
+
+    The transaction ID is always useful for reconciliation. The original input
+    remains redacted until the local owner explicitly enables
+    ``LOG_INCLUDE_FINANCE_DATA``; credentials are still redacted in either mode.
+    """
+
+    return emit_event(
+        "transaction_saved",
+        transaction_id=str(transaction_id or ""),
+        raw_input=str(raw_input or ""),
+    )
 
 
 def increment_metric(name: str, amount: int = 1) -> None:

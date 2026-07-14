@@ -22,6 +22,7 @@ tokens, private keys, or production identifiers.
 | `SCHEDULER_ENABLED` | Optional; `true` | Boolean | No | One in-process scheduler owner |
 | `LOG_LEVEL` | Optional; `INFO` | Python log level | No | Structured log threshold |
 | `LOG_FILE` | Optional; `logs/finance_bot.log` | Relative or absolute file path; empty disables file logging | No | Appends one structured JSON event per line while keeping console output |
+| `LOG_INCLUDE_FINANCE_DATA` | Optional; `false` | Boolean | Yes | Local debugging opt-in: records confirmed `transaction_id` and raw finance input. Keep disabled for shared or hosted logs. |
 | `TELEGRAM_BOT_TOKEN` | Required at runtime | BotFather token | Yes | Telegram authentication; use dummy/fake values only in offline tests |
 | `ALLOWED_USER_ID` | Required for private use; default `0` | Integer Telegram user ID | Personal | Single authorized owner |
 | `TELEGRAM_WEBHOOK_SECRET` | Required in webhook mode | Opaque secret | Yes | Verifies Telegram webhook header |
@@ -61,11 +62,24 @@ python scripts/view_logs.py
 python scripts/view_logs.py --summary
 python scripts/view_logs.py --errors-only
 python scripts/view_logs.py --csv logs/finance_bot_readable.csv
+python scripts/view_logs.py --transaction-id txn_your_transaction_id
 ```
 
 The CSV uses UTF-8 with BOM so it opens cleanly in Excel. It is generated from
 local logs only and does not start the bot or call Telegram, Sheets, or Gemini.
 Keep exported CSV files private because they may contain operational metadata.
+
+Every confirmed transaction now emits a `transaction_saved` event with its
+`transaction_id`. To also include the original input, add this to your local
+`.env` and restart the bot:
+
+```env
+LOG_INCLUDE_FINANCE_DATA=true
+```
+
+This makes the local log and exported CSV sensitive financial data. Do not use
+it on shared hosting, do not commit the log, and set it back to `false` after
+debugging.
 
 ## Local Development
 
