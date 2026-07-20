@@ -1,17 +1,57 @@
+# Environment variables and credentials
 .env
-*.pyc
-__pycache__/
-.pytest_cache/
-*.db
+.env.*
+!.env.example
+!.env.webhook.example
 credentials.json
-service_account.json
-service_account_test.json
+service_account*.json
+!service_account.example.json
+token.json
+*.pem
+*.key
+
+# Python virtual environments and generated files
 .venv/
 venv/
-token.json
+env/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local runtime data and generated reports
+*.db
+*.sqlite
+*.sqlite3
+logs/
 evals/reports/*.json
 evals/reports/*.md
-logs/
 
+# Personal files and local archives
 Personal Use/
+New Update.zip
+
+# Developer-only project files
+AGENTS.md
+.agents/
+.codex/
+benchmarks/
+evals/
+scripts/
+tests/
+pytest.ini
 requirements-dev.txt
+docs/audit/
+docs/performance/
+docs/owner-*.md
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
