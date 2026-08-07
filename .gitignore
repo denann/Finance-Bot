@@ -41,12 +41,12 @@ AGENTS.md
 .agents/
 .codex/
 .github/
-benchmarks/
-evals/
-scripts/
-tests/
+# benchmarks/
+# evals/
+# scripts/
+# tests/
 pytest.ini
-requirements-dev.txt
+# requirements-dev.txt
 docs/audit/
 docs/performance/
 docs/owner-*.md
