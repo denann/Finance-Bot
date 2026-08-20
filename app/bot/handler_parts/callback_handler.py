@@ -41,6 +41,7 @@ from app.bot.handler_parts.common_imports import (
     parse_human_amount,
     parse_sheet_number,
     parse_with_regex,
+    preview_delete_transactions_by_refs,
     preview_edit_transaction_by_ref,
     re,
     reject_unauthorized,
@@ -60,8 +61,14 @@ from app.bot.handler_parts.common_imports import (
     void_debts_for_transaction,
 )
 # Import app.services.resolver_service so this module can use its helpers.
-from app.services.resolver_service import create_account
+from app.services.resolver_service import (
+    assess_category_learning_candidate,
+    create_account,
+    learn_category_alias,
+)
 from app.services.operation_errors import PartialMutationError
+from app.services import transaction_service
+from app.services.debt_service import preview_pristine_relation_detach, transaction_debt_dependency_signature
 from app.services.recurring_service import get_recurring_rule_by_id
 # Import app.bot.handler_parts.state_utils so this module can use its helpers.
 from app.bot.handler_parts.state_utils import BULK_EDIT_CATEGORY_DECISION_KEY, EDIT_CATEGORY_CHOICE_KEY, clear_pending_flow_state
@@ -72,6 +79,11 @@ from app.bot.handler_parts.networth_assets import build_asset_added_text, handle
 from app.bot.handler_parts.category_flow import CATEGORY_ADD_FLOW_KEY, handle_category_confirm_callback, handle_category_type_callback
 # Import app.bot.handler_parts.command_router so this module can use its helpers.
 from app.bot.handler_parts.command_router import short_txn_id
+from app.bot.handler_parts.transaction_browser import (
+    cancel_transaction_child_actions,
+    refresh_transaction_browser_after_child,
+    resume_transaction_browser_after_cancel,
+)
 # Import app.bot.handler_parts.message_handlers so this module can use its helpers.
 from app.bot.handler_parts.message_handlers import (
     build_bulk_edit_category_choice_keyboard,
@@ -118,6 +130,7 @@ from app.bot.handler_parts.transaction_flow import (
     build_single_account_prompt,
     build_single_split_bill_final_summary,
     parse_preview_direct_field_update,
+    preview_split_bill_debt,
     build_single_short_summary,
     build_split_bill_prompt_from_parsed,
     create_split_bill_debt,
@@ -462,7 +475,10 @@ def build_edit_txn_preview_text_for_callback(preview: dict, split_parsed: dict |
                 f"\n🤝 *Split bill:* belum dibayar, piutang baru akan dibuat sebesar *{format_rupiah(total_receivable)}*."
             )
         elif split_bill.get("status") == "paid":
-            lines.append("\n🤝 *Split bill:* sudah dibayar, tidak membuat piutang baru.")
+            lines.append(
+                "\n🤝 *Split bill:* relasi split/piutang pristine akan dilepas sebagai perubahan accounting. "
+                "Cash historis tidak dipost ulang; jika relasi sudah punya pembayaran/mutasi, conversion diblokir."
+            )
 
     if net_deltas:
         lines.append("\n*Efek ke saldo:*")
@@ -822,6 +838,43 @@ def _build_saved_account_balance_info(parsed: dict, result: dict) -> str:
     return ""
 
 
+async def _offer_category_learning_after_committed_edit(
+    query,
+    context,
+    old_txn: dict,
+    new_txn: dict,
+    updates: dict,
+) -> bool:
+    """Offer a separate post-commit alias write after an explicit correction."""
+
+    candidate = assess_category_learning_candidate(old_txn, new_txn, updates)
+    if not candidate:
+        return False
+
+    from app.bot.pending_actions import bind_action_message, create_pending_action
+
+    action = create_pending_action(
+        context.user_data,
+        owner_user_id=int(getattr(query.from_user, "id", 0) or 0),
+        flow_type="category_learning",
+        payload=dict(candidate),
+        preview_message_id=None,
+    )
+    action_id = str(action.get("action_id") or "")
+    sent = await query.message.reply_text(
+        "🧠 *Pelajari koreksi kategori?*\n\n"
+        f"`{md_code_text(candidate.get('alias') or '-')}` → *{md_safe(candidate.get('target_category') or '-')}*\n\n"
+        "Transaksi tadi sudah committed. Learning ini hanya menyimpan alias kategori dan bisa dilewati.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[ 
+            InlineKeyboardButton("✅ Pelajari", callback_data=f"category_learn:{action_id}:approve"),
+            InlineKeyboardButton("Lewati", callback_data=f"category_learn:{action_id}:skip"),
+        ]]),
+    )
+    bind_action_message(context.user_data, action_id, getattr(sent, "message_id", None))
+    return True
+
+
 # Helper for apply bulk edit category decision.
 async def apply_bulk_edit_category_decision(state: dict, decision: dict, category_name: str) -> dict:
     """Apply one resolved category decision to pending bulk edit state.
@@ -894,7 +947,10 @@ async def show_next_or_final_bulk_edit_category_decision(query, context: Context
     if not decision:
         entries = (state or {}).get("entries") or []
         context.user_data.pop(BULK_EDIT_CATEGORY_DECISION_KEY, None)
-        context.user_data["pending_bulk_edit_txns"] = build_bulk_edit_confirm_state(entries)
+        context.user_data["pending_bulk_edit_txns"] = build_bulk_edit_confirm_state(
+            entries,
+            state.get("origin_browser_session_id"),
+        )
         # Send the Telegram response before continuing.
         await safe_edit_message(
             query,
@@ -979,6 +1035,49 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     # Await show callback loading before continuing.
     await show_callback_loading(query)
 
+    if data.startswith("category_learn:"):
+        from app.bot.pending_actions import PendingActionError, consume_pending_action
+
+        parts = data.split(":", 2)
+        if len(parts) != 3 or parts[2] not in {"approve", "skip"}:
+            await safe_edit_message(query, "❌ Pilihan learning kategori tidak valid.")
+            return
+        action_id, decision = parts[1], parts[2]
+        try:
+            action = consume_pending_action(
+                context.user_data,
+                action_id,
+                owner_user_id=int(getattr(query.from_user, "id", 0) or 0),
+                message_id=getattr(query.message, "message_id", None),
+                expected_flow="category_learning",
+            )
+        except PendingActionError:
+            await safe_edit_message(query, "❌ Pilihan learning ini sudah dipakai, dibatalkan, atau kedaluwarsa.")
+            return
+        payload = dict(action.get("payload") or {})
+        if decision == "skip":
+            await safe_edit_message(query, "👍 Learning kategori dilewati. Transaksi yang tadi diedit tetap tersimpan.")
+            return
+        result = learn_category_alias(
+            alias=str(payload.get("alias") or ""),
+            target_category=str(payload.get("target_category") or ""),
+            transaction_type=str(payload.get("transaction_type") or "expense"),
+        )
+        if result.get("success"):
+            await safe_edit_message(
+                query,
+                f"✅ Dipelajari: `{md_code_text(payload.get('alias') or '-')}` → *{md_safe(payload.get('target_category') or '-')}*.",
+                parse_mode="Markdown",
+            )
+        else:
+            await safe_edit_message(
+                query,
+                "⚠️ Transaksi tetap sudah tersimpan, tetapi learning kategori gagal: "
+                f"{md_safe(result.get('message') or '-')}",
+                parse_mode="Markdown",
+            )
+        return
+
     if data.startswith("cancel:a_"):
         from app.bot.pending_actions import PendingActionError, cancel_pending_action
 
@@ -994,6 +1093,10 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             await safe_edit_message(query, "❌ Preview ini sudah kedaluwarsa, sudah dipakai, atau bukan milik Anda. Tidak ada data yang diubah.")
             return
 
+        clear_pending_flow_state(context)
+        cancel_transaction_child_actions(context)
+        if await resume_transaction_browser_after_cancel(query, context):
+            return
         await safe_edit_message(query, "🚫 Input dibatalkan. Tidak ada data yang disimpan.")
         return
 
@@ -1023,6 +1126,7 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                 "mode": "add",
                 "category_name": raw_category,
                 "type": transaction_type if transaction_type in {"expense", "income"} else "expense",
+                "origin_browser_session_id": pending_choice.get("origin_browser_session_id"),
             }
             # Send the Telegram response before continuing.
             await safe_edit_message(
@@ -1049,6 +1153,7 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             updates=updates,
             row_index=pending_choice.get("row_index"),
             txn_id=pending_choice.get("txn_id"),
+            expected_signature=pending_choice.get("expected_signature") or None,
         )
         if not preview.get("success"):
             context.user_data.pop(EDIT_CATEGORY_CHOICE_KEY, None)
@@ -1068,6 +1173,8 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                     "updates": updates,
                     "split_raw": split_raw,
                     "split_parsed": split_parsed,
+                    "expected_signature": list(transaction_service.transaction_material_signature(preview.get("old_txn") or {})),
+                    "origin_browser_session_id": pending_choice.get("origin_browser_session_id"),
                 }
                 # Send the Telegram response before continuing.
                 await safe_edit_message(
@@ -1085,6 +1192,8 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             "updates": updates,
             "split_raw": split_raw if split_parsed else "",
             "split_parsed": split_parsed,
+            "expected_signature": list(transaction_service.transaction_material_signature(preview.get("old_txn") or {})),
+            "origin_browser_session_id": pending_choice.get("origin_browser_session_id"),
         }
         # Send the Telegram response before continuing.
         await safe_edit_message(
@@ -2632,7 +2741,11 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
             apply_split_bill_decision_to_parsed(split_parsed, status)
             updates = dict(pending_edit.get("updates", {}) or {})
-            updates["amount"] = split_parsed.get("amount")
+            # Unpaid split reconstruction uses the gross total. A paid/ordinary
+            # relation conversion must not silently replace the historical cash
+            # amount with the user's share; explicit edit fields remain explicit.
+            if status == "unpaid":
+                updates["amount"] = split_parsed.get("amount")
 
             preview = await run_sheets_read(
                 "preview_edit_transaction_by_ref",
@@ -2640,13 +2753,35 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                 updates=updates,
                 row_index=pending_edit.get("row_index"),
                 txn_id=pending_edit.get("txn_id"),
+                expected_signature=pending_edit.get("expected_signature") or None,
             )
             if not preview.get("success"):
                 await safe_edit_message(query, f"❌ {preview.get('message')}", parse_mode="Markdown")
                 context.user_data.pop("pending_edit_txn", None)
                 return
 
+            relation_preview = await run_sheets_read(
+                "preview_pristine_relation_detach",
+                preview_pristine_relation_detach,
+                preview.get("old_txn") or {},
+            )
+            relation_transition = None
+            if relation_preview.get("success"):
+                relation_transition = "detach_pristine"
+            elif relation_preview.get("message") != "Relasi debt/split tidak ditemukan.":
+                await safe_edit_message(
+                    query,
+                    "❌ *Relasi debt/split tidak aman dikonversi.*\n"
+                    f"{md_safe(relation_preview.get('message') or '-')}",
+                    parse_mode="Markdown",
+                )
+                context.user_data.pop("pending_edit_txn", None)
+                return
+
             pending_edit["updates"] = updates
+            pending_edit["relation_transition"] = relation_transition
+            pending_edit["relation_preview"] = relation_preview if relation_transition else None
+            pending_edit["expected_signature"] = list(transaction_service.transaction_material_signature(preview.get("old_txn") or {}))
             pending_edit["split_parsed"] = split_parsed
             pending_edit["split_status"] = status
             context.user_data["pending_edit_txn"] = pending_edit
@@ -2738,8 +2873,23 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             return
         # Category add/edit writes to Sheets only after this preview confirmation.
         if confirm_target in {"category_add", "category_edit"}:
+            category_state = dict(context.user_data.get(CATEGORY_ADD_FLOW_KEY) or {}) if confirm_target == "category_add" else {}
+            category_parent_origin = str(category_state.get("origin_browser_session_id") or "")
             handled = await handle_category_confirm_callback(query, context, confirm_target)
             if handled:
+                # Single saved-Edit may temporarily enter the existing category-add
+                # wizard. Once that nested flow finishes, reactivate the suspended
+                # transaction parent as a fresh message while preserving the category
+                # result above it. Bulk category decisions remain an active child and
+                # therefore keep the parent suspended until bulk Edit completes/cancels.
+                bulk_state = context.user_data.get(BULK_EDIT_CATEGORY_DECISION_KEY) or {}
+                if category_parent_origin and not bulk_state.get("paused_for_category_add"):
+                    await resume_transaction_browser_after_cancel(
+                        query,
+                        context,
+                        notice="↩️ Browser transaksi aktif kembali. Ulangi Edit jika ingin memakai kategori yang baru disimpan.",
+                        preserve_current_message=True,
+                    )
                 return
 
         if confirm_target == "set_balance":
@@ -2995,111 +3145,151 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         if confirm_target == "edit_txns_bulk":
             pending_bulk = context.user_data.get("pending_bulk_edit_txns") or {}
             entries = pending_bulk.get("entries") or []
-
-            # Validate missing entries before continuing.
             if not entries:
-                await safe_edit_message(query, "❌ Sesi bulk edit transaksi expired. Coba ulangi dari daftar transaksi terakhir.")
+                await safe_edit_message(query, "❌ Sesi bulk edit transaksi expired. Coba ulangi input bulk.")
                 return
 
-            # Send the Telegram response before continuing.
-            await safe_edit_message(
-                query,
-                "⏳ *Sedang mengedit beberapa transaksi...*",
-                parse_mode="Markdown",
-            )
+            # Revalidate the complete confirmed target set before the first write.
+            validated = []
+            for entry in entries:
+                preview = await run_sheets_read(
+                    "preview_edit_transaction_by_ref",
+                    preview_edit_transaction_by_ref,
+                    updates=entry.get("updates", {}),
+                    txn_id=entry.get("txn_id"),
+                    row_index=entry.get("row_index"),
+                    expected_signature=entry.get("expected_signature") or None,
+                )
+                if not preview.get("success"):
+                    abort_text = (
+                        "❌ *Bulk edit dibatalkan sebelum write.*\n"
+                        f"Target `{md_code_text(entry.get('ref') or '-')}` berubah/tidak valid: {md_safe(preview.get('message') or '-')}.\n"
+                        "Buat preview baru; tidak ada subset yang diproses."
+                    )
+                    origin = pending_bulk.get("origin_browser_session_id")
+                    context.user_data.pop("pending_bulk_edit_txns", None)
+                    if origin and await resume_transaction_browser_after_cancel(query, context, notice=abort_text):
+                        return
+                    await safe_edit_message(query, abort_text, parse_mode="Markdown")
+                    return
+                validated.append(entry)
 
-            # Build success results for the response flow.
-            success_results = []
-            # Build failed results for the response flow.
-            failed_results = []
+            await safe_edit_message(query, "⏳ *Sedang menyimpan seluruh bulk edit...*", parse_mode="Markdown")
+            results = []
             aggregate_deltas = {}
             latest_balances = {}
             synced_debt_count = 0
             overpaid_count = 0
-
-            # Iterate through each entry.
-            for entry in entries:
+            for entry in validated:
                 result = edit_transaction_by_ref(
                     updates=entry.get("updates", {}),
-                    row_index=entry.get("row_index"),
                     txn_id=entry.get("txn_id"),
+                    row_index=entry.get("row_index"),
+                    expected_signature=entry.get("expected_signature") or None,
                 )
-
-                if result.get("success"):
-                    success_results.append({"entry": entry, "result": result})
-
-                    for account, delta in (result.get("net_deltas") or {}).items():
-                        aggregate_deltas[account] = aggregate_deltas.get(account, 0) + float(delta or 0)
-
-                    debt_sync = result.get("debt_sync") or {}
-                    synced_debt_count += len(debt_sync.get("updated") or [])
-                    overpaid_count += len(debt_sync.get("overpaid") or [])
-
-                    for account, balance in (result.get("new_balances") or {}).items():
-                        latest_balances[account] = balance
-                # Use the fallback path when no earlier branch matched.
-                else:
-                    failed_results.append({"entry": entry, "result": result})
-
-            lines = [
-                "✅ *Bulk edit transaksi selesai!*" if not failed_results else "⚠️ *Bulk edit transaksi selesai sebagian.*",
-                f"Berhasil: *{len(success_results)}* / *{len(entries)}* transaksi",
-            ]
-
-            if success_results:
-                lines.append("\n*Berhasil diedit:*")
-                # Iterate through each item.
-                for item in success_results[:20]:
-                    entry = item.get("entry") or {}
-                    result = item.get("result") or {}
-                    old_txn = result.get("old_txn") or {}
-                    new_txn = result.get("new_txn") or {}
-                    ref = str(entry.get("ref") or "-").strip()
-                    old_desc = str(old_txn.get("description") or old_txn.get("subject") or "-").strip()
-                    new_desc = str(new_txn.get("description") or new_txn.get("subject") or "-").strip()
-                    old_cat = str(old_txn.get("category") or "-").strip()
-                    new_cat = str(new_txn.get("category") or "-").strip()
-                    lines.append(f"• `{md_code_text(ref)}` {md_safe(old_desc)}")
-                    if old_cat != new_cat:
-                        lines.append(f"  Kategori: {md_safe(old_cat)} → *{md_safe(new_cat)}*")
-                    if old_desc != new_desc:
-                        lines.append(f"  Desc: {md_safe(old_desc)} → *{md_safe(new_desc)}*")
-
-                if len(success_results) > 20:
-                    lines.append(f"• ...dan {len(success_results) - 20} transaksi lain")
-
-            if failed_results:
-                lines.append("\n*Gagal diedit:*")
-                # Iterate through each item.
-                for item in failed_results[:10]:
-                    entry = item.get("entry") or {}
-                    result = item.get("result") or {}
-                    lines.append(
-                        f"• `{md_code_text(entry.get('ref') or '-')}`: {md_safe(result.get('message') or 'Gagal edit.')}"
+                if not result.get("success"):
+                    # A writer was invoked; do not swallow a possible partial
+                    # remote mutation as a harmless result. The outer Sheets
+                    # transaction must own rollback/reconciliation.
+                    raise PartialMutationError(
+                        result.get("message") or "Bulk edit gagal setelah mutation dimulai.",
+                        operation="edit_txns_bulk",
                     )
-                if len(failed_results) > 10:
-                    lines.append(f"• ...dan {len(failed_results) - 10} gagal lain")
+                results.append({"entry": entry, "result": result})
+                for account, delta in (result.get("net_deltas") or {}).items():
+                    aggregate_deltas[account] = aggregate_deltas.get(account, 0.0) + float(delta or 0)
+                for account, balance in (result.get("new_balances") or {}).items():
+                    latest_balances[account] = balance
+                debt_sync = result.get("debt_sync") or {}
+                synced_debt_count += len(debt_sync.get("updated") or [])
+                overpaid_count += len(debt_sync.get("overpaid") or [])
 
+            lines = ["✅ *Bulk edit transaksi berhasil disimpan seluruhnya!*", f"Berhasil: *{len(results)} / {len(entries)} transaksi*"]
             if aggregate_deltas:
                 lines.append("\n🔁 *Total penyesuaian saldo:*")
-                # Iterate through each account, delta.
                 for account, delta in aggregate_deltas.items():
                     sign = "+" if delta >= 0 else "-"
                     lines.append(f"• {md_safe(account)}: {sign}{format_rupiah(abs(delta))}")
-
             if latest_balances:
                 lines.append("\n💳 *Saldo terbaru:*")
-                # Iterate through each account, balance.
                 for account, balance in latest_balances.items():
                     lines.append(f"• {md_safe(account)}: *{format_rupiah(balance)}*")
-
             if synced_debt_count:
                 lines.append(f"\n🧾 Debt charge ikut di-sync: *{synced_debt_count} item*")
             if overpaid_count:
                 lines.append(f"⚠️ Overpaid adjustment dibuat/diupdate: *{overpaid_count} item*")
-
+            origin = pending_bulk.get("origin_browser_session_id")
             context.user_data.pop("pending_bulk_edit_txns", None)
+            if origin and await refresh_transaction_browser_after_child(
+                query,
+                context,
+                mutation="edit",
+                focus_txn_id=str(entries[0].get("txn_id") or "") if len(entries) == 1 else None,
+                success_notice="\n".join(lines),
+            ):
+                return
             await safe_edit_message(query, "\n".join(lines), parse_mode="Markdown")
+            return
+
+        if confirm_target == "edit_txns_bulk_staged":
+            pending_bulk = context.user_data.get("pending_bulk_edit_staged") or {}
+            entries = pending_bulk.get("entries") or []
+            if not entries:
+                await safe_edit_message(query, "❌ Sesi Save All expired. Ulangi `/edit_txn`.")
+                return
+
+            validated = []
+            for entry in entries:
+                preview = await run_sheets_read(
+                    "preview_edit_transaction_by_ref",
+                    preview_edit_transaction_by_ref,
+                    updates=entry.get("updates") or {},
+                    txn_id=entry.get("txn_id"),
+                    expected_signature=entry.get("expected_signature") or None,
+                )
+                if not preview.get("success"):
+                    abort_text = (
+                        "❌ *Save All dibatalkan sebelum write.*\n"
+                        f"Ref `{entry.get('ref')}` berubah sejak Combined Final Preview: {md_safe(preview.get('message') or '-')}.\n"
+                        "Tidak ada subset yang diproses; buka preview baru."
+                    )
+                    origin = pending_bulk.get("origin_browser_session_id")
+                    context.user_data.pop("pending_bulk_edit_staged", None)
+                    context.user_data.pop("pending_txn_selector", None)
+                    if origin and await resume_transaction_browser_after_cancel(query, context, notice=abort_text):
+                        return
+                    await safe_edit_message(query, abort_text, parse_mode="Markdown")
+                    return
+                validated.append(entry)
+
+            await safe_edit_message(query, "⏳ *Menyimpan semua staged edit...*", parse_mode="Markdown")
+            results = []
+            for entry in validated:
+                result = edit_transaction_by_ref(
+                    updates=entry.get("updates") or {},
+                    txn_id=entry.get("txn_id"),
+                    expected_signature=entry.get("expected_signature") or None,
+                )
+                if not result.get("success"):
+                    raise PartialMutationError(
+                        result.get("message") or "Staged bulk edit gagal setelah write dimulai.",
+                        operation="edit_txns_bulk_staged",
+                    )
+                results.append(result)
+
+            origin = pending_bulk.get("origin_browser_session_id")
+            context.user_data.pop("pending_bulk_edit_staged", None)
+            context.user_data.pop("pending_txn_selector", None)
+            success_text = f"✅ *Semua edit berhasil disimpan.*\n{len(results)} transaksi committed."
+            if origin and await refresh_transaction_browser_after_child(
+                query,
+                context,
+                mutation="edit",
+                focus_txn_id=str(entries[0].get("txn_id") or "") if len(entries) == 1 else None,
+                success_notice=success_text,
+            ):
+                return
+            await safe_edit_message(query, success_text, parse_mode="Markdown")
             return
 
         if confirm_target == "edit_txn":
@@ -3109,7 +3299,7 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             if not pending_edit:
                 # Send the Telegram response before continuing.
                 await safe_edit_message(query,
-                    "❌ Sesi edit transaksi expired. Coba ulangi `/last`."
+                    "❌ Sesi edit transaksi expired. Buka `/edit_txn` atau transaction browser lagi."
                 )
                 return
 
@@ -3123,36 +3313,26 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             split_status = (split_parsed or {}).get("split_bill", {}).get("status") if split_parsed else None
             target_txn_id = str(pending_edit.get("txn_id") or "").strip()
 
-            if split_parsed:
-                preview_before_edit = await run_sheets_read(
-                    "preview_edit_transaction_by_ref",
-                    preview_edit_transaction_by_ref,
-                    updates=pending_edit.get("updates", {}),
-                    row_index=pending_edit.get("row_index"),
-                    txn_id=pending_edit.get("txn_id"),
-                )
-                old_txn_for_debt = preview_before_edit.get("old_txn", {}) if preview_before_edit.get("success") else {}
-                target_txn_id = target_txn_id or str(old_txn_for_debt.get("id") or "").strip()
-                linked_ids = parse_debt_ids_from_txn_record_for_edit(old_txn_for_debt)
-                void_result = void_debts_for_transaction(target_txn_id, linked_ids) if target_txn_id else {"success": True}
-                if not void_result.get("success"):
-                    # Send the Telegram response before continuing.
-                    await safe_edit_message(
-                        query,
-                        "❌ *Gagal edit split bill.*\n"
-                        "Debt/piutang lama tidak bisa dibatalkan otomatis, kemungkinan sudah ada pembayaran/mutasi.\n\n"
-                        f"Detail: {md_safe(void_result.get('message') or '-')}",
-                        parse_mode="Markdown",
-                    )
-                    context.user_data.pop("pending_edit_txn", None)
+            # A confirmed unpaid split already contains the complete required
+            # participant/share set. Reject deterministic invalidity before the
+            # transaction edit itself performs the first financial write.
+            split_validation = preview_split_bill_debt(split_parsed) if split_status == "unpaid" else None
+            if split_validation is not None and not split_validation.get("success"):
+                abort_text = f"❌ Split bill tidak valid: {md_safe(split_validation.get('message') or '-')}\nTidak ada write yang dilakukan."
+                origin = pending_edit.get("origin_browser_session_id")
+                context.user_data.pop("pending_edit_txn", None)
+                if origin and await resume_transaction_browser_after_cancel(query, context, notice=abort_text):
                     return
+                await safe_edit_message(query, abort_text, parse_mode="Markdown")
+                return
 
             result = edit_transaction_by_ref(
                 updates=pending_edit.get("updates", {}),
                 row_index=pending_edit.get("row_index"),
                 txn_id=pending_edit.get("txn_id"),
+                expected_signature=pending_edit.get("expected_signature") or None,
+                relation_transition=pending_edit.get("relation_transition"),
             )
-
             if not result.get("success"):
                 # Send the Telegram response before continuing.
                 await safe_edit_message(query,
@@ -3305,137 +3485,123 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                             operation="edit_transaction_split_debt",
                         )
                 elif split_status == "paid":
-                    clear_result = clear_transaction_debt_relation(target_txn_id)
-                    if not clear_result.get("success"):
-                        raise PartialMutationError(
-                            clear_result.get("message", "Gagal menghapus relasi split bill."),
-                            operation="edit_transaction_clear_split_relation",
-                        )
-                    lines.append("\n🤝 Split bill ditandai sudah dibayar, jadi tidak ada piutang aktif baru.")
+                    lines.append("\n🤝 Relasi split/piutang pristine dilepas sebagai conversion accounting; cash historis tidak dipost ulang.")
 
+            origin = pending_edit.get("origin_browser_session_id")
+            learning_args = (old_txn, new_txn, dict(pending_edit.get("updates") or {}))
+            context.user_data.pop("pending_edit_txn", None)
+            if origin and await refresh_transaction_browser_after_child(
+                query,
+                context,
+                mutation="edit",
+                focus_txn_id=target_txn_id or str((result.get("transaction") or {}).get("id") or ""),
+                success_notice="\n".join(lines),
+            ):
+                await _offer_category_learning_after_committed_edit(query, context, *learning_args)
+                return
             # Send the Telegram response before continuing.
             await safe_edit_message(query,
                 "\n".join(lines),
                 parse_mode="Markdown",
             )
-
-            context.user_data.pop("pending_edit_txn", None)
+            await _offer_category_learning_after_committed_edit(query, context, *learning_args)
             return
         if confirm_target == "delete_txns":
-            pending_refs = context.user_data.get("pending_delete_refs", {})
-
-            row_indices = pending_refs.get("row_indices", [])
-            txn_ids = pending_refs.get("txn_ids", [])
-
-            # Validate missing row indices and not txn ids before continuing.
-            if not row_indices and not txn_ids:
-                # Send the Telegram response before continuing.
-                await safe_edit_message(query,
-                    "❌ Sesi hapus transaksi expired. Coba ulangi `/last`."
-                )
+            pending_refs = context.user_data.get("pending_delete_refs") or {}
+            txn_ids = list(pending_refs.get("txn_ids") or [])
+            selected_ids = list(pending_refs.get("selected_txn_ids") or txn_ids)
+            if not txn_ids or not selected_ids:
+                await safe_edit_message(query, "❌ Sesi hapus transaksi expired. Buka `/delete_txn` atau transaction browser lagi.", parse_mode="Markdown")
                 return
 
-            # Send the Telegram response before continuing.
-            await safe_edit_message(query,
-                "⏳ *Sedang menghapus transaksi dan memperbaiki saldo...*",
-                parse_mode="Markdown",
+            # Final read-only revalidation of the exact selection/dependency
+            # composition approved in the preview.
+            current_preview = await run_sheets_read(
+                "preview_delete_transactions_by_refs",
+                preview_delete_transactions_by_refs,
+                txn_ids=selected_ids,
             )
-
-            result = delete_transactions_by_refs(
-                row_indices=row_indices,
-                txn_ids=txn_ids,
-            )
-
-            if not result.get("success"):
-                lines = [
-                    f"❌ *Gagal menghapus transaksi.*\n{result.get('message')}"
-                ]
-
-                if result.get("blocked"):
-                    lines.append("\n🚫 *Transaksi diblok:*")
-                    for txn in result["blocked"]:
-                        lines.append(
-                            f"• Row {txn.get('_row_index', '-')} — "
-                            f"{txn.get('date')} — {txn.get('description') or '-'} "
-                            f"({txn.get('category') or '-'})"
-                        )
-
-                if result.get("missing_ids"):
-                    lines.append("\n❓ *ID tidak ditemukan:*")
-                    for txn_id in result["missing_ids"]:
-                        lines.append(f"• `{txn_id}`")
-
-                if result.get("missing_rows"):
-                    lines.append("\n❓ *Row tidak ditemukan:*")
-                    for row in result["missing_rows"]:
-                        lines.append(f"• `{row}`")
-
-                # Send the Telegram response before continuing.
-                await safe_edit_message(query,
-                    "\n".join(lines),
-                    parse_mode="Markdown",
-                )
-
+            current_deletable = [str(txn.get("id") or "") for txn in current_preview.get("deletable") or []]
+            current_blocked = [str(txn.get("id") or "") for txn in current_preview.get("blocked") or []]
+            expected_deletable = list(pending_refs.get("expected_deletable_ids") or txn_ids)
+            expected_blocked = list(pending_refs.get("expected_blocked_ids") or [])
+            anomaly = bool(current_preview.get("missing_ids") or current_preview.get("duplicate_ids"))
+            if anomaly or current_deletable != expected_deletable or current_blocked != expected_blocked:
+                abort_text = "❌ *Delete dibatalkan sebelum write.*\nTarget/dependency composition berubah sejak preview. Tidak ada subset yang dihapus; buat preview baru."
+                origin = pending_refs.get("origin_browser_session_id")
                 context.user_data.pop("pending_delete_refs", None)
-                context.user_data.pop("pending_delete_txn_ids", None)
+                if origin and await resume_transaction_browser_after_cancel(query, context, notice=abort_text):
+                    return
+                await safe_edit_message(query, abort_text, parse_mode="Markdown")
+                return
+
+            expected_signatures = pending_refs.get("expected_signatures") or {}
+            expected_dependencies = pending_refs.get("expected_dependency_signatures") or {}
+            for txn in (current_preview.get("deletable") or []) + (current_preview.get("blocked") or []):
+                txn_id = str(txn.get("id") or "")
+                expected = expected_signatures.get(txn_id)
+                if expected is not None and tuple(expected) != transaction_service.transaction_material_signature(txn):
+                    abort_text = "❌ *Delete dibatalkan sebelum write.*\nIsi transaksi berubah sejak preview. Buat preview baru."
+                    origin = pending_refs.get("origin_browser_session_id")
+                    context.user_data.pop("pending_delete_refs", None)
+                    if origin and await resume_transaction_browser_after_cancel(query, context, notice=abort_text):
+                        return
+                    await safe_edit_message(query, abort_text, parse_mode="Markdown")
+                    return
+                current_dependency = await run_sheets_read(
+                    "transaction_delete_dependency_signature",
+                    transaction_debt_dependency_signature,
+                    txn,
+                )
+                if txn_id not in expected_dependencies or current_dependency != expected_dependencies.get(txn_id):
+                    abort_text = "❌ *Delete dibatalkan sebelum write.*\nDependency debt berubah sejak preview. Buat preview baru."
+                    origin = pending_refs.get("origin_browser_session_id")
+                    context.user_data.pop("pending_delete_refs", None)
+                    if origin and await resume_transaction_browser_after_cancel(query, context, notice=abort_text):
+                        return
+                    await safe_edit_message(query, abort_text, parse_mode="Markdown")
+                    return
+
+            await safe_edit_message(query, "⏳ *Sedang menghapus exact confirmed target set...*", parse_mode="Markdown")
+            deletable_signatures = {txn_id: expected_signatures.get(txn_id) for txn_id in expected_deletable if txn_id in expected_signatures}
+            deletable_dependencies = {txn_id: expected_dependencies.get(txn_id) for txn_id in expected_deletable if txn_id in expected_dependencies}
+            result = delete_transactions_by_refs(
+                txn_ids=expected_deletable,
+                expected_deletable_ids=expected_deletable,
+                expected_blocked_ids=[],
+                expected_signatures=deletable_signatures,
+                expected_dependency_signatures=deletable_dependencies,
+            )
+            if not result.get("success"):
+                await safe_edit_message(query, f"❌ *Gagal menghapus transaksi.*\n{md_safe(result.get('message') or '-')}", parse_mode="Markdown")
+                context.user_data.pop("pending_delete_refs", None)
                 return
 
             lines = [
                 "✅ *Transaksi berhasil dihapus!*",
                 f"🗑️ Terhapus: *{result.get('deleted_count', 0)} transaksi*",
             ]
-
-            deleted_ids = result.get("deleted_ids", [])
-            if deleted_ids:
-                lines.append("\n🔖 *ID terhapus:*")
-                # Iterate through each txn id.
-                for txn_id in deleted_ids:
-                    lines.append(f"• `{short_txn_id(txn_id)}`")
-
-            new_balances = result.get("new_balances", {})
-            if new_balances:
-                lines.append("\n💳 *Saldo terbaru:*")
-                # Iterate through each account, balance.
-                for account, balance in new_balances.items():
-                    lines.append(f"• {account}: *{format_rupiah(balance)}*")
-
             if result.get("linked_debts_voided"):
-                lines.append("\n🔗 *Debt terkait ikut di-void karena transaksi sumber dihapus:*")
-                for debt_id in result.get("linked_debts_voided") or []:
-                    lines.append(f"• `{md_code_text(debt_id)}`")
-
+                lines.append(f"🔗 Debt terkait di-void: *{len(result.get('linked_debts_voided') or [])}*")
             if result.get("reversed_payment_debts"):
-                lines.append("\n↩️ *Pembayaran debt terkait ikut dibalikkan:*")
-                for item in result.get("reversed_payment_debts") or []:
-                    lines.append(f"• `{md_code_text(item.get('debt_id'))}` +{format_rupiah(item.get('amount', 0))}")
+                lines.append(f"↩️ Payment debt dibalik: *{len(result.get('reversed_payment_debts') or [])}*")
+            if result.get("new_balances"):
+                lines.append("\n💳 *Saldo terbaru:*")
+                for account, balance in (result.get("new_balances") or {}).items():
+                    lines.append(f"• {md_safe(account)}: *{format_rupiah(balance)}*")
 
-            if result.get("blocked"):
-                lines.append("\n🚫 *Diblok karena debt cashflow:*")
-                for txn in result["blocked"]:
-                    lines.append(
-                        f"• Row {txn.get('_row_index', '-')} — "
-                        f"{txn.get('date')} — {txn.get('description') or '-'} "
-                        f"({txn.get('category') or '-'})"
-                    )
-
-            if result.get("missing_ids"):
-                lines.append("\n❓ *ID tidak ditemukan:*")
-                for txn_id in result["missing_ids"]:
-                    lines.append(f"• `{txn_id}`")
-
-            if result.get("missing_rows"):
-                lines.append("\n❓ *Row tidak ditemukan:*")
-                for row in result["missing_rows"]:
-                    lines.append(f"• `{row}`")
-
-            # Send the Telegram response before continuing.
-            await safe_edit_message(query,
-                "\n".join(lines),
-                parse_mode="Markdown",
-            )
-
+            origin = pending_refs.get("origin_browser_session_id")
             context.user_data.pop("pending_delete_refs", None)
             context.user_data.pop("pending_delete_txn_ids", None)
+            context.user_data.pop("pending_txn_selector", None)
+            if origin and await refresh_transaction_browser_after_child(
+                query,
+                context,
+                mutation="delete",
+                success_notice="\n".join(lines),
+            ):
+                return
+            await safe_edit_message(query, "\n".join(lines), parse_mode="Markdown")
             return
 
         if confirm_target == "debt_settle":
@@ -4306,6 +4472,18 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
             all_transaction_items = normal_transaction_items + debt_transaction_items
 
+            # Prevalidate every required split relation before the batch writer
+            # touches the first source transaction.
+            for item in normal_transaction_items:
+                split_validation = preview_split_bill_debt(item.get("parsed", {}))
+                if split_validation is not None and not split_validation.get("success"):
+                    await safe_edit_message(
+                        query,
+                        f"❌ Split bill tidak valid: {md_safe(split_validation.get('message') or '-')}\nTidak ada transaksi batch yang ditulis.",
+                        parse_mode="Markdown",
+                    )
+                    return
+
             # Build transaction result for the response flow.
             transaction_result = None
             if all_transaction_items:
@@ -4413,6 +4591,16 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                 "⏳ *Sedang menyimpan semua transaksi...*",
                 parse_mode="Markdown",
             )
+
+            for item in batch:
+                split_validation = preview_split_bill_debt(item.get("parsed", {}))
+                if split_validation is not None and not split_validation.get("success"):
+                    await safe_edit_message(
+                        query,
+                        f"❌ Split bill tidak valid: {md_safe(split_validation.get('message') or '-')}\nTidak ada transaksi batch yang ditulis.",
+                        parse_mode="Markdown",
+                    )
+                    return
 
             # Build result for the response flow.
             result = save_transactions_batch(batch)
@@ -4543,6 +4731,15 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             parse_mode="Markdown",
         )
 
+        split_validation = preview_split_bill_debt(parsed)
+        if split_validation is not None and not split_validation.get("success"):
+            await safe_edit_message(
+                query,
+                f"❌ Split bill tidak valid: {md_safe(split_validation.get('message') or '-')}\nTidak ada transaksi yang ditulis.",
+                parse_mode="Markdown",
+            )
+            return
+
         # Build result for the response flow.
         result = save_transaction(parsed, raw_input=raw)
 
@@ -4618,6 +4815,10 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
     if data.startswith("cancel"):
         clear_pending_flow_state(context)
+        cancel_transaction_child_actions(context)
+
+        if await resume_transaction_browser_after_cancel(query, context):
+            return
 
         await safe_edit_message(query, "🚫 Input dibatalkan. Tidak ada data yang disimpan.")
         return

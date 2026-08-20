@@ -237,11 +237,11 @@ Grafik:
 - `/grafik pie` - komposisi kategori bulan berjalan.
 - `/chart line 2026-07` - alias grafik time series Juli 2026.
 
-Tipe grafik yang didukung: `line`/`timeseries`, `bar`, dan `pie`. Jika bulan tidak ditulis, bot memakai bulan berjalan. `/transaksi` dan `/last` juga mengirim grafik time series PNG dari transaksi yang tampil.
+Tipe grafik yang didukung: `line`/`timeseries`, `bar`, dan `pie`. Jika bulan tidak ditulis, bot memakai bulan berjalan. Browser `/transaksi` dan `/last` tidak mengirim grafik otomatis; gunakan tombol ringkasan contextual atau `/grafik` untuk grafik standalone.
 
 ## Lihat dan Koreksi Transaksi
 
-Command transaksi dipakai untuk melihat, mencari, mengedit, atau menghapus transaksi. Edit dan hapus berdasarkan nomor membutuhkan daftar transaksi terakhir dari `/last`, `/transaksi`, atau `/cari`.
+Command transaksi memakai snapshot reference yang stabil. `/transaksi`, `/last`, `/rekening <rekening>`, dan `/cari` membuat context nomor terbaru; `/edit_txn` dan `/delete_txn` tanpa ref dapat membuka selector mandiri.
 
 Lihat transaksi:
 
@@ -273,8 +273,8 @@ Hapus transaksi:
 Edit transaksi:
 
 - `/edit_txn 2 amount=15000`
-- `/edit_txn 2 desc=Kopi susu`
-- `/edit_txn 2 account=BRI category=Food & Beverage`
+- `/edit_txn 2 desc="Kopi susu"`
+- `/edit_txn 2 account=BRI category="Food & Beverage"`
 - `/edit_txn 1 category="Household & Supplies" desc="Galon"`
 - `/edit_txn 2 category="Food & Beverage"`
 - `/edit_txn txn_id amount=500k dibagi 4 sama Raka:125k Bagas:125k Fajar:100k`
@@ -284,7 +284,7 @@ Edit transaksi:
 - `/edit_txn 4 type=income account=BRI`
 - `/edit_txn 5 category=Transport desc="Bensin motor"`
 
-Jalankan `/last`, `/transaksi`, atau `/cari` dulu agar nomor transaksi tersedia. Jika transaksi punya `hutang_id`, `/delete_txn` akan mencoba void debt terkait otomatis.
+Untuk numeric direct ref, buka `/transaksi`, `/last`, `/rekening <rekening>`, atau `/cari` terlebih dahulu. Alternatifnya gunakan `/edit_txn` atau `/delete_txn` tanpa ref untuk selector mandiri. Jika transaksi punya dependency debt, delete tetap melalui dependency preview.
 
 ## Pending Expense
 
@@ -471,7 +471,7 @@ Fitur inti mengubah data. Gemini/RAG hanya membaca dan memberi insight. Data yan
 ## Troubleshooting
 
 - Jika format command tidak terbaca, cek `/help <topik>` sesuai fitur.
-- Jika nomor transaksi tidak tersedia, jalankan `/last`, `/transaksi`, atau `/cari` dulu.
+- Jika numeric ref tidak tersedia, buka transaction browser atau gunakan selector `/edit_txn` / `/delete_txn` tanpa ref.
 - Jika `pending_id`, `asset_id`, atau `rec_xxx` tidak diketahui, jalankan command list terkait.
 - Jika manual PDF belum tersedia, generate ulang dengan `python scripts/generate_help_manual_pdf.py`.
 - Jika font Poppins belum terpasang, generator PDF memakai fallback font sans-serif yang tersedia.

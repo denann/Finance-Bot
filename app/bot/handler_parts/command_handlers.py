@@ -6,6 +6,7 @@
 from app.bot.handler_parts.common_imports import *
 from app.clock import business_now
 from app.services.pending_expense_service import find_pending_by_ref
+from app.bot.handler_parts.management_browser import start_debt_browser, start_pending_browser
 # Import pathlib so /manual can resolve docs relative to the project root.
 from pathlib import Path
 # Import modular help content so /help stays short and topic-based.
@@ -21,6 +22,11 @@ from app.services.chart_service import write_monthly_chart_png
 # Import privacy notice builder for the read-only /privacy command.
 from app.services.privacy_service import build_privacy_notice_text
 from app.application.external_io import run_gemini, run_sheets_read
+from app.bot.handler_parts.transaction_browser import (
+    cancel_transaction_child_actions,
+    resume_transaction_browser_after_cancel,
+    start_transaction_browser,
+)
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -313,8 +319,12 @@ async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     active_label = describe_active_pending_flow(context)
     removed = clear_pending_flow_state(context)
+    canceled_actions = cancel_transaction_child_actions(context)
 
-    if removed:
+    if await resume_transaction_browser_after_cancel(update, context):
+        return
+
+    if removed or canceled_actions:
         # Send the Telegram response before continuing.
         await update.message.reply_text(
             "🚫 *Flow aktif dibatalkan.*\n\n"
@@ -1621,26 +1631,15 @@ async def rekening_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reverse=True,
     )
 
-    last_map = {}
-    # Iterate through each i, txn.
-    for i, txn in enumerate(transactions, 1):
-        if txn.get("_row_index"):
-            last_map[str(i)] = {
-                "id": str(txn.get("id", "")),
-                "row_index": int(txn.get("_row_index")),
-            }
-    context.user_data["last_txn_map"] = last_map
-
     title = f"Transaksi Rekening {account} — {period_label}"
-    # Send the Telegram response before continuing.
-    await reply_long_markdown(
-        update,
-        build_transactions_full_text_shared(
-            transactions,
-            title,
-            account,
-            current_balance=report.get("account_balance"),
-        ),
+    await start_transaction_browser(
+        update, context, transactions, family="rekening", title=title,
+        query={
+            "account": str(report.get("account_filter") or account),
+            "period_type": str(report.get("period_type") or "month"),
+            "month": str(report.get("month") or ""),
+        },
+        summary_label="📊 Ringkasan Rekening", account_filter=account,
     )
 
 
@@ -2056,7 +2055,7 @@ async def cari_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyword = " ".join(args)
     # Build results for the response flow.
-    results = await run_sheets_read("search_transactions", search_transactions, keyword)
+    results = await run_sheets_read("search_transactions", search_transactions, keyword, limit=None)
 
     # Validate missing results before continuing.
     if not results:
@@ -2067,15 +2066,11 @@ async def cari_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    lines = [f"🔍 *Hasil pencarian: \"{md_safe(keyword)}\"*\n"]
-    append_net_gross_note(lines, results)
-
-    # Iterate through each i, t.
-    for i, t in enumerate(results, 1):
-        # Append the current value to lines.
-        lines.extend(build_transaction_display_lines(t, index=i, include_date=True, include_id=True))
-
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await start_transaction_browser(
+        update, context, results, family="cari",
+        title=f'Hasil pencarian: "{keyword}"',
+        query={"keyword": keyword}, summary_label="📊 Ringkasan Hasil",
+    )
 
 
 # Helper for format budget net gross.
@@ -2332,9 +2327,7 @@ async def pending_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     label = result.get("label") or "bulan ini"
-    title = f"Pending Expense — {label}"
-    lines = build_pending_expense_lines(result.get("items") or [], title, result.get("total", 0))
-    await reply_long_markdown(update, "\n".join(lines))
+    await start_pending_browser(update, context, result.get("items") or [], label=label)
 
 
 async def pending_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3032,7 +3025,8 @@ async def debt_void_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
 
     # Send the Telegram response before continuing.
-    await update.message.reply_text(
+    await reply_message_safely(
+        update.message,
         build_debt_void_preview_text(preview),
         parse_mode="Markdown",
         reply_markup=confirm_keyboard("debt_void"),
@@ -3971,7 +3965,8 @@ async def debt_settle_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     # Send the Telegram response before continuing.
-    await update.message.reply_text(
+    await reply_message_safely(
+        update.message,
         build_selected_debt_settle_preview_text(payload),
         parse_mode="Markdown",
         reply_markup=confirm_keyboard("debt_settle"),
@@ -4037,7 +4032,8 @@ async def handle_natural_debt_settle(update: Update, context: ContextTypes.DEFAU
         return True
 
     # Send the Telegram response before continuing.
-    await update.message.reply_text(
+    await reply_message_safely(
+        update.message,
         build_selected_debt_settle_preview_text(payload),
         parse_mode="Markdown",
         reply_markup=confirm_keyboard("debt_settle"),
@@ -4414,6 +4410,54 @@ async def ringkasan_hutang_handler(update: Update, context: ContextTypes.DEFAULT
         parse_mode="Markdown",
     )
 
+def _build_debt_overview_text(summary: dict) -> str:
+    """Preserve the pre-browser aggregate meaning of bare `/hutang`."""
+    lines = ["💸 *Utang & Piutang Aktif per Orang*\n"]
+    if summary.get("payables"):
+        lines.append(f"🔴 *Utang Anda* (net total: {format_rupiah(summary.get('total_payable', 0))})")
+        for i, item in enumerate(summary.get("payables") or [], 1):
+            person = item.get("person_name") or "-"
+            count = int(item.get("debt_count") or 0)
+            lines.append(
+                f"  {i}. {md_safe(person)} — *{format_rupiah(item.get('remaining_amount', 0))}* "
+                f"({count} rincian)"
+            )
+    if summary.get("payables") and summary.get("receivables"):
+        lines.append("")
+    if summary.get("receivables"):
+        lines.append(f"🟢 *Piutang Anda* (net total: {format_rupiah(summary.get('total_receivable', 0))})")
+        for i, item in enumerate(summary.get("receivables") or [], 1):
+            person = item.get("person_name") or "-"
+            count = int(item.get("debt_count") or 0)
+            lines.append(
+                f"  {i}. {md_safe(person)} — *{format_rupiah(item.get('remaining_amount', 0))}* "
+                f"({count} rincian)"
+            )
+    if summary.get("balanced"):
+        lines.append("\n⚪ *Netral tapi masih ada rincian aktif*")
+        for item in summary.get("balanced") or []:
+            lines.append(f"  • {md_safe(item.get('person_name') or '-')}")
+    net = float(summary.get("total_receivable", 0) or 0) - float(summary.get("total_payable", 0) or 0)
+    net_label = "🟢 Anda lebih banyak dihutangi" if net >= 0 else "🔴 Anda lebih banyak berhutang"
+    lines.append(f"\n{net_label}: *{format_rupiah(abs(net))}*")
+    lines.append("\nPilih rincian pada browser debt di bawah untuk Settle / Edit / Void.")
+    return "\n".join(lines)
+
+
+def _active_debts_from_person_summary(summary: dict) -> list[dict]:
+    """Reuse the rows already loaded for aggregate summary; do not reread Debts."""
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for group_name in ("payables", "receivables", "balanced"):
+        for group in summary.get(group_name) or []:
+            for debt in group.get("details") or []:
+                debt_id = str((debt or {}).get("id") or "").strip()
+                if debt_id and debt_id not in seen:
+                    rows.append(debt)
+                    seen.add(debt_id)
+    return sorted(rows, key=debt_detail_sort_key_for_display, reverse=True)
+
+
 async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the asynchronous hutang handler flow in the Telegram handler layer.
 
@@ -4440,19 +4484,19 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     person_query = " ".join(args).strip()
 
     if person_query:
-        # Implementation note for this project-specific finance flow.
-        netting_result = {"success": False, "offset_amount": 0}
-        detail = await run_sheets_read("get_debt_person_detail", get_debt_person_detail, person_query, include_settled=True)
+        detail = await run_sheets_read(
+            "get_debt_person_detail",
+            get_debt_person_detail,
+            person_query,
+            include_settled=True,
+        )
         active_details = sorted(
             detail.get("active_details") or [],
             key=debt_detail_sort_key_for_display,
             reverse=True,
         )
         all_details = detail.get("details") or []
-
-        # Validate missing all details before continuing.
         if not all_details:
-            # Send the Telegram response before continuing.
             await update.message.reply_text(
                 f"✅ Tidak ada riwayat utang/piutang untuk *{md_safe(person_query.title())}*.",
                 parse_mode="Markdown",
@@ -4462,155 +4506,65 @@ async def hutang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         person = detail.get("person_name") or person_query.title()
         net_remaining = float(detail.get("net_remaining") or 0)
         net_type = detail.get("net_type")
-
         if net_type == "receivable":
             header = f"🟢 *{md_safe(person)} hutang ke Anda: {format_rupiah(abs(net_remaining))}*"
         elif net_type == "payable":
             header = f"🔴 *Anda hutang ke {md_safe(person)}: {format_rupiah(abs(net_remaining))}*"
-        # Use the fallback path when no earlier branch matched.
         else:
             header = f"⚪ *Debt dengan {md_safe(person)} sudah netral/lunas.*"
 
-        lines = [header, ""]
-        if netting_result.get("success") and float(netting_result.get("offset_amount", 0) or 0) > 0:
-            lines.append(
-                f"🔁 Auto-netting hutang/piutang: *{format_rupiah(netting_result.get('offset_amount', 0))}* "
-                "sudah saling menghapus tanpa mengubah transaksi sumber.\n"
-            )
-        lines.append("*Rincian aktif:*")
+        context.user_data["last_debt_map"] = {
+            str(i): {
+                "debt_id": debt.get("id"),
+                "row_index": debt.get("_row_index"),
+                "person_name": person,
+                "type": debt.get("type"),
+                "remaining_amount": debt.get("remaining_amount"),
+            }
+            for i, debt in enumerate(active_details, 1)
+        }
+        context.user_data["last_debt_person"] = person
 
-        last_debt_map = {}
         if active_details:
-            # Extract current debt date group for validation.
-            current_debt_date_group = None
-            # Iterate through each i, d.
-            for i, d in enumerate(active_details, 1):
-                last_debt_map[str(i)] = {
-                    "debt_id": d.get("id"),
-                    "row_index": d.get("_row_index"),
-                    "person_name": person,
-                    "type": d.get("type"),
-                    "remaining_amount": d.get("remaining_amount"),
-                }
-                # Extract created date for validation.
-                created_date = format_debt_created_date_for_display(d)
-                # Handle created date != current debt date group.
-                if created_date != current_debt_date_group:
-                    lines.append(f"\n*{md_safe(format_indonesian_date_group_label(created_date))}*")
-                    # Extract current debt date group for validation.
-                    current_debt_date_group = created_date
+            await start_debt_browser(
+                update,
+                context,
+                active_details,
+                title=f"Utang & Piutang — {person}",
+                overview=header,
+            )
+            return
 
-                debt_type = str(d.get("type") or "").strip()
-                icon = "🔴" if debt_type == "payable" else "🟢"
-                direction = "Anda hutang" if debt_type == "payable" else f"{md_safe(person)} hutang"
-                desc = str(d.get("description") or "-").strip()
-                remaining = format_rupiah(d.get("remaining_amount", 0))
-                original = format_rupiah(d.get("original_amount", 0))
-                debt_id = str(d.get("id", "-") or "-").strip()
-                lines.append(
-                    f"{i}. {icon} {md_safe(desc)}\n"
-                    f"   {direction}: *{remaining}* / awal {original}\n"
-                    f"   ID: `{md_code_text(debt_id)}`"
-                )
-        # Use the fallback path when no earlier branch matched.
-        else:
-            lines.append("Tidak ada rincian aktif.")
-
+        # Preserve historical/progress meaning when the person has debt history
+        # but no active row that can be selected for a mutation.
+        lines = [header, "", "Tidak ada rincian aktif."]
         recv = detail.get("receivable") or {}
         pay = detail.get("payable") or {}
-
         if float(recv.get("original") or 0) > 0:
-            pct = float(recv.get("paid_pct") or 0)
             lines.append(
                 "\n*Progress piutang:*\n"
                 f"Sudah bayar: *{format_rupiah(recv.get('paid', 0))}* / {format_rupiah(recv.get('original', 0))} "
-                f"({pct:.1f}%)"
+                f"({float(recv.get('paid_pct') or 0):.1f}%)"
             )
-
         if float(pay.get("original") or 0) > 0:
-            pct = float(pay.get("paid_pct") or 0)
             lines.append(
                 "\n*Progress utang Anda:*\n"
                 f"Sudah dibayar: *{format_rupiah(pay.get('paid', 0))}* / {format_rupiah(pay.get('original', 0))} "
-                f"({pct:.1f}%)"
+                f"({float(pay.get('paid_pct') or 0):.1f}%)"
             )
-
-        context.user_data["last_debt_map"] = last_debt_map
-        context.user_data["last_debt_person"] = person
-        if last_debt_map:
-            lines.append(
-                "\nKelola rincian dari daftar ini:\n"
-                "`/debt_void 1` — batalkan rincian dari detail terakhir\n"
-                f"`/debt_void {md_safe(person)}` — batalkan semua rincian aktif {md_safe(person)}\n"
-                f"`/debt_void {md_safe(person)} 1` — batalkan rincian nomor 1 milik {md_safe(person)}\n"
-                "`/debt_edit 1 nominal 100k` — edit nominal rincian\n"
-                f"`/debt_settle {md_safe(person)}` — settle semua debt aktif {md_safe(person)} pakai nominal net otomatis\n"
-                f"`/debt_settle {md_safe(person)} 1-3` — settle nomor 1-3 pakai nominal net otomatis\n"
-                f"`/debt_settle {md_safe(person)} 1-3 amount=100000 account=DANA` — settle debt nomor 1-3 saja\n"
-                f"`{md_safe(person)} bayar hutang 100000 untuk debt 1-3` — versi natural settle debt terpilih\n"
-                "Angka mengikuti nomor dari hasil detail `/hutang nama`."
-            )
-
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
         return
 
     summary = await run_sheets_read("get_debt_person_summary", get_debt_person_summary)
-
-    if not summary["payables"] and not summary["receivables"] and not summary.get("balanced"):
+    if not summary.get("payables") and not summary.get("receivables") and not summary.get("balanced"):
         await update.message.reply_text("✅ Tidak ada utang atau piutang aktif.")
         return
 
-    lines = ["💸 *Utang & Piutang Aktif per Orang*\n"]
-
-    if summary["payables"]:
-        lines.append(f"🔴 *Utang Anda* (net total: {format_rupiah(summary['total_payable'])})")
-        for i, d in enumerate(summary["payables"], 1):
-            person = d.get("person_name") or "-"
-            count = int(d.get("debt_count") or 0)
-            lines.append(
-                f"  {i}. {md_safe(person)} — *{format_rupiah(d.get('remaining_amount', 0))}* "
-                f"({count} rincian)\n"
-                f"     Detail: `/hutang {md_safe(person)}`"
-            )
-
-    if summary["payables"] and summary["receivables"]:
-        lines.append("")
-
-    if summary["receivables"]:
-        lines.append(f"🟢 *Piutang Anda* (net total: {format_rupiah(summary['total_receivable'])})")
-        for i, d in enumerate(summary["receivables"], 1):
-            person = d.get("person_name") or "-"
-            count = int(d.get("debt_count") or 0)
-            lines.append(
-                f"  {i}. {md_safe(person)} — *{format_rupiah(d.get('remaining_amount', 0))}* "
-                f"({count} rincian)\n"
-                f"     Detail: `/hutang {md_safe(person)}`"
-            )
-
-    if summary.get("balanced"):
-        lines.append("\n⚪ *Netral tapi masih ada rincian aktif*")
-        for d in summary["balanced"]:
-            person = d.get("person_name") or "-"
-            lines.append(f"  • {md_safe(person)} — cek `/hutang {md_safe(person)}`")
-
-    net = summary["total_receivable"] - summary["total_payable"]
-    net_label = "🟢 Anda lebih banyak dihutangi" if net >= 0 else "🔴 Anda lebih banyak berhutang"
-    lines.append(f"\n{net_label}: *{format_rupiah(abs(net))}*")
-    lines.append(
-        "\nContoh pembayaran/pengurangan:\n"
-        "`Raka bayar 5k` — mengurangi piutang Raka secara eksplisit\n"
-        "`bayar hutang Raka 10k` — mengurangi utang Anda secara eksplisit\n"
-        "`potong hutang Raka 500k` — kompensasi tanpa rekening/manual offset\n"
-        "`potong piutang Dimas 20k buat badminton` — kompensasi tanpa rekening\n"
-        "`/debt_void 1` — hanya untuk input salah; boleh rollback transaksi sumber ke gross"
-    )
-
-    # Keep this section separated from the surrounding flow.
+    active_debts = _active_debts_from_person_summary(summary)
     context.user_data["last_debt_map"] = {}
-    # Keep this section separated from the surrounding flow.
     context.user_data.pop("last_debt_person", None)
-    # Keep this section separated from the surrounding flow.
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text(_build_debt_overview_text(summary), parse_mode="Markdown")
+    await start_debt_browser(update, context, active_debts)
 
 
 # Message handling section

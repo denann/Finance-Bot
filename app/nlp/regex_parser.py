@@ -76,39 +76,39 @@ def display_account_name(account: str) -> str:
     return ACCOUNT_DISPLAY_NAMES.get(account, account.upper() if account != "cash" else "Cash")
 
 
-# Helper for get runtime account names.
-def get_runtime_account_names() -> list[str]:
-    """Return account names from sheet `accounts` with hard-coded fallback."""
-    # Run this operation in a guarded block so failures can be handled.
+# Helper for get runtime account snapshot.
+def get_runtime_account_snapshot() -> tuple[tuple[str, ...], bool]:
+    """Return one account-name snapshot and whether its external source was trustworthy."""
     try:
-        # Import app.services.resolver_service so this module can use its helpers.
-        from app.services.resolver_service import get_account_names_from_sheet
+        from app.services.resolver_service import get_account_names_snapshot
 
-        names = get_account_names_from_sheet()
-    # Handle an expected failure from the guarded operation above.
+        names, source_available = get_account_names_snapshot()
     except Exception:
-        names = []
+        names, source_available = [], False
 
-    # Normalize clean names before matching.
     clean_names = []
-    # Iterate through each name.
     for name in names or []:
         clean = str(name or "").strip()
-        # Handle clean and clean not in clean names.
         if clean and clean not in clean_names:
-            # Append the current value to clean names.
             clean_names.append(clean)
 
-    if clean_names:
-        return clean_names
+    if not clean_names:
+        clean_names = [ACCOUNT_DISPLAY_NAMES.get(acc, acc.title()) for acc in ACCOUNT_NAMES if acc != "sea bank"]
 
-    return [ACCOUNT_DISPLAY_NAMES.get(acc, acc.title()) for acc in ACCOUNT_NAMES if acc != "sea bank"]
+    return tuple(clean_names), bool(source_available)
+
+
+# Helper for get runtime account names.
+def get_runtime_account_names() -> list[str]:
+    """Return account names while preserving the parser's legacy list-only API."""
+    names, _ = get_runtime_account_snapshot()
+    return list(names)
 
 
 # Helper for account pattern from sheet.
-def _account_pattern_from_sheet() -> str:
-    """Build an account regex pattern from sheet account names."""
-    names = list(get_runtime_account_names())
+def _account_pattern_from_sheet(runtime_account_names: list[str] | tuple[str, ...] | None = None) -> str:
+    """Build an account regex pattern from one runtime-account snapshot."""
+    names = list(runtime_account_names if runtime_account_names is not None else get_runtime_account_names())
     variants = set()
 
     # Iterate through each name.
@@ -127,7 +127,28 @@ def _account_pattern_from_sheet() -> str:
 
 
 # Helper for display runtime account name.
-def _display_runtime_account_name(raw: str | None) -> str | None:
+def _is_runtime_account_name(raw: str | None, runtime_account_names: list[str] | tuple[str, ...] | None = None) -> bool:
+    """Return True when ``raw`` exactly names a known built-in or runtime account.
+
+    Matching follows the same normalized/compact semantics used by the parser's
+    account resolver so multiword and sheet-backed account names are not
+    mistaken for people by earlier intent-classification branches.
+    """
+    if not raw:
+        return False
+
+    clean = normalize_text(raw)
+    compact = clean.replace(" ", "")
+    names = runtime_account_names if runtime_account_names is not None else get_runtime_account_names()
+    candidates = [*names, *ACCOUNT_NAMES]
+    for name in candidates:
+        name_clean = normalize_text(name)
+        if clean == name_clean or compact == name_clean.replace(" ", ""):
+            return True
+    return False
+
+
+def _display_runtime_account_name(raw: str | None, runtime_account_names: list[str] | tuple[str, ...] | None = None) -> str | None:
     """Resolve a regex account match into the display name from sheet accounts."""
     # Validate missing raw before continuing.
     if not raw:
@@ -137,8 +158,10 @@ def _display_runtime_account_name(raw: str | None) -> str | None:
     clean = normalize_text(raw)
     compact = clean.replace(" ", "")
 
+    names = runtime_account_names if runtime_account_names is not None else get_runtime_account_names()
+
     # Iterate through each name.
-    for name in get_runtime_account_names():
+    for name in names:
         # Normalize name clean before matching.
         name_clean = normalize_text(name)
         if clean == name_clean or compact == name_clean.replace(" ", ""):
@@ -955,8 +978,22 @@ def parse_debt_input(text: str) -> dict | None:
 
 # ── Helper functions ──────────────────────────────────────────────────────────
 
+
+def _extract_incoming_transfer_source(text: str) -> str | None:
+    """Extract the source token/phrase from the bounded incoming-transfer grammar."""
+    match = re.search(
+        r"^\s*(?:transaksi|transfer(?:an)?|tf|trf|kiriman|uang)\s+(?:masuk\s+)?dari\s+"
+        r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr|ke\s+|via\s+|pakai\s+|pake\s+))",
+        normalize_text(text),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return re.sub(r"\s+", " ", match.group(1)).strip() or None
+
+
 # Helper for detect type.
-def detect_type(text: str) -> str | None:
+def detect_type(text: str, *, runtime_account_names: list[str] | tuple[str, ...] | None = None) -> str | None:
     """Coordinate the detect type logic in the NLP/parser layer.
 
     Args:
@@ -973,22 +1010,18 @@ def detect_type(text: str) -> str | None:
     """
     # Normalize text lower before matching.
     text_lower = normalize_text(text)
-    # Extract account pattern for validation.
-    account_pattern = _account_pattern_from_sheet()
+    # Freeze one runtime-account view for the full classification operation.
+    account_names = tuple(runtime_account_names) if runtime_account_names is not None else tuple(get_runtime_account_names())
+    # Extract account pattern for validation from the same snapshot.
+    account_pattern = _account_pattern_from_sheet(account_names)
 
     # Account flow section
     # Account flow section
-    incoming_from_person_match = re.search(
-        r"^\s*(?:transaksi|transfer(?:an)?|tf|trf|kiriman|uang)\s+(?:masuk\s+)?dari\s+"
-        r"([a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,40}?)(?=\s*(?:\d|rp|idr|ke\s+|via\s+|pakai\s+|pake\s+))",
-        text_lower,
-        flags=re.IGNORECASE,
-    )
-    if incoming_from_person_match:
-        source = re.sub(r"\s+", " ", incoming_from_person_match.group(1)).strip()
-        first_token = source.split()[0] if source else ""
-        # Handle source and first token not in ACCOUNT NAMES.
-        if source and first_token not in ACCOUNT_NAMES:
+    incoming_source = _extract_incoming_transfer_source(text)
+    if incoming_source:
+        # Full/runtime own-account names must outrank the person-income grammar.
+        # This keeps multiword and sheet-backed accounts on transfer semantics.
+        if not _is_runtime_account_name(incoming_source, account_names):
             return "income"
 
     # Account flow section
@@ -1073,13 +1106,15 @@ def detect_category(text: str, transaction_type: str) -> str:
 
 
 # Helper for detect account.
-def detect_account(text: str) -> str | None:
+def detect_account(text: str, *, runtime_account_names: list[str] | tuple[str, ...] | None = None) -> str | None:
     """Detect an account name using the sheet-backed account resolver."""
     # Normalize text lower before matching.
     text_lower = normalize_text(text)
 
+    account_names = tuple(runtime_account_names) if runtime_account_names is not None else tuple(get_runtime_account_names())
+
     # Iterate through each account name.
-    for account_name in sorted(get_runtime_account_names(), key=len, reverse=True):
+    for account_name in sorted(account_names, key=len, reverse=True):
         # Normalize clean account before matching.
         clean_account = normalize_text(account_name)
         pattern = re.escape(clean_account).replace(r"\ ", r"\s+")
@@ -1098,7 +1133,7 @@ def detect_account(text: str) -> str | None:
 
 
 # Helper for detect transfer accounts.
-def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
+def detect_transfer_accounts(text: str, *, runtime_account_names: list[str] | tuple[str, ...] | None = None) -> tuple[str | None, str | None]:
     """Coordinate the detect transfer accounts logic in the NLP/parser layer.
 
     Args:
@@ -1115,9 +1150,11 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
     """
     # Normalize text lower before matching.
     text_lower = normalize_text(text)
+    # Freeze one runtime-account view for the full transfer extraction operation.
+    account_names = tuple(runtime_account_names) if runtime_account_names is not None else tuple(get_runtime_account_names())
 
-    # Extract account pattern for validation.
-    account_pattern = _account_pattern_from_sheet()
+    # Extract account pattern for validation from the same snapshot.
+    account_pattern = _account_pattern_from_sheet(account_names)
 
     # Helper for normalize account name.
     def normalize_account_name(raw: str | None) -> str | None:
@@ -1135,7 +1172,7 @@ def detect_transfer_accounts(text: str) -> tuple[str | None, str | None]:
         Flow constraints:
             Prefer explicit user intent over loose keyword matching and return ambiguity for caller clarification when needed.
         """
-        return _display_runtime_account_name(raw)
+        return _display_runtime_account_name(raw, account_names)
 
     # Helper for iter accounts.
     def iter_accounts() -> list[tuple[int, str]]:
@@ -1357,6 +1394,19 @@ def strip_date_phrases(text: str) -> str:
         r"\b(?:tanggal|tgl|date|pada tanggal)\s+"
         r"(?:20\d{2}[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])|"
         r"(?:0?[1-9]|[12]\d|3[01])[-/](?:0?[1-9]|1[0-2])[-/]20\d{2})\b",
+        " ",
+        clean,
+        flags=re.IGNORECASE,
+    )
+
+    # Natural Indonesian absolute dates, with optional marker/year. Keep this
+    # aligned with detect_date_result so description/category parsing does not
+    # retain date tokens after the date itself has been recognized.
+    clean = re.sub(
+        r"\b(?:tanggal|tgl|tg|date|pada\s+tanggal)?\s*"
+        r"(?:0?[1-9]|[12]\d|3[01])\s+"
+        r"(?:januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)"
+        r"(?:\s+20\d{2})?\b",
         " ",
         clean,
         flags=re.IGNORECASE,
@@ -1611,6 +1661,32 @@ def detect_date_result(text: str) -> DateDetectionResult:
             return DateDetectionResult("valid", parsed_value, raw_value)
         return DateDetectionResult("invalid", None, raw_value)
 
+    month_names = {
+        "januari": 1, "februari": 2, "maret": 3, "april": 4,
+        "mei": 5, "juni": 6, "juli": 7, "agustus": 8,
+        "september": 9, "oktober": 10, "november": 11, "desember": 12,
+    }
+    natural_match = re.search(
+        r"\b(?:tanggal|tgl|tg|date|pada\s+tanggal)?\s*"
+        r"(\d{1,2})\s+"
+        r"(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)"
+        r"(?:\s+(20\d{2}))?\b",
+        str(text or ""),
+        flags=re.IGNORECASE,
+    )
+    if natural_match:
+        raw_value = natural_match.group(0)
+        day = int(natural_match.group(1))
+        month = month_names[natural_match.group(2).lower()]
+        year = int(natural_match.group(3)) if natural_match.group(3) else today.year
+        try:
+            parsed_value = datetime(year, month, day).date().strftime("%Y-%m-%d")
+        except ValueError:
+            return DateDetectionResult("invalid", None, raw_value)
+        return DateDetectionResult("valid", parsed_value, raw_value)
+
+    # Day-only markers are intentionally checked *after* the richer natural
+    # month form so `tgl 4 Juli 2025` cannot be consumed as merely `tgl 4`.
     day_only_match = re.search(
         r"\b(?:tanggal|tgl|tg|date|pada\s+tanggal)\s+(\d{1,2})\b",
         clean,
@@ -1622,26 +1698,6 @@ def detect_date_result(text: str) -> DateDetectionResult:
         if parsed_value:
             return DateDetectionResult("valid", parsed_value, raw_value)
         return DateDetectionResult("invalid", None, raw_value)
-
-    month_names = {
-        "januari": 1, "februari": 2, "maret": 3, "april": 4,
-        "mei": 5, "juni": 6, "juli": 7, "agustus": 8,
-        "september": 9, "oktober": 10, "november": 11, "desember": 12,
-    }
-    natural_match = re.search(
-        r"\b(\d{1,2})\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)\b",
-        str(text or ""),
-        flags=re.IGNORECASE,
-    )
-    if natural_match:
-        raw_value = natural_match.group(0)
-        day = int(natural_match.group(1))
-        month = month_names[natural_match.group(2).lower()]
-        try:
-            parsed_value = datetime(today.year, month, day).date().strftime("%Y-%m-%d")
-        except ValueError:
-            return DateDetectionResult("invalid", None, raw_value)
-        return DateDetectionResult("valid", parsed_value, raw_value)
 
     relative_date = detect_relative_date(clean)
     if relative_date:
@@ -1951,7 +2007,17 @@ def parse_with_regex(text: str) -> dict | None:
     if not amount:
         return None
 
-    transaction_type = detect_type(text)
+    # One parse must use one account view, including whether that view is authoritative.
+    runtime_account_names, account_source_available = get_runtime_account_snapshot()
+    incoming_source = _extract_incoming_transfer_source(text)
+    if (
+        incoming_source
+        and not account_source_available
+        and not _is_runtime_account_name(incoming_source, runtime_account_names)
+    ):
+        transaction_type = "ambiguous"
+    else:
+        transaction_type = detect_type(text, runtime_account_names=runtime_account_names)
 
     # Legacy compatibility note for older records or older in-memory state.
     # "Nasi kuning 22k 09-05-2026", "Print 6k", "Alquran 80k".
@@ -1970,8 +2036,26 @@ def parse_with_regex(text: str) -> dict | None:
     date = date_result.value
     description = extract_description(text, amount)
 
+    if transaction_type == "ambiguous":
+        return {
+            "type": "ambiguous",
+            "amount": amount,
+            "category": None,
+            "account": None,
+            "to_account": None,
+            "subject": incoming_source or "",
+            "description": description,
+            "catatan": extract_note(text),
+            "tipe_pengeluaran": "",
+            "date": date,
+            "date_status": date_result.status,
+            "explicit_date_input": date_result.explicit_input,
+            "parsed_by": "regex",
+            "parse_ambiguity": "runtime_account_source_unavailable",
+        }
+
     if transaction_type == "transfer":
-        from_account, to_account = detect_transfer_accounts(text)
+        from_account, to_account = detect_transfer_accounts(text, runtime_account_names=runtime_account_names)
 
         return {
             "type": "transfer",
@@ -1992,7 +2076,7 @@ def parse_with_regex(text: str) -> dict | None:
     # Extract category for validation.
     category = detect_category(text, transaction_type)
     # Extract account for validation.
-    account = detect_account(text)
+    account = detect_account(text, runtime_account_names=runtime_account_names)
     subject = detect_subject(text, transaction_type, category, description)
     catatan = extract_note(text)
     tipe_pengeluaran = detect_spending_type(text, category, transaction_type)

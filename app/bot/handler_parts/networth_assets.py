@@ -5,6 +5,7 @@
 # Imported by app/bot/handlers.py as a normal Python module.
 # Common imports are centralized here; cross-part helpers are imported explicitly when needed.
 from app.application.external_io import run_sheets_read
+from app.bot.handler_parts.management_browser import start_asset_browser
 from app.bot.handler_parts.common_imports import (
     ContextTypes,
     InlineKeyboardButton,
@@ -1083,11 +1084,7 @@ async def assets_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     assets = await run_sheets_read("get_assets", get_assets, active_only=True)
 
-    # Send the Telegram response before continuing.
-    await update.message.reply_text(
-        build_assets_text(assets),
-        parse_mode="Markdown",
-    )
+    await start_asset_browser(update, context, assets)
 
 
 # Helper for build asset added text.

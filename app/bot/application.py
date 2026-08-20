@@ -96,6 +96,7 @@ from app.bot.command_registry import (
 from app.config import ALLOWED_USER_ID, TELEGRAM_BOT_TOKEN
 # Import app.bot.handler_parts.state_utils so this module can use its helpers.
 from app.bot.handler_parts.state_utils import clear_pending_flow_state_before_command
+from app.bot.handler_parts.transaction_browser import prepare_transaction_browser_for_command
 # Import immutable action request binding for preview keyboard creation.
 from app.bot.pending_actions import pending_action_request_context
 # Import app.sheets.client so this module can use its helpers.
@@ -152,6 +153,7 @@ def atomic_bot_handler(callback):
         if message_text.startswith("/") and callback_name not in {"cancel_handler", "unknown_command_handler"}:
             command_token = message_text.split()[0].lstrip("/").split("@", 1)[0].lower()
             clear_pending_flow_state_before_command(context, command_token)
+            await prepare_transaction_browser_for_command(update, context, command_token, message_text)
 
         effective_user = getattr(update, "effective_user", None)
         owner_user_id = int(getattr(effective_user, "id", 0) or 0)

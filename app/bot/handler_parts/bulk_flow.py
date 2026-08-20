@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
+from types import MappingProxyType
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from app.application.bulk_input import (
     BulkItem,
+    BulkItemStatus,
     BulkSession,
     StaleBulkSession,
     assert_current_target,
@@ -46,9 +49,13 @@ from app.bot.handler_parts.transaction_flow import (
     preview_action_keyboard,
     preview_action_question,
     split_bill_needs_decision,
+    build_meal_split_custom_allocation_prompt,
+    build_meal_split_final_payload,
+    compute_equal_meal_split_shares,
+    parse_meal_split_allocation,
 )
-from app.nlp.parse_safety import CLARIFICATION, assess_parse_safety
-from app.nlp.regex_parser import detect_date_result
+from app.nlp.parse_safety import CLARIFICATION, assess_parse_safety, extract_person_candidate
+from app.nlp.regex_parser import detect_date, detect_date_result
 
 
 BULK_SESSION_KEY = "pending_bulk_session"
@@ -58,6 +65,10 @@ BULK_CALLBACK_PREFIXES = (
     "bulk_rewrite:",
     "bulk_remove:",
     "bulk_cancel:",
+    "bulk_sem:",
+    "bulk_sem_payer:",
+    "bulk_sem_alloc:",
+    "bulk_sem_status:",
 )
 
 
@@ -141,6 +152,100 @@ def _rewrite_remove_keyboard(session: BulkSession, item: BulkItem) -> InlineKeyb
     ])
 
 
+def _semantic_choice_keyboard(session: BulkSession, item: BulkItem) -> InlineKeyboardMarkup:
+    """Show only semantic choices that can be built safely for this item."""
+
+    from app.bot.handler_parts.callback_handler import (
+        build_clarified_debt_payment,
+        build_clarified_expense,
+        build_clarified_fronting,
+    )
+
+    raw = item.raw_input
+    parsed = dict(item.parsed_payload)
+    prefix = f"bulk_sem:{session.session_id}:{item.item_id}"
+    rows = []
+    if build_clarified_debt_payment(raw, parsed):
+        rows.append([InlineKeyboardButton("🟢 Orang ini bayar ke saya", callback_data=f"{prefix}:debt_payment")])
+    person = extract_person_candidate(raw) or parsed.get("person_name") or parsed.get("subject")
+    amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
+    if person and amount > 0:
+        rows.append([InlineKeyboardButton("🔴 Saya hutang ke orang ini", callback_data=f"{prefix}:payable")])
+    if build_clarified_expense(raw, parsed):
+        rows.append([InlineKeyboardButton("🧾 Pengeluaran biasa", callback_data=f"{prefix}:expense")])
+    rows.append([InlineKeyboardButton("👤 Orang lain yang bayar", callback_data=f"{prefix}:no_cashflow")])
+    if person and amount > 0:
+        rows.append([InlineKeyboardButton("🤝 Split bill", callback_data=f"{prefix}:split")])
+    if build_clarified_fronting(raw, parsed):
+        rows.append([InlineKeyboardButton("🙋 Saya talangin", callback_data=f"{prefix}:fronting")])
+    rows.append([
+        InlineKeyboardButton("✍️ Tulis ulang", callback_data=f"bulk_rewrite:{session.session_id}:{item.item_id}"),
+        InlineKeyboardButton("Hapus item", callback_data=f"bulk_remove:{session.session_id}:{item.item_id}"),
+    ])
+    rows.append([InlineKeyboardButton("Batal", callback_data=f"bulk_cancel:{session.session_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _semantic_split_keyboard(session: BulkSession, item: BulkItem, stage: str) -> InlineKeyboardMarkup:
+    base = f"{session.session_id}:{item.item_id}"
+    if stage == "payer":
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("🙋 Saya yang bayar", callback_data=f"bulk_sem_payer:{base}:self")],
+            [InlineKeyboardButton("👤 Bukan saya yang bayar", callback_data=f"bulk_sem_payer:{base}:other")],
+            [InlineKeyboardButton("Batal", callback_data=f"bulk_cancel:{session.session_id}")],
+        ])
+    if stage == "allocation":
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚖️ Bagi rata", callback_data=f"bulk_sem_alloc:{base}:equal")],
+            [InlineKeyboardButton("📊 Atur pembagian", callback_data=f"bulk_sem_alloc:{base}:custom")],
+            [InlineKeyboardButton("Batal", callback_data=f"bulk_cancel:{session.session_id}")],
+        ])
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Sudah bayar", callback_data=f"bulk_sem_status:{base}:paid")],
+        [InlineKeyboardButton("⏳ Belum bayar", callback_data=f"bulk_sem_status:{base}:unpaid")],
+        [InlineKeyboardButton("Batal", callback_data=f"bulk_cancel:{session.session_id}")],
+    ])
+
+
+def _semantic_wait_item(item: BulkItem, *, reason: str, semantic_state: dict) -> BulkItem:
+    parsed = deepcopy(dict(item.parsed_payload))
+    parsed["_semantic_split"] = deepcopy(semantic_state)
+    return replace(
+        item,
+        status=BulkItemStatus.NEEDS_CLARIFICATION,
+        kind="transaction",
+        parsed_payload=MappingProxyType(parsed),
+        missing_fields=(),
+        clarification_reason=reason,
+        validation_errors=(),
+    )
+
+
+def _classify_semantic_legacy_item(item: BulkItem, legacy_item: dict) -> BulkItem:
+    """Reclassify an explicitly chosen meaning without re-triggering ambiguity."""
+
+    parsed = deepcopy(dict(legacy_item.get("parsed") or {}))
+    kind = str(legacy_item.get("kind") or "failed")
+    date_result = detect_date_result(item.raw_input)
+    account_required = False
+    split_required = False
+    if kind == "transaction":
+        account_required = needs_account(parsed)
+        split_required = split_bill_needs_decision(parsed)
+    elif kind == "debt":
+        account_required = debt_uses_cashflow(parsed) and parsed.get("intent") != "offset_debt" and not parsed.get("account")
+    return make_bulk_item(
+        item_id=item.item_id,
+        original_index=item.original_index,
+        raw_input=item.raw_input,
+        legacy_item={"kind": kind, "parsed": parsed, "raw": item.raw_input},
+        invalid_date=date_result.status == "invalid",
+        safety_requires_clarification=False,
+        needs_account=account_required,
+        needs_split_decision=split_required,
+    )
+
+
 def _account_keyboard(session: BulkSession, item: BulkItem) -> InlineKeyboardMarkup:
     prefix = f"bulk_acc:{session.session_id}:{item.item_id}"
     base = account_keyboard(prefix)
@@ -171,7 +276,16 @@ def _issue_text(item: BulkItem, position: int, total: int) -> str:
     if item.clarification_reason == "invalid_date":
         return f"{header}\n\nTanggal item ini tidak valid. Tulis ulang, hapus item, atau batalkan seluruh batch."
     if item.clarification_reason == "ambiguous_parse":
-        return f"{header}\n\nMakna item ini masih ambigu. Tulis ulang, hapus item, atau batalkan seluruh batch."
+        return f"{header}\n\nMakna item ini masih ambigu. Pilih makna finansial yang benar untuk item ini; item lain tetap dipertahankan."
+    if item.clarification_reason == "semantic_split_payer":
+        return f"{header}\n\nSiapa yang membayar transaksi split ini di awal?"
+    if item.clarification_reason == "semantic_split_allocation":
+        return f"{header}\n\nPembagian split bill-nya bagaimana?"
+    if item.clarification_reason == "semantic_split_custom":
+        return f"{header}\n\nTulis pembagian custom untuk item ini."
+    if item.clarification_reason == "semantic_split_status":
+        state = dict(item.parsed_payload).get("_semantic_split") or {}
+        return f"{header}\n\n{'Apakah teman sudah bayar bagiannya?' if state.get('payer') == 'self' else 'Apakah kamu sudah bayar bagianmu?'}"
     return f"{header}\n\nItem ini belum dapat dipahami dengan aman. Tulis ulang, hapus item, atau batalkan seluruh batch."
 
 
@@ -207,6 +321,26 @@ async def _advance_bulk_flow(
             return
         if waiting.awaiting_mode == "split":
             await _send_or_edit(update, _issue_text(item, position, total), _split_keyboard(waiting, item))
+            return
+        if waiting.awaiting_mode == "semantic_split_payer":
+            await _send_or_edit(update, _issue_text(item, position, total), _semantic_split_keyboard(waiting, item, "payer"))
+            return
+        if waiting.awaiting_mode == "semantic_split_allocation":
+            await _send_or_edit(update, _issue_text(item, position, total), _semantic_split_keyboard(waiting, item, "allocation"))
+            return
+        if waiting.awaiting_mode == "semantic_split_custom_text":
+            state = dict(item.parsed_payload).get("_semantic_split") or {}
+            await _send_or_edit(
+                update,
+                f"{_issue_text(item, position, total)}\n\n{build_meal_split_custom_allocation_prompt(state)}",
+                _cancel_keyboard(waiting),
+            )
+            return
+        if waiting.awaiting_mode == "semantic_split_status":
+            await _send_or_edit(update, _issue_text(item, position, total), _semantic_split_keyboard(waiting, item, "status"))
+            return
+        if item.clarification_reason == "ambiguous_parse":
+            await _send_or_edit(update, _issue_text(item, position, total), _semantic_choice_keyboard(waiting, item))
             return
         await _send_or_edit(update, _issue_text(item, position, total), _rewrite_remove_keyboard(waiting, item))
         return
@@ -285,6 +419,19 @@ async def handle_pending_bulk_text(
             original_index=target.original_index,
             item_id=target.item_id,
         )
+    elif session.awaiting_mode == "semantic_split_custom_text":
+        state = deepcopy(dict(target.parsed_payload).get("_semantic_split") or {})
+        shares = parse_meal_split_allocation(user_text, float(state.get("amount") or 0), list(state.get("people") or []))
+        if not shares:
+            await _send_or_edit(
+                update,
+                "Pembagian belum terbaca. Gunakan format seperti `saya 30k, Budi 50k` atau `saya 100%, Budi 100%`.",
+                _cancel_keyboard(session),
+            )
+            return True
+        state["shares"] = shares
+        state["allocation_mode"] = "custom"
+        replacement = _semantic_wait_item(target, reason="semantic_split_status", semantic_state=state)
     else:
         return False
 
@@ -368,6 +515,125 @@ async def handle_bulk_callback(
                 parse_mode="Markdown",
                 reply_markup=_cancel_keyboard(updated),
             )
+            return
+        if action == "bulk_sem" and rest:
+            if target.clarification_reason != "ambiguous_parse":
+                raise StaleBulkSession("Pilihan semantic lama sudah tidak berlaku.")
+            choice = rest[0]
+            from app.bot.handler_parts.callback_handler import (
+                build_clarified_debt_payment,
+                build_clarified_expense,
+                build_clarified_fronting,
+            )
+
+            raw = target.raw_input
+            parsed = dict(target.parsed_payload)
+            if choice == "no_cashflow":
+                updated = remove_bulk_item(session, item_id)
+                context.user_data[BULK_SESSION_KEY] = updated
+                await _advance_bulk_flow(update, context, updated)
+                return
+            if choice == "expense":
+                clarified = build_clarified_expense(raw, parsed)
+                if not clarified:
+                    raise StaleBulkSession("Makna expense belum dapat dibangun dengan aman.")
+                replacement = _classify_semantic_legacy_item(target, {"kind": "transaction", "parsed": clarified})
+            elif choice == "debt_payment":
+                clarified = build_clarified_debt_payment(raw, parsed)
+                if not clarified:
+                    raise StaleBulkSession("Makna pembayaran debt belum dapat dibangun dengan aman.")
+                replacement = _classify_semantic_legacy_item(target, {"kind": "debt", "parsed": clarified})
+            elif choice == "fronting":
+                clarified = build_clarified_fronting(raw, parsed)
+                if not clarified:
+                    raise StaleBulkSession("Makna talangan belum dapat dibangun dengan aman.")
+                replacement = _classify_semantic_legacy_item(target, {"kind": "debt", "parsed": clarified})
+            elif choice == "payable":
+                person = extract_person_candidate(raw) or parsed.get("person_name") or parsed.get("subject") or ""
+                person = " ".join(str(person).split()).strip().title()
+                amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
+                if not person or amount <= 0:
+                    raise StaleBulkSession("Nama orang atau nominal belum terbaca untuk hutang.")
+                debt = {
+                    "intent": "add_payable",
+                    "person_name": person,
+                    "amount": amount,
+                    "description": f"Uang titipan/pinjaman dari {person}",
+                    "date": detect_date(raw),
+                    "raw_input": raw,
+                    "cashflow_mode": "cashflow",
+                    "fronting_mode": "clarified_payable_cash_in",
+                }
+                replacement = _classify_semantic_legacy_item(target, {"kind": "debt", "parsed": debt})
+            elif choice == "split":
+                person = extract_person_candidate(raw) or parsed.get("person_name") or parsed.get("subject") or ""
+                person = " ".join(str(person).split()).strip().title()
+                amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
+                clarified = build_clarified_expense(raw, parsed)
+                if not person or amount <= 0 or not clarified:
+                    raise StaleBulkSession("Data split belum cukup untuk dipilih secara aman.")
+                split_state = {
+                    "raw": raw,
+                    "people": [person],
+                    "amount": amount,
+                    "parsed": clarified,
+                }
+                replacement = _semantic_wait_item(target, reason="semantic_split_payer", semantic_state=split_state)
+            else:
+                raise StaleBulkSession("Pilihan semantic bulk tidak valid.")
+            updated = replace_bulk_item(session, replacement)
+            context.user_data[BULK_SESSION_KEY] = updated
+            await _advance_bulk_flow(update, context, updated)
+            return
+
+        if action == "bulk_sem_payer" and rest and rest[0] in {"self", "other"}:
+            if target.clarification_reason != "semantic_split_payer":
+                raise StaleBulkSession("Pilihan payer lama sudah tidak berlaku.")
+            state = deepcopy(dict(target.parsed_payload).get("_semantic_split") or {})
+            if not state:
+                raise StaleBulkSession("State split sudah tidak tersedia.")
+            state["payer"] = rest[0]
+            replacement = _semantic_wait_item(target, reason="semantic_split_allocation", semantic_state=state)
+            updated = replace_bulk_item(session, replacement)
+            context.user_data[BULK_SESSION_KEY] = updated
+            await _advance_bulk_flow(update, context, updated)
+            return
+
+        if action == "bulk_sem_alloc" and rest and rest[0] in {"equal", "custom"}:
+            if target.clarification_reason != "semantic_split_allocation":
+                raise StaleBulkSession("Pilihan pembagian lama sudah tidak berlaku.")
+            state = deepcopy(dict(target.parsed_payload).get("_semantic_split") or {})
+            if not state:
+                raise StaleBulkSession("State split sudah tidak tersedia.")
+            if rest[0] == "equal":
+                state["shares"] = compute_equal_meal_split_shares(float(state.get("amount") or 0), list(state.get("people") or []))
+                state["allocation_mode"] = "equal"
+                reason = "semantic_split_status"
+            else:
+                reason = "semantic_split_custom"
+            replacement = _semantic_wait_item(target, reason=reason, semantic_state=state)
+            updated = replace_bulk_item(session, replacement)
+            context.user_data[BULK_SESSION_KEY] = updated
+            await _advance_bulk_flow(update, context, updated)
+            return
+
+        if action == "bulk_sem_status" and rest and rest[0] in {"paid", "unpaid"}:
+            if target.clarification_reason != "semantic_split_status":
+                raise StaleBulkSession("Pilihan status split lama sudah tidak berlaku.")
+            state = deepcopy(dict(target.parsed_payload).get("_semantic_split") or {})
+            if not state:
+                raise StaleBulkSession("State split sudah tidak tersedia.")
+            state["status"] = rest[0]
+            payload = build_meal_split_final_payload(state)
+            if payload.get("mode") == "transaction":
+                replacement = _classify_semantic_legacy_item(target, {"kind": "transaction", "parsed": payload.get("parsed") or {}})
+            elif payload.get("mode") == "debt":
+                replacement = _classify_semantic_legacy_item(target, {"kind": "debt", "parsed": payload.get("debt") or {}})
+            else:
+                raise StaleBulkSession("Hasil split tidak valid.")
+            updated = replace_bulk_item(session, replacement)
+            context.user_data[BULK_SESSION_KEY] = updated
+            await _advance_bulk_flow(update, context, updated)
             return
         if action == "bulk_remove":
             updated = remove_bulk_item(session, item_id)

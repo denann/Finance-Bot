@@ -170,6 +170,10 @@ def result_for_session(session: BulkSession):
             "missing_amount": "amount",
             "missing_account": "account",
             "split_decision": "split",
+            "semantic_split_payer": "semantic_split_payer",
+            "semantic_split_allocation": "semantic_split_allocation",
+            "semantic_split_custom": "semantic_split_custom_text",
+            "semantic_split_status": "semantic_split_status",
         }.get(issue.clarification_reason, "rewrite_or_remove")
         waiting = replace(session, awaiting_item_id=issue.item_id, awaiting_mode=mode)
         return ClarificationRequired(

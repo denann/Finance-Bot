@@ -12,8 +12,8 @@ EDIT_CATEGORY_CHOICE_KEY = "pending_edit_category_choice"
 BULK_EDIT_CATEGORY_DECISION_KEY = "pending_bulk_edit_category_decision"
 
 # Only transient flow keys are listed here. Long-lived helper state such as
-# `last_txn_map` must stay untouched because /last numbers are reused by
-# /edit_txn and /delete_txn.
+# `transaction_ref_context` must stay untouched because transaction-family
+# numbers are reused by /edit_txn and /delete_txn.
 PENDING_FLOW_KEYS = (
     "pending_parsed",
     "pending_raw",
@@ -29,6 +29,8 @@ PENDING_FLOW_KEYS = (
     EDIT_CATEGORY_CHOICE_KEY,
     BULK_EDIT_CATEGORY_DECISION_KEY,
     "pending_bulk_edit_txns",
+    "pending_txn_selector",
+    "pending_bulk_edit_staged",
     "pending_debt_void",
     "pending_debt_settle",
     "pending_asset_price",
@@ -75,6 +77,8 @@ FLOW_LABELS = {
     EDIT_CATEGORY_CHOICE_KEY: "pilihan kategori edit transaksi",
     BULK_EDIT_CATEGORY_DECISION_KEY: "pilihan kategori bulk edit transaksi",
     "pending_bulk_edit_txns": "preview edit banyak transaksi",
+    "pending_txn_selector": "selector/wizard transaksi",
+    "pending_bulk_edit_staged": "preview final bulk edit staged",
     "pending_debt_void": "preview void hutang/piutang",
     "pending_debt_settle": "preview pelunasan hutang/piutang",
     "pending_asset_price": "input harga aset",

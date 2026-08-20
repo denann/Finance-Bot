@@ -37,7 +37,7 @@ Tombol *Batal* bisa membatalkan wizard atau preview aktif.
 `/bulanan` - ringkasan bulanan, insight Gemini, dan grafik time series.
 `/grafik` - kirim grafik PNG untuk bulan berjalan atau bulan tertentu.
 `/transaksi` - lihat transaksi dengan filter bulan, kategori, atau rekening.
-`/last` - lihat transaksi terakhir; nomor dari output ini bisa dipakai untuk edit/hapus.
+`/last` - lihat transaksi terakhir dalam browser compact; nomor snapshot bisa dipakai untuk edit/hapus.
 `/hutang` - lihat utang/piutang aktif dan nomor debt.
 `/budget` - bandingkan budget dengan realisasi pengeluaran bersih.
 `/assets` - lihat aset aktif yang masuk net worth.
@@ -48,7 +48,7 @@ Tombol *Batal* bisa membatalkan wizard atau preview aktif.
 `/help input` - cara catat pengeluaran, pemasukan, transfer, multi input, dan transaksi historis.
 `/help debt` - utang/piutang, talangin, ditalangin, split bill, potong silang, dan settle debt.
 `/help laporan` - saldo, set saldo, rekening, harian, mingguan, bulanan, dan grafik.
-`/help transaksi` - lihat, cari, edit, hapus, bulk edit, dan dependency nomor dari `/last`/`/transaksi`.
+`/help transaksi` - browser transaksi, stable number/ID, selector edit/hapus, dan bulk edit.
 `/help pending` - pending expense, pending ID, paid, dan cancel pending.
 `/help budget` - set budget, histori budget, realisasi bersih, dan Bersih (Gross).
 `/help kategori` - lihat kategori, tambah kategori, edit kategori, symbol, tipe, dan aliases.
@@ -211,49 +211,43 @@ Laporan dipakai untuk membaca saldo, transaksi per rekening, ringkasan harian/mi
 
 Tipe grafik: `line`/`timeseries`, `bar`, dan `pie`.
 Kalau bulan tidak ditulis, bot memakai bulan berjalan.
-`/transaksi` dan `/last` juga mengirim grafik time series PNG untuk transaksi yang tampil.""",
+Ringkasan browser tersedia lewat tombol contextual; grafik standalone tetap memakai `/grafik`.""",
     "transaksi": """🧾 *Help Transaksi*
 
-Command transaksi dipakai untuk melihat, mencari, mengedit, atau menghapus transaksi yang sudah tersimpan. Edit dan hapus berdasarkan nomor membutuhkan daftar transaksi terakhir dari `/last`, `/transaksi`, atau `/cari`.
+`/transaksi`, `/last`, `/rekening <rekening>`, dan `/cari` memakai browser compact dengan nomor global yang stabil selama snapshot aktif. Membuka browser transaction-family baru mengganti context nomor sebelumnya.
 
 *Lihat transaksi*
 `/last` - transaksi terakhir dengan jumlah default.
-`/last 20` - 20 transaksi terakhir.
-`/last today` - transaksi hari ini.
-`/last week` - transaksi minggu ini.
-`/last month` - transaksi bulan ini.
-`/last 2026-06` - transaksi bulan tertentu.
-
+`/last 20` - tepat sampai 20 transaksi terakhir.
+`/last today` · `/last week` · `/last month` · `/last 2026-06`
 `/transaksi` - transaksi bulan berjalan.
 `/transaksi 2026-06` - transaksi Juni 2026.
-`/transaksi bulan lalu` - transaksi bulan sebelumnya.
-`/transaksi Food & Beverage 2026-06` - transaksi kategori tertentu pada bulan tertentu.
-`/transaksi rekening Cash` - transaksi rekening Cash bulan berjalan.
-`/transaksi rekening Cash 2026-06` - transaksi rekening Cash pada bulan tertentu.
-`/transaksi rekening Cash bulan lalu` - transaksi rekening Cash bulan lalu.
 `/transaksi rekening Cash all` - semua transaksi rekening Cash.
+`/cari kopi` - cari keyword dan hasilnya menjadi reference context nyata.
 
-`/cari kopi` - mencari transaksi dengan kata kunci.
+*Edit interaktif*
+`/edit_txn` - buka selector recent mandiri.
+`/edit_txn 3` - pilih ref 3 dari transaction browser terakhir lalu lanjut wizard.
+Bare multiline selection juga didukung:
+`/edit_txn 1`
+`/edit_txn 3`
+`/edit_txn 8`
 
-*Hapus transaksi*
-`/delete_txn 1`
+*Direct edit*
+`/edit_txn 3 amount=15000`
+`/edit_txn 3 desc="Kopi susu" category="Food & Beverage"`
+Full transaction ID juga dapat dipakai langsung bila unik. Syntax debt/split yang ditampilkan bot tetap mengikuti preview canonical flow.
+
+*Hapus*
+`/delete_txn` - buka selector recent mandiri.
+`/delete_txn 3`
 `/delete_txn 1 3 5`
-`/delete_txn 1-4`
+`/delete_txn 1-5`
+Full transaction ID juga dapat dipakai langsung bila unik.
 
-*Edit transaksi*
-`/edit_txn 2 amount=15000`
-`/edit_txn 2 desc=Kopi susu`
-`/edit_txn 2 account=BRI category=Food & Beverage`
-`/edit_txn 1 category="Household & Supplies" desc="Galon"`
-`/edit_txn 2 category="Food & Beverage"`
-`/edit_txn txn_id amount=500k dibagi 4 sama Raka:125k Bagas:125k Fajar:100k`
-`/edit_txn 2 bayar_hutang Raka`
-`/edit_txn 2 bayar_piutang Raka`
+Numeric direct ref membutuhkan transaction browser context yang masih valid. Jika tidak ada, gunakan selector tanpa ID atau buka `/transaksi`, `/last`, `/rekening <rekening>`, atau `/cari`. Duplicate transaction ID diblok sampai data sumber diperbaiki; nomor/row tidak dipakai untuk menebak salah satu duplicate.
 
-Sebelum `/edit_txn` atau `/delete_txn`, jalankan `/last`, `/transaksi`, atau `/cari` dulu agar nomor transaksi tersedia.
-Bulk edit bisa paste beberapa baris `/edit_txn` sekaligus.
-Jika transaksi punya `hutang_id`, `/delete_txn` akan mencoba void debt terkait otomatis.
-Output `/transaksi` dan `/last` otomatis mengirim grafik time series PNG dari transaksi yang tampil.""",
+Semua mutation tetap melalui preview + konfirmasi one-shot. Browser tidak lagi otomatis mengirim chart; gunakan tombol ringkasan contextual atau `/grafik` untuk grafik standalone.""",
     "pending": """🕒 *Help Pending Expense*
 
 Pending expense adalah rencana pengeluaran yang belum dibayar. Pending tidak mengubah saldo dan belum masuk pengeluaran aktual sampai ditandai paid.

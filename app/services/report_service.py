@@ -1693,7 +1693,7 @@ def get_account_report(account: str, period_arg: str | None = "month") -> dict:
 
 
 # Helper for search transactions.
-def search_transactions(keyword: str, limit: int = 10) -> list[dict]:
+def search_transactions(keyword: str, limit: int | None = 10) -> list[dict]:
     """Coordinate the search transactions logic in the service layer.
 
     Args:
@@ -1735,7 +1735,7 @@ def search_transactions(keyword: str, limit: int = 10) -> list[dict]:
             results.append(r)
 
     results.sort(key=lambda x: (str(x.get("date", "")), int(x.get("_row_index", 0) or 0)), reverse=True)
-    return enrich_transactions_with_debt_info(results[:limit])
+    return enrich_transactions_with_debt_info(results if limit is None else results[:limit])
 
 
 # Helper for get top expenses.

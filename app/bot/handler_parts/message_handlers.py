@@ -63,7 +63,6 @@ from app.bot.handler_parts.common_imports import (
 from app.bot.handler_parts.common_imports import _safe_float_for_display
 # Import app.bot.handler_parts.state_utils so this module can use its helpers.
 from app.bot.handler_parts.state_utils import BULK_EDIT_CATEGORY_DECISION_KEY, EDIT_CATEGORY_CHOICE_KEY
-from app.services.chart_service import write_transaction_timeseries_png
 
 # Import app.bot.handler_parts.networth_assets so this module can use its helpers.
 from app.bot.handler_parts.networth_assets import (
@@ -88,6 +87,15 @@ from app.bot.handler_parts.command_router import (
 # Import app.bot.handler_parts.category_flow so this module can use its helpers.
 from app.bot.handler_parts.category_flow import handle_pending_category_flow
 from app.bot.handler_parts.bulk_flow import handle_pending_bulk_text, start_bulk_flow
+from app.bot.handler_parts.transaction_browser import (
+    begin_selected_targets,
+    handle_transaction_selector_text,
+    retire_transaction_browser_for_new_message,
+    start_transaction_browser,
+    start_transaction_selector,
+    transaction_summary_label,
+    suspend_transaction_browser,
+)
 # Import app.bot.handler_parts.transaction_flow so this module can use its helpers.
 from app.bot.handler_parts.transaction_flow import (
     attach_split_bill_if_any,
@@ -173,7 +181,8 @@ from app.nlp.parse_safety import (
     assess_parse_safety,
 )
 # Import app.services.resolver_service so this module can use its helpers.
-from app.services.resolver_service import resolve_category_name
+from app.services.resolver_service import assess_edit_category_choice, resolve_category_name
+from app.services import transaction_service
 from app.application.external_io import run_gemini, run_sheets_read
 
 async def send_parse_clarification(update: Update, context: ContextTypes.DEFAULT_TYPE, raw: str, parsed: dict | None, assessment: dict) -> None:
@@ -564,63 +573,24 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if intent == "delete_txn":
         ref = str(args.get("ref") or "").strip()
-
-        # Validate missing ref before continuing.
         if not ref:
-            # Send the Telegram response before continuing.
             await update.message.reply_text(
-                "❌ Saya menangkap intent hapus transaksi, tapi nomor/ID transaksinya belum jelas.\n\n"
-                "Contoh:\n"
-                "`hapus transaksi nomor 2`\n"
-                "`/delete_txn 2`",
+                "❌ Target hapus belum jelas. Gunakan `/delete_txn` untuk selector atau sebutkan nomor/transaction ID.",
                 parse_mode="Markdown",
             )
             return True
-
         resolved = resolve_txn_refs_from_last(context, [ref])
-
-        if resolved.get("invalid_refs") and not resolved["row_indices"] and not resolved["txn_ids"]:
-            # Send the Telegram response before continuing.
+        if resolved.get("invalid_refs") or not resolved.get("txn_ids"):
             await update.message.reply_text(
-                "❌ Nomor transaksi tidak ditemukan dari hasil `/last` terakhir.\n\n"
-                "Jalankan dulu:\n"
-                "`/last`\n\n"
-                "Lalu coba lagi:\n"
-                "`hapus transaksi nomor 2`",
+                "❌ Numeric ref tidak ada di transaction-reference snapshot aktif. "
+                "Buka transaction browser atau `/delete_txn` untuk selector mandiri.",
                 parse_mode="Markdown",
             )
             return True
-
-        preview = await run_sheets_read(
-            "preview_delete_transactions_by_refs",
-            preview_delete_transactions_by_refs,
-            row_indices=resolved["row_indices"],
-            txn_ids=resolved["txn_ids"],
-        )
-
-        if not preview.get("deletable"):
-            # Send the Telegram response before continuing.
-            await update.message.reply_text(
-                build_delete_preview_text(preview),
-                parse_mode="Markdown",
-            )
-            return True
-
-        context.user_data["pending_delete_refs"] = {
-            "row_indices": [
-                int(txn.get("_row_index"))
-                for txn in preview.get("deletable", [])
-                if txn.get("_row_index")
-            ],
-            "txn_ids": [],
-        }
-
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            build_delete_preview_text(preview),
-            parse_mode="Markdown",
-            reply_markup=confirm_keyboard("delete_txns"),
-        )
+        txn_ids = list(resolved.get("txn_ids") or [])
+        ordered = list((context.user_data.get("transaction_ref_context") or {}).get("ordered_ids") or [])
+        label = int(ref) if ref.isdigit() else (ordered.index(txn_ids[0]) + 1 if txn_ids[0] in ordered else 1)
+        await begin_selected_targets(update, context, mode="delete", refs=[label], txn_ids=[txn_ids[0]])
         return True
 
     if intent == "edit_txn":
@@ -659,9 +629,8 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
         if resolved.get("invalid_refs") and not resolved["row_indices"] and not resolved["txn_ids"]:
             # Send the Telegram response before continuing.
             await update.message.reply_text(
-                "❌ Nomor transaksi tidak ditemukan dari hasil `/last` terakhir.\n\n"
-                "Jalankan dulu:\n"
-                "`/last`\n\n"
+                "❌ Nomor transaksi tidak ditemukan dari transaction browser aktif.\n\n"
+                "Buka `/transaksi`, `/last`, `/rekening`, atau `/cari`, atau gunakan selector `/edit_txn`.\n\n"
                 "Lalu coba lagi:\n"
                 "`edit transaksi nomor 2 jadi 15000`",
                 parse_mode="Markdown",
@@ -698,6 +667,7 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             return True
 
+        origin_browser_session_id = suspend_transaction_browser(context)
         if await maybe_prompt_edit_category_choice(
             update,
             context,
@@ -709,6 +679,7 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
             txn_id=txn_id,
             split_raw="",
             has_split_bill=False,
+            origin_browser_session_id=origin_browser_session_id,
         ):
             return True
 
@@ -716,10 +687,13 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
             "row_index": row_index,
             "txn_id": txn_id,
             "updates": updates,
+            "expected_signature": list(transaction_service.transaction_material_signature(preview.get("old_txn") or {})),
+            "origin_browser_session_id": origin_browser_session_id,
         }
 
         # Send the Telegram response before continuing.
-        await update.message.reply_text(
+        await reply_update_safely(
+            update,
             build_edit_preview_text(preview),
             parse_mode="Markdown",
             reply_markup=confirm_keyboard("edit_txn"),
@@ -1403,6 +1377,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Transaction selector/wizard owns every non-command text while active.
+    if await handle_transaction_selector_text(update, context, user_text):
+        return
+
     input_lines = split_user_inputs(user_text)
     is_multi_input = bool(re.search(r"[\n\r;,]", user_text)) or len(input_lines) > 1
 
@@ -1509,6 +1487,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Asset flow section
     natural_asset = parse_natural_asset_add(user_text)
     if natural_asset:
+        await retire_transaction_browser_for_new_message(update, context)
         if natural_asset.get("needs_unit_price"):
             context.user_data["pending_asset_price"] = natural_asset
             # Send the Telegram response before continuing.
@@ -1530,6 +1509,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     social_guard = detect_social_spending_ambiguity(user_text)
     if social_guard:
+        await retire_transaction_browser_for_new_message(update, context)
         context.user_data["pending_social_spending_guard"] = social_guard
         context.user_data.pop("pending_parsed", None)
         context.user_data.pop("pending_debt", None)
@@ -1554,6 +1534,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if local_natural_handled:
+        await retire_transaction_browser_for_new_message(update, context)
         return
 
     # Pending expense section
@@ -1580,6 +1561,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+        await retire_transaction_browser_for_new_message(update, context)
         context.user_data["pending_expense_confirm"] = item
         # Send the Telegram response before continuing.
         await update.message.reply_text(
@@ -1590,16 +1572,19 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if is_multi_input and len(input_lines) > 1:
+        await retire_transaction_browser_for_new_message(update, context)
         await start_bulk_flow(update, context, input_lines)
         return
 
     selected_debt_settle_handled = await handle_natural_debt_settle(update, context, user_text)
     if selected_debt_settle_handled:
+        await retire_transaction_browser_for_new_message(update, context)
         return
 
     # Phase 2: explicit debt/split/talangin intent must win before parse safety.
     early_debt_parsed = parse_debt_input(user_text)
     if early_debt_parsed:
+        await retire_transaction_browser_for_new_message(update, context)
         debt_handled = await debt_message_handler(update, context)
         if debt_handled:
             return
@@ -1612,11 +1597,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if finance_question_handled:
+        await retire_transaction_browser_for_new_message(update, context)
         return
 
     # Example cleanup: remove the person prefix so the description stays focused on the expense item.
     pre_parse_assessment = assess_parse_safety(user_text, {})
     if pre_parse_assessment.get("recommended_action") == CLARIFICATION:
+        await retire_transaction_browser_for_new_message(update, context)
         # Send the Telegram response before continuing.
         await send_parse_clarification(update, context, user_text, {}, pre_parse_assessment)
         return
@@ -1624,6 +1611,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_multi_input:
         full_debt_parsed = parse_debt_input(user_text)
         if full_debt_parsed:
+            await retire_transaction_browser_for_new_message(update, context)
             debt_handled = await debt_message_handler(update, context)
             if debt_handled:
                 return
@@ -1632,6 +1620,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
     missing_amount_income = parse_income_missing_amount(user_text)
     if missing_amount_income:
+        await retire_transaction_browser_for_new_message(update, context)
         context.user_data["pending_missing_amount"] = {
             "scope": "single",
             "item": {
@@ -1699,6 +1688,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     safety_action = safety_assessment.get("recommended_action")
 
     if safety_action == CLARIFICATION:
+        await retire_transaction_browser_for_new_message(update, context)
         # Send the Telegram response before continuing.
         await send_parse_clarification(update, context, user_text, parsed, safety_assessment)
         return
@@ -1711,6 +1701,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif safety_action == WARNING_PREVIEW:
         preview_mode = "warning"
 
+    await retire_transaction_browser_for_new_message(update, context)
     context.user_data["pending_parsed"] = parsed
     context.user_data["pending_raw"] = user_text
     context.user_data.pop("pending_batch", None)
@@ -1867,55 +1858,6 @@ def build_transaction_filter_title(base_title: str, category_filter: str | None 
     return base_title
 
 
-# Handle the asynchronous send transaction timeseries chart workflow.
-async def send_transaction_timeseries_chart(update: Update, transactions: list[dict], title: str) -> None:
-    """Send an automatic PNG time-series chart for transaction list commands.
-
-    Args:
-        update: Telegram update used to send the PNG as a document.
-        transactions: Transaction rows already displayed by `/transaksi` or
-            `/last`.
-        title: The same user-facing title used by the transaction list output.
-
-    Returns:
-        None. Failures are reported as a warning message after the transaction
-        list, without blocking the list output itself.
-
-    Side effects:
-        Creates a temporary PNG file, sends it through Telegram, and deletes the
-        file afterward. It does not write to Google Sheets.
-
-    Flow constraints:
-        The chart must represent the displayed rows only, so filtered
-        transaction outputs receive filtered time-series charts.
-    """
-    chart_path = ""
-    # Keep chart generation separate from the text list so list output remains primary.
-    try:
-        chart_path = write_transaction_timeseries_png(transactions, f"Time Series - {title}")
-        filename = "grafik-transaksi-timeseries.png"
-        caption = (
-            f"📈 Grafik time series: {title}\n"
-            "Basis angka: pengeluaran net dari transaksi yang ditampilkan."
-        )
-        # Open the generated file only while Telegram sends the document.
-        with open(chart_path, "rb") as file_obj:
-            await update.message.reply_document(
-                document=InputFile(file_obj, filename=filename),
-                caption=caption,
-            )
-    # Report chart-only failures without changing transaction list behavior.
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Transaksi sudah terkirim, tapi grafik time series gagal dibuat: {str(e)}")
-    # Remove the temporary PNG after successful send or chart failure.
-    finally:
-        if chart_path:
-            try:
-                os.remove(chart_path)
-            except OSError:
-                pass
-
-
 # Helper for build transaksi prefixed period arg.
 def _build_transaksi_prefixed_period_arg(first: str, rest: str, mode: str) -> str | None:
     """Build the data structure or message text for transaksi prefixed period arg."""
@@ -1936,14 +1878,14 @@ def _build_transaksi_prefixed_period_arg(first: str, rest: str, mode: str) -> st
 
 
 # Helper for parse transaksi period.
-async def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str | None]:
+async def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str, str | None, dict]:
     """Parse caller input for the parse transaksi period workflow in the Telegram handler layer.
 
     Args:
         args: Command argument list or parsed argument values supplied by the caller.
 
     Returns:
-        `tuple[str, list[dict], str, str | None]` value as defined by the function signature.
+        `tuple[str, list[dict], str, str | None, dict]` value as defined by the function signature.
 
     Side effects:
         May send or edit Telegram messages and may update `context.user_data` according to the active conversation flow.
@@ -1958,7 +1900,7 @@ async def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str,
     if not raw:
         year, month_num = parse_report_month_arg(None)
         report = await run_sheets_read("get_monthly_report", get_monthly_report, year, month_num)
-        return f"Transaksi Bulan {report.get('month', '-')}", report.get("transactions", []), "month", None
+        return (f"Transaksi Bulan {report.get('month', '-')}", report.get("transactions", []), "month", None, {"kind": "month", "month": str(report.get("month") or ""), "category": "", "account": ""})
 
     first = low.split()[0]
     rest = " ".join(raw.split()[1:]).strip()
@@ -1977,6 +1919,12 @@ async def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str,
             report.get("transactions", []),
             "account",
             account_filter,
+            {
+                "kind": "account",
+                "account": str(account_filter or ""),
+                "period_type": str(report.get("period_type") or "month"),
+                "month": str(report.get("month") or ""),
+            },
         )
 
     if first in ["hari", "harian", "tanggal", "tgl", "tg", "day", "daily"]:
@@ -1988,7 +1936,12 @@ async def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str,
             report.get("category_filter"),
             report.get("account_filter"),
         )
-        return title, report.get("transactions", []), "day", report.get("account_filter")
+        return title, report.get("transactions", []), "day", report.get("account_filter"), {
+            "kind": "day",
+            "date": str(report.get("date") or ""),
+            "category": str(report.get("category_filter") or ""),
+            "account": str(report.get("account_filter") or ""),
+        }
 
     if first in ["minggu", "mingguan", "week", "weekly"]:
         period_source = _build_transaksi_prefixed_period_arg(first, rest, "date")
@@ -1999,7 +1952,13 @@ async def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str,
             report.get("category_filter"),
             report.get("account_filter"),
         )
-        return title, report.get("transactions", []), "week", report.get("account_filter")
+        return title, report.get("transactions", []), "week", report.get("account_filter"), {
+            "kind": "week",
+            "date_from": str(report.get("date_from") or ""),
+            "date_to": str(report.get("date_to") or ""),
+            "category": str(report.get("category_filter") or ""),
+            "account": str(report.get("account_filter") or ""),
+        }
 
     if first in ["bulan", "bulanan", "month", "monthly"]:
         period_source = _build_transaksi_prefixed_period_arg(first, rest, "month")
@@ -2011,20 +1970,25 @@ async def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str,
             report.get("category_filter"),
             report.get("account_filter"),
         )
-        return title, report.get("transactions", []), "month", report.get("account_filter")
+        return title, report.get("transactions", []), "month", report.get("account_filter"), {
+            "kind": "month",
+            "month": str(report.get("month") or ""),
+            "category": str(report.get("category_filter") or ""),
+            "account": str(report.get("account_filter") or ""),
+        }
 
     if re.fullmatch(r"20\d{2}[-/]\d{1,2}[-/]\d{1,2}", low) or re.fullmatch(r"\d{1,2}[-/]\d{1,2}[-/]20\d{2}", low):
         report = await run_sheets_read("get_daily_report", get_daily_report, raw)
-        return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day", None
+        return (f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day", None, {"kind": "day", "date": str(report.get("date") or ""), "category": "", "account": ""})
 
     if re.fullmatch(r"20\d{2}[-/]\d{1,2}", low):
         year, month_num = parse_report_month_arg(raw)
         report = await run_sheets_read("get_monthly_report", get_monthly_report, year, month_num)
-        return f"Transaksi Bulan {report.get('month', '-')}", report.get("transactions", []), "month", None
+        return (f"Transaksi Bulan {report.get('month', '-')}", report.get("transactions", []), "month", None, {"kind": "month", "month": str(report.get("month") or ""), "category": "", "account": ""})
 
     if re.fullmatch(r"\d{1,2}", low):
         report = await run_sheets_read("get_daily_report", get_daily_report, raw)
-        return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day", None
+        return (f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day", None, {"kind": "day", "date": str(report.get("date") or ""), "category": "", "account": ""})
 
     # Command routing note: exact commands and aliases are checked before similarity-based typo handling.
     # /transaction kemarin
@@ -2034,7 +1998,7 @@ async def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str,
         # Extract date arg for validation.
         date_arg = parse_report_date_arg(raw)
         report = await run_sheets_read("get_daily_report", get_daily_report, date_arg)
-        return f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day", None
+        return (f"Transaksi Tanggal {report.get('date', '-')}", report.get("transactions", []), "day", None, {"kind": "day", "date": str(report.get("date") or ""), "category": "", "account": ""})
     # Handle an expected failure from the guarded operation above.
     except Exception:
         # Keep this intentionally empty block valid.
@@ -2052,7 +2016,12 @@ async def parse_transaksi_period(args: list[str]) -> tuple[str, list[dict], str,
                 report.get("category_filter"),
                 report.get("account_filter"),
             )
-            return title, report.get("transactions", []), "month", report.get("account_filter")
+            return title, report.get("transactions", []), "month", report.get("account_filter"), {
+                "kind": "month",
+                "month": str(report.get("month") or ""),
+                "category": str(report.get("category_filter") or ""),
+                "account": str(report.get("account_filter") or ""),
+            }
     # Handle an expected failure from the guarded operation above.
     except Exception:
         # Keep this intentionally empty block valid.
@@ -2088,7 +2057,7 @@ async def transaksi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Run this operation in a guarded block so failures can be handled.
     try:
-        title, transactions, _period_type, account_filter = await parse_transaksi_period(context.args)
+        title, transactions, _period_type, account_filter, query_descriptor = await parse_transaksi_period(context.args)
     # Handle an expected failure from the guarded operation above.
     except ValueError as e:
         # Send the Telegram response before continuing.
@@ -2121,20 +2090,12 @@ async def transaksi_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    last_map = {}
-    # Iterate through each i, txn.
-    for i, txn in enumerate(transactions, 1):
-        if txn.get("_row_index"):
-            last_map[str(i)] = {
-                "id": str(txn.get("id", "")),
-                "row_index": int(txn.get("_row_index")),
-            }
-
-    context.user_data["last_txn_map"] = last_map
-    # Send the Telegram response before continuing.
-    await reply_long_markdown(update, build_transactions_full_text(transactions, title, account_filter))
-    # Send the matching read-only time-series chart after the transaction list.
-    await send_transaction_timeseries_chart(update, transactions, title)
+    summary_label = transaction_summary_label(_period_type, account_filter)
+    await start_transaction_browser(
+        update, context, transactions, family="transaksi", title=title,
+        query=query_descriptor,
+        summary_label=summary_label, account_filter=account_filter,
+    )
 
 
 async def last_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2224,21 +2185,14 @@ async def last_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    last_map = {}
-
-    # Iterate through each i, txn.
-    for i, txn in enumerate(transactions, 1):
-        last_map[str(i)] = {
-            "id": str(txn.get("id", "")),
-            "row_index": int(txn.get("_row_index")),
-        }
-
-    context.user_data["last_txn_map"] = last_map
-
-    # Send the Telegram response before continuing.
-    await reply_long_markdown(update, build_last_transactions_text(transactions, title))
-    # Send the matching read-only time-series chart after the transaction list.
-    await send_transaction_timeseries_chart(update, transactions, title)
+    # /last is intentionally count-bounded, even for month filters. The
+    # summary therefore describes this exact result snapshot, not a full month.
+    summary_label = "📊 Ringkasan Hasil"
+    await start_transaction_browser(
+        update, context, transactions, family="last", title=title,
+        query={"limit": limit, "period": period or "", "month": month or ""},
+        summary_label=summary_label,
+    )
 
 
 async def delete_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2263,71 +2217,38 @@ async def delete_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await reject_unauthorized(update)
         return
 
-    refs = context.args
-
-    # Validate missing refs before continuing.
+    refs = list(context.args or [])
     if not refs:
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            "❌ Masukkan nomor transaksi dari `/last` atau transaction ID.\n\n"
-            "Contoh:\n"
-            "`/last today`\n"
-            "`/delete_txn 1`\n"
-            "`/delete_txn 1 3 5`\n"
-            "`/delete_txn txn_20260609_231132_123456_abcd1234`",
-            parse_mode="Markdown",
-        )
+        await start_transaction_selector(update, context, "delete")
         return
 
     resolved = resolve_txn_refs_from_last(context, refs)
-
-    invalid_refs = resolved.get("invalid_refs", [])
-
-    if invalid_refs and not resolved["row_indices"] and not resolved["txn_ids"]:
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            "❌ Nomor transaksi tidak ditemukan dari hasil `/last` terakhir.\n\n"
-            "Jalankan dulu:\n"
-            "`/last`\n\n"
-            "Lalu hapus dengan:\n"
-            "`/delete_txn 1`\n"
-            "`/delete_txn 1 3 5`",
-            parse_mode="Markdown",
-        )
-        return
-
-    preview = await run_sheets_read(
-        "preview_delete_transactions_by_refs",
-        preview_delete_transactions_by_refs,
-        row_indices=resolved["row_indices"],
-        txn_ids=resolved["txn_ids"],
-    )
-
+    invalid_refs = resolved.get("invalid_refs") or []
     if invalid_refs:
-        preview["missing_rows"] = preview.get("missing_rows", []) + invalid_refs
-
-    if not preview.get("deletable"):
-        # Send the Telegram response before continuing.
         await update.message.reply_text(
-            build_delete_preview_text(preview),
+            "❌ Selection tidak valid seluruhnya. Nomor berikut tidak ada di transaction-reference snapshot aktif: "
+            + ", ".join(f"`{md_code_text(x)}`" for x in invalid_refs)
+            + "\n\nBuka `/delete_txn` untuk selector mandiri atau buka transaction browser lagi.",
             parse_mode="Markdown",
         )
         return
-
-    context.user_data["pending_delete_refs"] = {
-        "row_indices": [
-            int(txn.get("_row_index"))
-            for txn in preview.get("deletable", [])
-            if txn.get("_row_index")
-        ],
-        "txn_ids": [],
-    }
-
-    # Send the Telegram response before continuing.
-    await update.message.reply_text(
-        build_delete_preview_text(preview),
-        parse_mode="Markdown",
-        reply_markup=confirm_keyboard("delete_txns"),
+    txn_ids = list(resolved.get("txn_ids") or [])
+    if not txn_ids:
+        await update.message.reply_text("❌ Tidak ada target delete yang valid. Gunakan `/delete_txn` untuk membuka selector.", parse_mode="Markdown")
+        return
+    # Selection-only duplicate refs are normalized by the stable resolver. The
+    # selected-target preview remains read-only and the dependency preview runs
+    # only after Lanjut.
+    refs_for_preview = []
+    ref_context = context.user_data.get("transaction_ref_context") or {}
+    ordered_ids = list(ref_context.get("ordered_ids") or [])
+    for txn_id in txn_ids:
+        try:
+            refs_for_preview.append(ordered_ids.index(txn_id) + 1)
+        except ValueError:
+            refs_for_preview.append(len(refs_for_preview) + 1)
+    await begin_selected_targets(
+        update, context, mode="delete", refs=refs_for_preview, txn_ids=txn_ids,
     )
 
 # Helper for parse edit updates.
@@ -2714,7 +2635,7 @@ def build_edit_split_preview_text(preview: dict, split_parsed: dict | None = Non
                 f"sebesar *{format_rupiah(total_receivable)}*."
             )
         elif status == "paid":
-            text += "\n\n🤝 *Split bill:* sudah dibayar, transaksi disimpan sebesar bagian bersih kamu."
+            text += "\n\n🤝 *Split bill:* relation conversion akan melepas piutang pristine tanpa memposting ulang cash historis."
     return text
 
 
@@ -2834,48 +2755,8 @@ def build_bulk_edit_category_choice_text(decision: dict, current_number: int, to
 
 # Helper for get edit category choice prompt.
 def get_edit_category_choice_prompt(updates: dict, preview: dict) -> dict | None:
-    """Detect whether `/edit_txn category=...` needs category confirmation.
-
-    Args:
-        updates: Parsed edit updates from `parse_edit_updates`.
-        preview: Preview dict from `preview_edit_transaction_by_ref`. The old
-            and new transaction type are used to restrict category matching.
-
-    Returns:
-        A prompt payload containing raw category, suggested category, resolver
-        status, and transaction type. Returns `None` when the category is exact
-        or no category field is being edited.
-    """
-    if "category" not in (updates or {}):
-        return None
-
-    raw_category = str((updates or {}).get("category") or "").strip()
-    # Validate missing raw category before continuing.
-    if not raw_category:
-        return None
-
-    new_txn = (preview or {}).get("new_txn") or {}
-    old_txn = (preview or {}).get("old_txn") or {}
-    txn_type = str((updates or {}).get("type") or new_txn.get("type") or old_txn.get("type") or "").strip().lower()
-    if txn_type not in {"expense", "income"}:
-        return None
-
-    resolved = resolve_category_name(raw_category, txn_type, allow_create=False)
-    status = str(resolved.get("status") or "").strip().lower()
-    suggested = str(resolved.get("category_name") or "").strip()
-    # Validate missing suggested before continuing.
-    if not suggested:
-        return None
-
-    # Ask only when the resolver maps the user's text to a different existing category.
-    if status in {"alias", "similar", "exact"} and raw_category.strip().lower() != suggested.strip().lower():
-        return {
-            "raw_category": raw_category,
-            "suggested_category": suggested,
-            "status": status,
-            "transaction_type": txn_type,
-        }
-    return None
+    """Use the shared service-level category resolver decision for saved edits."""
+    return assess_edit_category_choice(updates, preview)
 
 
 # Helper for build edit category choice text.
@@ -2911,6 +2792,7 @@ async def maybe_prompt_edit_category_choice(
     txn_id: str | None,
     split_raw: str,
     has_split_bill: bool,
+    origin_browser_session_id: str | None = None,
 ) -> bool:
     """Ask the user to confirm a matched category before edit preview.
 
@@ -2946,6 +2828,8 @@ async def maybe_prompt_edit_category_choice(
         "suggested_category": choice.get("suggested_category"),
         "transaction_type": choice.get("transaction_type"),
         "status": choice.get("status"),
+        "expected_signature": list(transaction_service.transaction_material_signature(preview.get("old_txn") or {})),
+        "origin_browser_session_id": origin_browser_session_id,
     }
     # Send the Telegram response before continuing.
     await update.message.reply_text(
@@ -2974,6 +2858,27 @@ def extract_bulk_edit_txn_lines(raw_text: str) -> list[str]:
         return edit_lines
 
     return []
+
+
+def classify_bulk_edit_txn_lines(lines: list[str]) -> tuple[str, list[tuple[str, list[str]]], str | None]:
+    """Classify multiline /edit_txn input as all-bare or all-update."""
+    parsed = []
+    modes = set()
+    for line in lines or []:
+        try:
+            parts = shlex.split(line)
+        except Exception as exc:
+            return "invalid", [], f"Format kutip tidak valid: {exc}"
+        if len(parts) < 2:
+            return "invalid", [], "Setiap baris /edit_txn harus memiliki target."
+        ref = str(parts[1] or "").strip()
+        update_args = parts[2:]
+        mode = "bare" if not update_args else "update"
+        modes.add(mode)
+        parsed.append((ref, update_args))
+    if len(modes) > 1:
+        return "mixed", parsed, "Jangan campur bare selection dan update-bearing line dalam satu message."
+    return (next(iter(modes)) if modes else "invalid"), parsed, None
 
 
 # Helper for format bulk edit value.
@@ -3075,7 +2980,7 @@ def build_bulk_edit_error_text(errors: list[str]) -> str:
 
 
 # Helper for build bulk edit confirm state.
-def build_bulk_edit_confirm_state(entries: list[dict]) -> dict:
+def build_bulk_edit_confirm_state(entries: list[dict], origin_browser_session_id: str | None = None) -> dict:
     """Build the pending confirm payload for bulk edit transactions.
 
     Args:
@@ -3088,6 +2993,7 @@ def build_bulk_edit_confirm_state(entries: list[dict]) -> dict:
         and updates.
     """
     return {
+        "origin_browser_session_id": origin_browser_session_id,
         "entries": [
             {
                 "line_no": entry.get("line_no"),
@@ -3096,6 +3002,7 @@ def build_bulk_edit_confirm_state(entries: list[dict]) -> dict:
                 "row_index": entry.get("row_index"),
                 "txn_id": entry.get("txn_id"),
                 "updates": entry.get("updates") or {},
+                "expected_signature": entry.get("expected_signature") or [],
             }
             # Iterate through each entry.
             for entry in entries
@@ -3104,7 +3011,11 @@ def build_bulk_edit_confirm_state(entries: list[dict]) -> dict:
 
 
 # Helper for build bulk edit category decision state.
-def build_bulk_edit_category_decision_state(entries: list[dict], decisions: list[dict]) -> dict:
+def build_bulk_edit_category_decision_state(
+    entries: list[dict],
+    decisions: list[dict],
+    origin_browser_session_id: str | None = None,
+) -> dict:
     """Build pending state for the bulk category clarification queue.
 
     Args:
@@ -3123,6 +3034,7 @@ def build_bulk_edit_category_decision_state(entries: list[dict], decisions: list
         "decisions": decisions,
         "current_index": 0,
         "paused_for_category_add": None,
+        "origin_browser_session_id": origin_browser_session_id,
     }
 
 
@@ -3216,7 +3128,7 @@ async def parse_bulk_edit_txn_entries(lines: list[str], context: ContextTypes.DE
 
         resolved = resolve_txn_refs_from_last(context, [ref])
         if resolved.get("invalid_refs") and not resolved.get("row_indices") and not resolved.get("txn_ids"):
-            errors.append(f"Baris {line_no}: nomor transaksi `{ref}` tidak ditemukan dari hasil terakhir.")
+            errors.append(f"Baris {line_no}: nomor transaksi `{ref}` tidak ditemukan dari transaction-reference snapshot aktif.")
             # Skip the rest of this loop iteration after handling this case.
             continue
 
@@ -3270,6 +3182,7 @@ async def parse_bulk_edit_txn_entries(lines: list[str], context: ContextTypes.DE
             "row_index": row_index,
             "txn_id": txn_id,
             "updates": preview.get("updates") or updates,
+            "expected_signature": list(transaction_service.transaction_material_signature(preview.get("old_txn") or {})),
             "preview": preview,
         })
 
@@ -3304,6 +3217,33 @@ async def bulk_edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TY
     Flow constraints:
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
+    mode, parsed_lines, mode_error = classify_bulk_edit_txn_lines(lines)
+    if mode_error or mode == "mixed":
+        await update.message.reply_text(f"❌ {md_safe(mode_error or 'Mode bulk tidak valid.')}", parse_mode="Markdown")
+        return
+    if mode == "bare":
+        refs = [ref for ref, _args in parsed_lines]
+        resolved = resolve_txn_refs_from_last(context, refs)
+        if resolved.get("invalid_refs"):
+            await update.message.reply_text(
+                "❌ Selection batch tidak valid seluruhnya: "
+                + ", ".join(f"`{md_code_text(x)}`" for x in resolved.get("invalid_refs") or [])
+                + ". Tidak ada target yang diproses.", parse_mode="Markdown")
+            return
+        txn_ids = list(resolved.get("txn_ids") or [])
+        # Selection-only duplicates normalize to one target; preview labels keep
+        # the first original global reference where available.
+        ref_context = context.user_data.get("transaction_ref_context") or {}
+        ordered = list(ref_context.get("ordered_ids") or [])
+        labels = []
+        for txn_id in txn_ids:
+            try:
+                labels.append(ordered.index(txn_id) + 1)
+            except ValueError:
+                labels.append(len(labels) + 1)
+        await begin_selected_targets(update, context, mode="edit", refs=labels, txn_ids=txn_ids)
+        return
+
     entries, errors, category_decisions = await parse_bulk_edit_txn_entries(lines, context)
 
     if errors or not entries:
@@ -3314,9 +3254,10 @@ async def bulk_edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
+    origin_browser_session_id = suspend_transaction_browser(context)
     if category_decisions:
         # Category decisions are resolved before final preview, preserving preview-before-write.
-        state = build_bulk_edit_category_decision_state(entries, category_decisions)
+        state = build_bulk_edit_category_decision_state(entries, category_decisions, origin_browser_session_id)
         context.user_data[BULK_EDIT_CATEGORY_DECISION_KEY] = state
         decision, current_number, total = get_current_bulk_edit_category_decision(state)
         # Send the Telegram response before continuing.
@@ -3327,10 +3268,11 @@ async def bulk_edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
-    context.user_data["pending_bulk_edit_txns"] = build_bulk_edit_confirm_state(entries)
+    context.user_data["pending_bulk_edit_txns"] = build_bulk_edit_confirm_state(entries, origin_browser_session_id)
 
     # Send the Telegram response before continuing.
-    await update.message.reply_text(
+    await reply_update_safely(
+        update,
         build_bulk_edit_preview_text(entries),
         parse_mode="Markdown",
         reply_markup=confirm_keyboard("edit_txns_bulk"),
@@ -3383,25 +3325,32 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Implementation note for this project-specific finance flow.
     args = parts[1:]
 
-    if len(args) < 2:
-        # Send the Telegram response before continuing.
-        await update.message.reply_text(
-            "❌ Format edit belum lengkap.\n\n"
-            "Contoh:\n"
-            "`/last`\n"
-            "`/edit_txn 2 amount=15000`\n"
-            "`/edit_txn 2 amount=15000 desc=\"Kopi susu\"`\n"
-            "`/edit_txn 2 account=BRI category=\"Food & Beverage\"`\n"
-            "`/edit_txn 2 15000`",
-            parse_mode="Markdown",
-        )
+    if not args:
+        await start_transaction_selector(update, context, "edit")
         return
 
     ref = args[0]
-    # Extract update args for validation.
+    if len(args) == 1:
+        resolved = resolve_txn_refs_from_last(context, [ref])
+        if resolved.get("invalid_refs") or not resolved.get("txn_ids"):
+            await update.message.reply_text(
+                "❌ Numeric ref membutuhkan transaction-reference snapshot yang masih valid. "
+                "Bot tidak akan membuat query latest baru diam-diam.\n\n"
+                "Gunakan `/edit_txn` untuk selector mandiri atau buka `/transaksi`, `/last`, `/rekening`, atau `/cari` dulu.",
+                parse_mode="Markdown",
+            )
+            return
+        txn_ids = list(resolved.get("txn_ids") or [])
+        ref_context = context.user_data.get("transaction_ref_context") or {}
+        ordered = list(ref_context.get("ordered_ids") or [])
+        label = int(ref) if str(ref).isdigit() else 1
+        if not str(ref).isdigit() and txn_ids[0] in ordered:
+            label = ordered.index(txn_ids[0]) + 1
+        await begin_selected_targets(update, context, mode="edit", refs=[label], txn_ids=[txn_ids[0]])
+        return
+
     update_args = args[1:]
 
     resolved = resolve_txn_refs_from_last(context, [ref])
@@ -3409,11 +3358,8 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if resolved.get("invalid_refs") and not resolved["row_indices"] and not resolved["txn_ids"]:
         # Send the Telegram response before continuing.
         await update.message.reply_text(
-            "❌ Nomor transaksi tidak ditemukan dari hasil `/last` terakhir.\n\n"
-            "Jalankan dulu:\n"
-            "`/last`\n\n"
-            "Lalu edit dengan:\n"
-            "`/edit_txn 2 amount=15000`",
+            "❌ Nomor transaksi tidak ada di transaction-reference snapshot aktif.\n\n"
+            "Buka `/transaksi`, `/last`, `/rekening`, atau `/cari`, atau gunakan `/edit_txn` untuk selector mandiri.",
             parse_mode="Markdown",
         )
         return
@@ -3478,6 +3424,7 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+        origin_browser_session_id = suspend_transaction_browser(context)
         context.user_data["pending_edit_txn"] = {
             "row_index": row_index,
             "txn_id": txn_id,
@@ -3486,10 +3433,13 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "split_parsed": None,
             "debt_payment_conversion": debt_payment_conversion,
             "debt_check": debt_check,
+            "expected_signature": list(transaction_service.transaction_material_signature(preview.get("old_txn") or {})),
+            "origin_browser_session_id": origin_browser_session_id,
         }
 
         # Send the Telegram response before continuing.
-        await update.message.reply_text(
+        await reply_update_safely(
+            update,
             build_edit_debt_payment_preview_text(preview, debt_payment_conversion, debt_check),
             parse_mode="Markdown",
             reply_markup=confirm_keyboard("edit_txn"),
@@ -3543,6 +3493,7 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    origin_browser_session_id = suspend_transaction_browser(context)
     split_raw = " ".join(update_args)
     has_split_bill = edit_args_contain_split_bill(update_args)
     if await maybe_prompt_edit_category_choice(
@@ -3557,6 +3508,7 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Prepare split raw from the incoming input.
         split_raw=split_raw,
         has_split_bill=has_split_bill,
+        origin_browser_session_id=origin_browser_session_id,
     ):
         return
 
@@ -3572,6 +3524,8 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "updates": updates,
                 "split_raw": split_raw,
                 "split_parsed": split_parsed,
+                "expected_signature": list(transaction_service.transaction_material_signature(preview.get("old_txn") or {})),
+                "origin_browser_session_id": origin_browser_session_id,
             }
             # Send the Telegram response before continuing.
             await update.message.reply_text(
@@ -3587,10 +3541,13 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "updates": updates,
         "split_raw": split_raw if split_parsed else "",
         "split_parsed": split_parsed,
+        "expected_signature": list(transaction_service.transaction_material_signature(preview.get("old_txn") or {})),
+        "origin_browser_session_id": origin_browser_session_id,
     }
 
     # Send the Telegram response before continuing.
-    await update.message.reply_text(
+    await reply_update_safely(
+        update,
         build_edit_split_preview_text(preview, split_parsed),
         parse_mode="Markdown",
         reply_markup=confirm_keyboard("edit_txn"),

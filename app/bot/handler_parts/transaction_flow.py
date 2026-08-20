@@ -12,6 +12,7 @@ from app.nlp.gemini_parser import parse_batch_with_gemini, parse_with_pending_fa
 from app.bot.handler_parts.networth_assets import build_asset_confirm_preview
 # Import app.services.resolver_service so this module can use its helpers.
 from app.services.resolver_service import resolve_parsed_transaction
+from app.services.debt_service import create_split_bill_receivables, validate_split_bill_receivables
 # Import app.nlp.regex_parser so this module can use its helpers.
 from app.nlp.regex_parser import detect_category, detect_account
 # Import app.nlp.normalizer so this module can use its helpers.
@@ -2413,11 +2414,14 @@ def _parse_preview_edit_pair(segment: str) -> dict:
             return {}
         updates[key] = type_aliases[normalized]
     elif key in {"date", "due_date", "purchase_date"}:
-        # Import app.nlp.regex_parser so this module can use its helpers.
-        from app.nlp.regex_parser import parse_explicit_date
-        # Extract parsed date for validation.
-        parsed_date = parse_explicit_date(value) or value
-        updates[key] = parsed_date
+        # Reuse the canonical date detector so invalid raw strings cannot leak
+        # into a later save path. This intentionally aligns only the shared
+        # date-integrity invariant; pending/saved edit remain separate flows.
+        from app.nlp.regex_parser import detect_date_result
+        date_result = detect_date_result(value)
+        if date_result.status != "valid" or not date_result.value:
+            return {}
+        updates[key] = date_result.value
     elif key == "month":
         updates[key] = value.strip()
     elif key in ["account", "to_account"]:
@@ -4982,86 +4986,38 @@ def apply_split_bill_decision_to_mixed(mixed_items: list[dict], status: str) -> 
     return mixed_items
 
 
+def preview_split_bill_debt(parsed: dict) -> dict | None:
+    """Validate the confirmed split participant/share set without any write."""
+    split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
+    if not split_bill or split_bill.get("status") != "unpaid":
+        return None
+    person_names = split_bill.get("person_names") or [split_bill.get("person_name")]
+    person_names = [str(p).strip().title() for p in person_names if str(p or "").strip()]
+    person_shares = {str(k).strip().casefold(): v for k, v in (split_bill.get("person_shares") or {}).items()}
+    fallback_share = split_bill.get("base_share_amount", split_bill.get("share_amount", 0))
+    participants = [
+        (person, person_shares.get(person.casefold(), fallback_share))
+        for person in person_names
+    ]
+    return validate_split_bill_receivables(participants)
+
+
 def create_split_bill_debt(parsed: dict, raw: str = "", source_transaction_id: str = "") -> dict | None:
-    """Coordinate the create split bill debt logic in the Telegram handler layer.
-
-    Args:
-        parsed: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-        raw: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-        source_transaction_id: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-
-    Returns:
-        `dict | None` value as defined by the function signature.
-
-    Side effects:
-        May send or edit Telegram messages and may update `context.user_data` according to the active conversation flow.
-
-    Flow constraints:
-        Keep debt and receivable behavior separated from normal expense/income flows and preserve preview-before-write where applicable.
-    """
+    """Create the complete required receivable set for an unpaid split bill."""
     split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
     if not split_bill or split_bill.get("status") != "unpaid":
         return None
 
     person_names = split_bill.get("person_names") or [split_bill.get("person_name")]
     person_names = [str(p).strip().title() for p in person_names if str(p or "").strip()]
-    person_shares = split_bill.get("person_shares") or {}
-    fallback_share = float(split_bill.get("base_share_amount", split_bill.get("share_amount", 0)) or 0)
-
-    # Validate missing person names before continuing.
-    if not person_names:
-        return None
-
-    desc = f"Split bill: {parsed.get('description') or raw or '-'}"
-    created = []
-    failed = []
-
-    # Iterate through each person.
-    for person in person_names:
-        # Extract share amount for validation.
-        share_amount = float(person_shares.get(person, fallback_share) or 0)
-        if share_amount <= 0:
-            # Skip the rest of this loop iteration after handling this case.
-            continue
-
-        result = add_debt(
-            "receivable",
-            person,
-            share_amount,
-            desc,
-            source_transaction_id=source_transaction_id,
-            cashflow_mode="debt_only",
-            fronting_mode="split_bill",
-        )
-        if result and result.get("success"):
-            created.append({
-                "person_name": person,
-                "remaining": share_amount,
-                "debt_id": result.get("debt_id"),
-            })
-        # Use the fallback path when no earlier branch matched.
-        else:
-            failed.append({
-                "person_name": person,
-                "message": (result or {}).get("message", "Gagal membuat piutang."),
-            })
-
-    if failed and not created:
-        return {
-            "success": False,
-            "message": "; ".join(f"{x['person_name']}: {x['message']}" for x in failed),
-            "created": created,
-            "failed": failed,
-        }
-
-    return {
-        "success": True,
-        "person_name": ", ".join(x["person_name"] for x in created),
-        "remaining": sum(float(x["remaining"] or 0) for x in created),
-        "created": created,
-        "failed": failed,
-        "message": "ok" if not failed else "; ".join(f"{x['person_name']}: {x['message']}" for x in failed),
-    }
+    person_shares = {str(k).strip().casefold(): v for k, v in (split_bill.get("person_shares") or {}).items()}
+    fallback_share = split_bill.get("base_share_amount", split_bill.get("share_amount", 0))
+    participants = [(person, person_shares.get(person.casefold(), fallback_share)) for person in person_names]
+    return create_split_bill_receivables(
+        participants,
+        description=f"Split bill: {parsed.get('description') or raw or '-'}",
+        source_transaction_id=source_transaction_id,
+    )
 
 
 # Helper for format split debt result lines.

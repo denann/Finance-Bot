@@ -236,6 +236,29 @@ def cancel_pending_action(
     return copy.deepcopy(record)
 
 
+def cancel_pending_actions_by_flow(
+    user_data: MutableMapping[str, Any],
+    flow_types: set[str] | frozenset[str] | tuple[str, ...] | list[str],
+) -> int:
+    """Cancel every still-pending action whose flow type is in ``flow_types``.
+
+    This is used when an explicit command/cancel closes an Edit/Delete child
+    flow without going through that action's own inline ``Batal`` button.  It
+    preserves the immutable action records for auditability while ensuring an
+    older preview cannot be consumed after the child flow was abandoned.
+    """
+
+    wanted = {str(value or "").strip() for value in flow_types if str(value or "").strip()}
+    if not wanted:
+        return 0
+    canceled = 0
+    for record in _store(user_data).values():
+        if record.get("status") == "pending" and str(record.get("flow_type") or "") in wanted:
+            record["status"] = "canceled"
+            canceled += 1
+    return canceled
+
+
 def snapshot_pending_state(user_data: MutableMapping[str, Any]) -> dict[str, Any]:
     """Copy mutable pending flow values while excluding the action store."""
 

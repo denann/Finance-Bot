@@ -990,83 +990,41 @@ def expand_txn_refs(refs: list[str]) -> list[str]:
 
 # Helper for resolve txn refs from last.
 def resolve_txn_refs_from_last(context: ContextTypes.DEFAULT_TYPE, refs: list[str]) -> dict:
-    """Resolve a user input or reference for txn refs from last."""
-    last_map = context.user_data.get("last_txn_map", {})
+    """Resolve stable numeric refs from the latest transaction-family snapshot.
 
-    row_indices = []
-    txn_ids = []
-    invalid_refs = []
-
-    # Iterate through each ref.
+    Numeric refs never create a fresh query. Full transaction IDs remain usable
+    directly; mutation services still enforce unique-ID resolution.
+    """
+    ref_context = context.user_data.get("transaction_ref_context") or {}
+    ordered_ids = list(ref_context.get("ordered_ids") or [])
+    txn_ids: list[str] = []
+    invalid_refs: list[str] = []
+    seen_ids: set[str] = set()
     for ref in expand_txn_refs(refs):
-        # Normalize clean before matching.
-        clean = str(ref).strip()
-
-        # Validate missing clean before continuing.
+        clean = str(ref or "").strip()
         if not clean:
-            # Skip the rest of this loop iteration after handling this case.
             continue
-
-        if clean in last_map:
-            mapped = last_map[clean]
-
-            if isinstance(mapped, dict):
-                row_index = mapped.get("row_index")
-
-                if row_index:
-                    # Append the current value to row indices.
-                    row_indices.append(int(row_index))
-                # Use the fallback path when no earlier branch matched.
-                else:
-                    # Append the current value to invalid refs.
-                    invalid_refs.append(clean)
-
-            # Use the fallback path when no earlier branch matched.
-            else:
-                # Implementation note for this project-specific finance flow.
-                txn_ids.append(str(mapped))
-
-        # Use the fallback path when no earlier branch matched.
-        else:
-            # Implementation note for this project-specific finance flow.
-            # atau nomornya di luar hasil /last terakhir.
-            if clean.isdigit():
-                # Append the current value to invalid refs.
+        if clean.isdigit():
+            number = int(clean)
+            if number < 1 or number > len(ordered_ids):
                 invalid_refs.append(clean)
-            # Use the fallback path when no earlier branch matched.
-            else:
-                # Append the current value to txn ids.
-                txn_ids.append(clean)
-
-    # Load unique rows for the current calculation.
-    unique_rows = []
-    # Load seen rows for the current calculation.
-    seen_rows = set()
-
-    # Iterate through each row.
-    for row in row_indices:
-        if row not in seen_rows:
-            # Append the current value to unique rows.
-            unique_rows.append(row)
-            # Append the current value to seen rows.
-            seen_rows.add(row)
-
-    unique_ids = []
-    seen_ids = set()
-
-    # Iterate through each txn id.
-    for txn_id in txn_ids:
+                continue
+            txn_id = str(ordered_ids[number - 1] or "").strip()
+            if not txn_id:
+                invalid_refs.append(clean)
+                continue
+        else:
+            txn_id = clean
         if txn_id not in seen_ids:
-            # Append the current value to unique ids.
-            unique_ids.append(txn_id)
-            # Append the current value to seen ids.
+            txn_ids.append(txn_id)
             seen_ids.add(txn_id)
-
     return {
-        "row_indices": unique_rows,
-        "txn_ids": unique_ids,
+        "row_indices": [],
+        "txn_ids": txn_ids,
         "invalid_refs": invalid_refs,
+        "reference_session_id": ref_context.get("session_id"),
     }
+
 
 # Helper for build last transactions text.
 def build_last_transactions_text(transactions: list[dict], title: str) -> str:
@@ -1093,7 +1051,7 @@ def build_last_transactions_text(transactions: list[dict], title: str) -> str:
         "`/delete_txn 1`\n"
         "`/delete_txn 1 3 5`\n"
         "`/delete_txn 1-4`\n\n"
-        "Angka mengikuti nomor dari hasil `/last` terakhir."
+        "Angka pada helper legacy ini mengikuti snapshot transaction-reference yang sedang aktif."
     )
 
     return "\n".join(lines)
@@ -1168,7 +1126,7 @@ def build_delete_preview_text(preview: dict) -> str:
             lines.append(f"• `{safe_txn_id}`")
 
     if missing_rows:
-        lines.append("\n❓ *Nomor dari /last tidak valid / tidak ditemukan:*")
+        lines.append("\n❓ *Referensi transaksi tidak valid / tidak ditemukan:*")
         # Iterate through each row.
         for row in missing_rows:
             safe_row = md_safe(row)

@@ -431,87 +431,42 @@ def update_transaction_debt_relation(
     debt_ids: list[str],
     tipe_hutang: str = "piutang",
 ) -> dict:
-    """Apply the update transaction debt relation operation in the service layer.
-
-    Args:
-        transaction_id: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-        debt_ids: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-        tipe_hutang: Input value supplied by the caller; accepted shape follows the function signature and local validation.
-
-    Returns:
-        `dict` value as defined by the function signature.
-
-    Side effects:
-        May read from or write to the configured Google Sheets/client state according to the existing implementation.
-
-    Flow constraints:
-        Keep debt and receivable behavior separated from normal expense/income flows and preserve preview-before-write where applicable.
-    """
+    """Set debt metadata on one uniquely identified transaction."""
     transaction_id = str(transaction_id or "").strip()
     clean_debt_ids = [str(x).strip() for x in (debt_ids or []) if str(x or "").strip()]
     tipe_hutang = str(tipe_hutang or "").strip()
-
-    # Validate missing transaction id before continuing.
     if not transaction_id:
-        return {
-            "success": False,
-            "message": "transaction_id kosong.",
-        }
-
-    # Validate missing clean debt ids before continuing.
+        return {"success": False, "message": "transaction_id kosong."}
     if not clean_debt_ids:
-        return {
-            "success": False,
-            "message": "debt_ids kosong.",
-        }
-
-    # Load records for the current calculation.
-    records = get_all_records(SHEET_TRANSACTIONS)
-
-    # Iterate through each row index, record.
-    for row_index, record in enumerate(records, start=2):
-        if str(record.get("id", "")).strip() == transaction_id:
-            update_cell(SHEET_TRANSACTIONS, row_index, HUTANG_ID_COL, ", ".join(clean_debt_ids))
-            update_cell(SHEET_TRANSACTIONS, row_index, TIPE_HUTANG_COL, tipe_hutang)
-            return {
-                "success": True,
-                "message": "ok",
-            }
-
-    return {
-        "success": False,
-        "message": f"Transaksi {transaction_id} tidak ditemukan.",
-    }
+        return {"success": False, "message": "debt_ids kosong."}
+    matches = get_transactions_by_ids([transaction_id])
+    if len(matches) != 1:
+        reason = "duplikat" if len(matches) > 1 else "tidak ditemukan"
+        return {"success": False, "message": f"Transaction ID {transaction_id} {reason}; relasi tidak diubah.", "identity_anomaly": len(matches) > 1}
+    row_index = int(matches[0].get("_row_index") or 0)
+    if not row_index:
+        return {"success": False, "message": "Row transaksi tidak valid."}
+    update_cell(SHEET_TRANSACTIONS, row_index, HUTANG_ID_COL, ", ".join(clean_debt_ids))
+    update_cell(SHEET_TRANSACTIONS, row_index, TIPE_HUTANG_COL, tipe_hutang)
+    return {"success": True, "message": "ok"}
 
 
 # Helper for clear transaction debt relation.
 def clear_transaction_debt_relation(transaction_id: str) -> dict:
-    """Remove debt metadata from one transaction row.
-
-    Args:
-        transaction_id: Full transaction ID from the `transactions` sheet.
-
-    Returns:
-        Result dict with `success` and `message`.
-
-    Side effects:
-        Clears `hutang_id` and `tipe_hutang` cells for the matching transaction.
-    """
+    """Clear debt metadata on one uniquely identified transaction."""
     transaction_id = str(transaction_id or "").strip()
-    # Validate missing transaction id before continuing.
     if not transaction_id:
         return {"success": False, "message": "transaction_id kosong."}
-
-    # Load records for the current calculation.
-    records = get_all_records(SHEET_TRANSACTIONS)
-    # Iterate through each row index, record.
-    for row_index, record in enumerate(records, start=2):
-        if str(record.get("id", "")).strip() == transaction_id:
-            update_cell(SHEET_TRANSACTIONS, row_index, HUTANG_ID_COL, "")
-            update_cell(SHEET_TRANSACTIONS, row_index, TIPE_HUTANG_COL, "")
-            return {"success": True, "message": "ok"}
-
-    return {"success": False, "message": f"Transaksi {transaction_id} tidak ditemukan."}
+    matches = get_transactions_by_ids([transaction_id])
+    if len(matches) != 1:
+        reason = "duplikat" if len(matches) > 1 else "tidak ditemukan"
+        return {"success": False, "message": f"Transaction ID {transaction_id} {reason}; relasi tidak diubah.", "identity_anomaly": len(matches) > 1}
+    row_index = int(matches[0].get("_row_index") or 0)
+    if not row_index:
+        return {"success": False, "message": "Row transaksi tidak valid."}
+    update_cell(SHEET_TRANSACTIONS, row_index, HUTANG_ID_COL, "")
+    update_cell(SHEET_TRANSACTIONS, row_index, TIPE_HUTANG_COL, "")
+    return {"success": True, "message": "ok"}
 
 
 # Helper for validate transaction.
@@ -1448,9 +1403,26 @@ def preview_delete_transactions_by_refs(
     row_indices = row_indices or []
     txn_ids = txn_ids or []
 
-    # Load by rows for the current calculation.
+    # Load by rows for compatibility. User-facing mutation flows should pass IDs.
     by_rows = get_transactions_by_row_indices(row_indices) if row_indices else []
-    by_ids = get_transactions_by_ids(txn_ids) if txn_ids else []
+
+    requested_id_list = []
+    seen_requested_ids = set()
+    for value in txn_ids:
+        clean = str(value or "").strip()
+        if clean and clean not in seen_requested_ids:
+            requested_id_list.append(clean)
+            seen_requested_ids.add(clean)
+
+    id_matches: dict[str, list[dict]] = {txn_id: [] for txn_id in requested_id_list}
+    if requested_id_list:
+        for record in get_transactions_with_row_index():
+            record_id = str(record.get("id", "") or "").strip()
+            if record_id in id_matches:
+                id_matches[record_id].append(record)
+
+    duplicate_ids = sorted(txn_id for txn_id, matches in id_matches.items() if len(matches) > 1)
+    by_ids = [matches[0] for matches in id_matches.values() if len(matches) == 1]
 
     # Load transactions for the current calculation.
     transactions = []
@@ -1474,8 +1446,11 @@ def preview_delete_transactions_by_refs(
     missing_rows = sorted(requested_rows - found_rows)
 
     found_ids = {str(t.get("id", "")).strip() for t in by_ids}
-    requested_ids = {str(x).strip() for x in txn_ids if str(x).strip()}
-    missing_ids = sorted(requested_ids - found_ids)
+    requested_ids = set(requested_id_list)
+    missing_ids = sorted(
+        txn_id for txn_id in requested_ids
+        if txn_id not in found_ids and txn_id not in duplicate_ids
+    )
 
     blocked = []
     deletable = []
@@ -1501,6 +1476,7 @@ def preview_delete_transactions_by_refs(
         "blocked": blocked,
         "missing_ids": missing_ids,
         "missing_rows": missing_rows,
+        "duplicate_ids": duplicate_ids,
         "reverse_deltas": reverse_deltas,
     }
 
@@ -1739,6 +1715,11 @@ def delete_transactions_by_refs(
     *,
     void_debts_for_transaction_fn=None,
     reverse_debt_payment_transaction_fn=None,
+    expected_deletable_ids: list[str] | None = None,
+    expected_blocked_ids: list[str] | None = None,
+    expected_signatures: dict[str, tuple | list] | None = None,
+    expected_dependency_signatures: dict[str, tuple | list] | None = None,
+    dependency_signature_fn=None,
 ) -> dict:
     """Apply the delete transactions by refs operation in the service layer.
 
@@ -1762,6 +1743,50 @@ def delete_transactions_by_refs(
     blocked = preview["blocked"]
     missing_ids = preview.get("missing_ids", [])
     missing_rows = preview.get("missing_rows", [])
+    duplicate_ids = preview.get("duplicate_ids", [])
+
+    # Invalid identity is never converted into a smaller successful delete set.
+    if missing_ids or missing_rows or duplicate_ids:
+        return {
+            "success": False,
+            "message": "Target hapus berubah/tidak unik. Buat preview baru sebelum menghapus.",
+            "deleted_count": 0,
+            "deleted_ids": [],
+            "blocked": blocked,
+            "missing_ids": missing_ids,
+            "missing_rows": missing_rows,
+            "duplicate_ids": duplicate_ids,
+            "new_balances": {},
+            "stale": True,
+        }
+
+    current_deletable_ids = [str(t.get("id", "") or "").strip() for t in deletable]
+    current_blocked_ids = [str(t.get("id", "") or "").strip() for t in blocked]
+    if expected_deletable_ids is not None and current_deletable_ids != list(expected_deletable_ids):
+        return {"success": False, "message": "Komposisi target hapus berubah sejak preview.", "stale": True, "deleted_count": 0, "deleted_ids": []}
+    if expected_blocked_ids is not None and current_blocked_ids != list(expected_blocked_ids):
+        return {"success": False, "message": "Eligibility hapus berubah sejak preview.", "stale": True, "deleted_count": 0, "deleted_ids": []}
+    if expected_signatures:
+        for txn in deletable + blocked:
+            current_id = str(txn.get("id", "") or "").strip()
+            expected = expected_signatures.get(current_id)
+            if expected is not None and tuple(expected) != transaction_material_signature(txn):
+                return {"success": False, "message": "Transaksi berubah sejak preview hapus.", "stale": True, "deleted_count": 0, "deleted_ids": []}
+    if expected_dependency_signatures is not None:
+        if dependency_signature_fn is None:
+            return {"success": False, "message": "Dependency validator delete tidak tersedia.", "stale": True, "deleted_count": 0, "deleted_ids": []}
+        for txn in deletable + blocked:
+            current_id = str(txn.get("id", "") or "").strip()
+            expected = expected_dependency_signatures.get(current_id)
+            current_dependency = dependency_signature_fn(txn)
+            if expected is None or current_dependency != expected:
+                return {
+                    "success": False,
+                    "message": "Dependency debt transaksi berubah sejak preview hapus.",
+                    "stale": True,
+                    "deleted_count": 0,
+                    "deleted_ids": [],
+                }
 
     # Validate missing deletable before continuing.
     if not deletable:
@@ -1876,6 +1901,7 @@ def delete_transactions_by_refs(
         "blocked": blocked,
         "missing_ids": missing_ids,
         "missing_rows": missing_rows,
+        "duplicate_ids": duplicate_ids,
         "new_balances": balance_result.get("new_balances", {}),
         "linked_debts_voided": linked_debt_voided_ids,
         "reversed_payment_debts": reversed_payment_debt_items,
@@ -2066,35 +2092,46 @@ def get_single_transaction_by_ref(
     row_index: int | None = None,
     txn_id: str | None = None,
 ) -> dict | None:
-    """Resolve one transaction from either row index or transaction ID.
+    """Resolve one transaction without allowing a stale row hint to retarget it.
 
-    Args:
-        row_index: Optional one-based sheet row reference.
-        txn_id: Optional transaction ID reference.
-
-    Returns:
-        Matching transaction dict, or `None` when not found.
-
-    Raises:
-        ValueError when a transaction ID unexpectedly matches multiple rows.
+    Transaction ID is authoritative whenever it is supplied. A row index is
+    only a compatibility hint and must still point at the same ID. Duplicate
+    IDs fail closed because no row can be selected safely.
     """
+    clean_id = str(txn_id or "").strip()
+    if clean_id:
+        matches = get_transactions_by_ids([clean_id])
+        if len(matches) > 1:
+            raise ValueError(
+                "Transaction ID duplikat terdeteksi. Edit/hapus diblok sampai ID diperbaiki di data sumber."
+            )
+        if not matches:
+            return None
+        match = matches[0]
+        if row_index:
+            hinted = get_transactions_by_row_indices([row_index])
+            # A stale row is only a stale *hint*. Never mutate the occupant of
+            # that row; continue with the uniquely re-resolved ID instead.
+            # Material source changes are guarded separately by the immutable
+            # preview signature.
+            if hinted and str(hinted[0].get("id", "")).strip() == clean_id:
+                return hinted[0]
+        return match
+
     if row_index:
         matches = get_transactions_by_row_indices([row_index])
         return matches[0] if matches else None
 
-    if txn_id:
-        matches = get_transactions_by_ids([txn_id])
-
-        if len(matches) == 1:
-            return matches[0]
-
-        if len(matches) > 1:
-            # Raise a clear error so the caller can stop this invalid flow.
-            raise ValueError(
-                "Transaction ID ini duplikat. Gunakan nomor dari /last agar spesifik."
-            )
-
     return None
+
+
+def transaction_material_signature(txn: dict | None) -> tuple:
+    """Return the fields that make an edit/delete preview materially current."""
+    txn = txn or {}
+    return tuple(
+        str(txn.get(field, "") if txn.get(field, "") is not None else "")
+        for field in TRANSACTION_COLUMNS
+    )
 
 
 # Helper for build transaction row from record.
@@ -2240,6 +2277,7 @@ def preview_edit_transaction_by_ref(
     updates: dict,
     row_index: int | None = None,
     txn_id: str | None = None,
+    expected_signature: tuple | list | None = None,
 ) -> dict:
     """Preview editing one transaction and calculate balance deltas.
 
@@ -2282,6 +2320,13 @@ def preview_edit_transaction_by_ref(
         return {
             "success": False,
             "message": "Transaksi tidak ditemukan.",
+        }
+
+    if expected_signature is not None and tuple(expected_signature) != transaction_material_signature(old_txn):
+        return {
+            "success": False,
+            "message": "Transaksi berubah sejak preview. Buat preview baru sebelum menyimpan.",
+            "stale": True,
         }
 
     old_payment_category = str(old_txn.get("category", "") or "").strip()
@@ -2495,6 +2540,8 @@ def edit_transaction_by_ref(
     *,
     edit_debt_payment_transaction_fn=None,
     sync_debt_charges_from_transaction_edit_fn=None,
+    expected_signature: tuple | list | None = None,
+    skip_debt_sync: bool = False,
 ) -> dict:
     """Apply an approved edit to one transaction reference.
 
@@ -2516,6 +2563,7 @@ def edit_transaction_by_ref(
         updates=updates,
         row_index=row_index,
         txn_id=txn_id,
+        expected_signature=expected_signature,
     )
 
     if not preview.get("success"):
@@ -2578,7 +2626,7 @@ def edit_transaction_by_ref(
 
     debt_sync_result = {"success": True, "updated": [], "overpaid": []}
     # Handle transaction has debt relation(old txn) or transaction has deb.
-    if transaction_has_debt_relation(old_txn) or transaction_has_debt_relation(new_txn):
+    if not skip_debt_sync and (transaction_has_debt_relation(old_txn) or transaction_has_debt_relation(new_txn)):
         # Run this operation in a guarded block so failures can be handled.
         try:
             if sync_debt_charges_from_transaction_edit_fn is None:

@@ -474,9 +474,20 @@ def sheets_transaction(label: str | None = None):
     try:
         yield tx
     # Handle an expected failure from the guarded operation above.
-    except Exception:
+    except Exception as exc:
         tx.failed = True
-        tx.rollback()
+        rollback_ok = tx.rollback()
+        if not rollback_ok:
+            # Preserve explicit rollback uncertainty.  A later logical failure
+            # (for example split/debt batch failure) must not be reported as a
+            # clean cancellation when one or more compensating writes failed.
+            if isinstance(exc, SheetsAtomicWriteError) and exc.rollback_ok is False:
+                raise
+            raise SheetsAtomicWriteError(
+                exc,
+                rollback_ok=False,
+                rollback_errors=tx.rollback_errors,
+            ) from exc
         raise
     else:
         if not tx.failed and not tx.rolled_back:

@@ -17,6 +17,7 @@ from app.sheets.client import (
 )
 # Import app.config so this module can use its helpers.
 from app.config import SHEET_DEBTS, SHEET_DEBT_PAYMENTS
+from app.services.operation_errors import PartialMutationError
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -512,6 +513,91 @@ def add_debt(
             "message": str(e),
             "action": "error",
         }
+
+
+# Helper for validate split bill receivables.
+def validate_split_bill_receivables(participants: list[tuple[str, float]]) -> dict:
+    """Validate the complete required split set without performing a write."""
+    normalized: list[tuple[str, float]] = []
+    seen_people: set[str] = set()
+    for raw_person, raw_share in participants or []:
+        person = normalize_person_name(raw_person)
+        try:
+            share = float(raw_share or 0)
+        except (TypeError, ValueError):
+            share = 0.0
+        if not person:
+            return {"success": False, "message": "Nama peserta split kosong.", "participants": []}
+        if share <= 0:
+            return {
+                "success": False,
+                "message": f"Nominal split untuk {person} harus lebih dari 0.",
+                "participants": [],
+            }
+        person_key = person.casefold()
+        if person_key in seen_people:
+            return {
+                "success": False,
+                "message": f"Peserta split {person} duplikat.",
+                "participants": [],
+            }
+        seen_people.add(person_key)
+        normalized.append((person, share))
+
+    if not normalized:
+        return {"success": False, "message": "Peserta split belum lengkap.", "participants": []}
+    return {"success": True, "message": "ok", "participants": normalized}
+
+
+# Helper for create split bill receivables.
+def create_split_bill_receivables(
+    participants: list[tuple[str, float]],
+    *,
+    description: str = "",
+    source_transaction_id: str = "",
+) -> dict:
+    """Create one complete required receivable set for a confirmed split bill.
+
+    All deterministic participant/share validation happens before the first
+    write. Once a write helper has been invoked, a failure escapes to the outer
+    Sheets transaction boundary so rollback/reconciliation policy can run.
+    """
+    validation = validate_split_bill_receivables(participants)
+    if not validation.get("success"):
+        return {
+            "success": False,
+            "message": validation.get("message") or "Split bill tidak valid.",
+            "created": [],
+            "failed": [],
+        }
+    normalized = list(validation.get("participants") or [])
+
+    created: list[dict] = []
+    for person, share in normalized:
+        result = add_debt(
+            "receivable",
+            person,
+            share,
+            description=description,
+            source_transaction_id=source_transaction_id,
+            cashflow_mode="debt_only",
+            fronting_mode="split_bill",
+        )
+        if not result.get("success"):
+            message = result.get("message") or f"Gagal membuat piutang split untuk {person}."
+            # add_debt() is a write helper and may have failed after its debt row
+            # append but before its mutation-history append. Always escape to the
+            # Sheets transaction boundary once a write helper has been invoked.
+            raise PartialMutationError(message, operation="create_split_bill_receivables")
+        created.append(result)
+
+    return {
+        "success": True,
+        "message": "ok",
+        "created": created,
+        "failed": [],
+        "debt_ids": [str(item.get("debt_id") or "") for item in created if item.get("debt_id")],
+    }
 
 
 # Helper for get active debts.
@@ -2076,6 +2162,7 @@ DEBT_DESCRIPTION_COL = 6
 DEBT_DUE_DATE_COL = 7
 DEBT_IS_SETTLED_COL = 8
 DEBT_SETTLED_AT_COL = 10
+DEBT_SOURCE_TRANSACTION_ID_COL = 11
 
 
 # Helper for get debts with row index.
@@ -2687,55 +2774,279 @@ def sync_debt_charges_from_transaction_edit(old_txn: dict, new_txn: dict) -> dic
     }
 
 
-# Helper for void debts for transaction.
-def void_debts_for_transaction(transaction_id: str, debt_ids: list[str] | None = None) -> dict:
-    """Void active debts linked to a source transaction.
+# Helper for transaction debt dependency signature.
+def transaction_debt_dependency_signature(txn: dict) -> tuple:
+    """Return material two-way debt/history state for delete revalidation.
 
-    Args:
-        transaction_id: Source transaction ID being deleted or corrected.
-        debt_ids: Optional explicit debt IDs to include with source-linked rows.
-
-    Returns:
-        Result dict listing voided, skipped, and failed debt IDs.
-
-    Side effects:
-        Calls `void_linked_debt_only` for each target debt, which mutates debt
-        rows and appends mutation records.
+    Row positions are intentionally excluded: a sheet resort must not make a
+    stable relation stale. New/removed/duplicate linked debt rows, settlement
+    progress, or debt history do change the signature.
     """
-    targets = []
-    seen = set()
+    txn = dict(txn or {})
+    txn_id = str(txn.get("id") or "").strip()
+    explicit_ids = set(parse_debt_ids_from_transaction_record(txn))
+    debt_index = build_debts_index(active_only=False)
+    linked_rows = []
+    linked_ids: set[str] = set()
+    for debt in debt_index.get("items") or []:
+        debt_id = str((debt or {}).get("id") or "").strip()
+        source_id = str((debt or {}).get("source_transaction_id") or "").strip()
+        if not debt_id or (debt_id not in explicit_ids and source_id != txn_id):
+            continue
+        linked_ids.add(debt_id)
+        linked_rows.append((
+            debt_id,
+            str((debt or {}).get("type") or ""),
+            str((debt or {}).get("person_name") or ""),
+            str((debt or {}).get("original_amount") or ""),
+            str((debt or {}).get("remaining_amount") or ""),
+            str((debt or {}).get("is_settled") or ""),
+            str((debt or {}).get("settled_at") or ""),
+            source_id,
+            str((debt or {}).get("cashflow_mode") or ""),
+            str((debt or {}).get("fronting_mode") or ""),
+        ))
+    # Explicit IDs that no longer resolve are material too.
+    missing_explicit = tuple(sorted(explicit_ids - linked_ids))
+    history_rows = []
+    if linked_ids:
+        for row in get_all_records(SHEET_DEBT_PAYMENTS) or []:
+            debt_id = str((row or {}).get("debt_id") or "").strip()
+            if debt_id in linked_ids:
+                history_rows.append((
+                    str((row or {}).get("id") or ""),
+                    debt_id,
+                    str((row or {}).get("amount") or ""),
+                    str((row or {}).get("date") or ""),
+                    str((row or {}).get("note") or ""),
+                ))
+    return (tuple(sorted(linked_rows)), tuple(sorted(history_rows)), missing_explicit)
 
-    # Iterate through each debt id.
+
+# Helper for preview pristine relation detach.
+def preview_pristine_relation_detach(txn: dict) -> dict:
+    """Validate that every debt relation can be safely detached without cash replay."""
+    txn = dict(txn or {})
+    txn_id = str(txn.get("id") or "").strip()
+    if not txn_id:
+        return {"success": False, "message": "Transaction ID tidak valid.", "repair_required": True, "debts": []}
+
+    debt_index = build_debts_index(active_only=False)
+    items = debt_index.get("items", []) or []
+    counts: dict[str, int] = {}
+    for item in items:
+        debt_id = str(item.get("id") or "").strip()
+        if debt_id:
+            counts[debt_id] = counts.get(debt_id, 0) + 1
+
+    explicit_ids = parse_debt_ids_from_transaction_record(txn)
+    missing = [debt_id for debt_id in explicit_ids if debt_id not in (debt_index.get("by_id") or {})]
+    duplicates = [debt_id for debt_id in explicit_ids if counts.get(debt_id, 0) != 1]
+    source_duplicates = [
+        debt_id for debt_id, count in counts.items()
+        if count > 1 and any(str(x.get("id") or "").strip() == debt_id for x in (debt_index.get("by_source_txn", {}).get(txn_id, []) or []))
+    ]
+    if missing or duplicates or source_duplicates:
+        return {
+            "success": False,
+            "message": "Relasi debt transaksi tidak konsisten/unik. Perlu repair sebelum conversion.",
+            "repair_required": True,
+            "missing_debt_ids": missing,
+            "duplicate_debt_ids": sorted(set(duplicates + source_duplicates)),
+            "debts": [],
+        }
+
+    # Relation detach is only safe when both canonical directions agree.
+    # `get_debts_linked_to_transaction_record()` intentionally returns the union
+    # for discovery, but a union is not proof that the persisted relation is
+    # internally consistent.  A mismatch must fail closed before any detach.
+    explicit_set = set(explicit_ids)
+    source_rows = list((debt_index.get("by_source_txn", {}) or {}).get(txn_id, []) or [])
+    source_ids = [str((debt or {}).get("id") or "").strip() for debt in source_rows]
+    source_set = {debt_id for debt_id in source_ids if debt_id}
+    source_missing_ids = [debt_id for debt_id in source_ids if not debt_id]
+    if source_missing_ids or explicit_set != source_set:
+        return {
+            "success": False,
+            "message": "Relasi debt transaksi berbeda antara transaction-side dan debt-side. Perlu repair sebelum conversion.",
+            "repair_required": True,
+            "transaction_side_ids": sorted(explicit_set),
+            "debt_side_ids": sorted(source_set),
+            "debts": [],
+        }
+
+    linked = get_debts_linked_to_transaction_record(txn, active_only=False, debt_index=debt_index)
+    if not linked:
+        return {"success": False, "message": "Relasi debt/split tidak ditemukan.", "repair_required": True, "debts": []}
+
+    payment_rows = get_all_records(SHEET_DEBT_PAYMENTS)
+    history_by_debt: dict[str, list[dict]] = {}
+    for row in payment_rows or []:
+        debt_id = str((row or {}).get("debt_id") or "").strip()
+        if debt_id:
+            history_by_debt.setdefault(debt_id, []).append(dict(row or {}))
+
+    blocked: list[dict] = []
+    for debt in linked:
+        debt_id = str(debt.get("id") or "").strip()
+        source_id = str(debt.get("source_transaction_id") or "").strip()
+        if source_id and source_id != txn_id:
+            blocked.append({"debt_id": debt_id, "reason": "source_transaction_id mengarah ke transaksi lain"})
+            continue
+        original = parse_sheet_number(debt.get("original_amount", 0))
+        remaining = parse_sheet_number(debt.get("remaining_amount", 0))
+        if original <= 0 or is_settled_value(debt.get("is_settled", "FALSE")) or abs(original - remaining) > 0.0001:
+            blocked.append({"debt_id": debt_id, "reason": "debt sudah settled/terbayar/berubah"})
+            continue
+        material_history = []
+        for row in history_by_debt.get(debt_id, []):
+            note = str(row.get("note") or "").strip().lower()
+            # Initial creation mutation is part of pristine construction. Any
+            # later payment/sync/netting/void/edit mutation is material.
+            if note.startswith("[add_payable]") or note.startswith("[add_receivable]"):
+                continue
+            material_history.append(row)
+        if material_history:
+            blocked.append({"debt_id": debt_id, "reason": "ada history/mutasi setelah creation"})
+
+    if blocked:
+        return {
+            "success": False,
+            "message": "Relasi debt/split sudah punya pembayaran atau mutasi material dan tidak aman dilepas.",
+            "repair_required": False,
+            "blocked": blocked,
+            "debts": linked,
+        }
+
+    return {
+        "success": True,
+        "message": "ok",
+        "repair_required": False,
+        "debts": linked,
+        "debt_ids": [str(d.get("id") or "") for d in linked],
+    }
+
+
+def detach_pristine_relations_for_transaction(txn: dict) -> dict:
+    """Detach already-validated debt relations without creating any cash event."""
+    preview = preview_pristine_relation_detach(txn)
+    if not preview.get("success"):
+        return preview
+    txn_id = str((txn or {}).get("id") or "").strip()
+    voided: list[str] = []
+    debt_rows = {str((debt or {}).get("id") or "").strip(): int((debt or {}).get("_row_index") or 0) for debt in preview.get("debts") or []}
+    for debt_id in preview.get("debt_ids") or []:
+        result = void_linked_debt_only(debt_id, reason=f"Relasi transaksi {txn_id} dikonversi menjadi ordinary")
+        if not result.get("success") or result.get("skipped"):
+            message = result.get("message") or f"Gagal melepas debt {debt_id}."
+            if voided:
+                raise PartialMutationError(message, operation="detach_pristine_relations")
+            return {"success": False, "message": message, "debt_ids": preview.get("debt_ids") or [], "voided_ids": []}
+        # A relation transition must detach the debt-side pointer too. Keeping
+        # source_transaction_id would let the canonical two-way lookup rediscover
+        # a relation that the user explicitly converted to ordinary.
+        row_index = debt_rows.get(debt_id) or int((get_debt_by_id_any_status(debt_id)[0]) or 0)
+        if not row_index:
+            raise PartialMutationError(
+                f"Row debt {debt_id} hilang setelah void; reconciliation diperlukan.",
+                operation="detach_pristine_relations_source_clear",
+            )
+        update_cell(SHEET_DEBTS, row_index, DEBT_SOURCE_TRANSACTION_ID_COL, "")
+        voided.append(debt_id)
+    return {"success": True, "message": "ok", "debt_ids": preview.get("debt_ids") or [], "voided_ids": voided}
+
+
+# Helper for preview source-linked debt voids.
+def preview_void_debts_for_transaction(transaction_id: str, debt_ids: list[str] | None = None) -> dict:
+    """Read-only eligibility for deleting a transaction with linked debts.
+
+    The target set is the union of transaction-side IDs and debt-side
+    ``source_transaction_id`` relations, including settled rows.  This keeps
+    preview and writer semantics aligned and prevents a changed relation from
+    being silently omitted from the confirmed delete set.
+    """
+    transaction_id = str(transaction_id or "").strip()
+    targets: list[str] = []
+    seen: set[str] = set()
     for debt_id in debt_ids or []:
         clean = str(debt_id or "").strip()
         if clean and clean not in seen:
-            # Append the current value to targets.
             targets.append(clean)
-            # Append the current value to seen.
             seen.add(clean)
-
-    # Iterate through each debt.
-    for debt in get_debts_by_source_transaction_id(transaction_id, active_only=True):
-        clean = str(debt.get("id", "")).strip()
+    for debt in get_debts_by_source_transaction_id(transaction_id, active_only=False):
+        clean = str(debt.get("id", "") or "").strip()
         if clean and clean not in seen:
-            # Append the current value to targets.
             targets.append(clean)
-            # Append the current value to seen.
             seen.add(clean)
 
-    # Build results for the response flow.
-    results = []
-    # Iterate through each debt id.
-    for debt_id in targets:
-        results.append(void_linked_debt_only(debt_id, reason=f"Transaksi sumber {transaction_id} dihapus"))
+    debt_index = build_debts_index(active_only=False)
+    items = debt_index.get("items") or []
+    counts: dict[str, int] = {}
+    for item in items:
+        debt_id = str((item or {}).get("id") or "").strip()
+        if debt_id:
+            counts[debt_id] = counts.get(debt_id, 0) + 1
 
-    failed = [r for r in results if not r.get("success")]
+    for debt_id in targets:
+        if counts.get(debt_id, 0) != 1:
+            reason = "tidak ditemukan" if counts.get(debt_id, 0) == 0 else "tidak unik/duplicate"
+            return {
+                "success": False,
+                "message": f"Debt {debt_id} {reason}. Preview/repair diperlukan.",
+                "failed": [{"debt_id": debt_id, "reason": reason}],
+                "debt_ids": targets,
+            }
+        debt = (debt_index.get("by_id") or {}).get(debt_id) or {}
+        source_id = str(debt.get("source_transaction_id") or "").strip()
+        if source_id and transaction_id and source_id != transaction_id:
+            return {
+                "success": False,
+                "message": f"Debt {debt_id} terhubung ke transaksi lain. Repair diperlukan.",
+                "failed": [{"debt_id": debt_id, "reason": "source_transaction_id mismatch"}],
+                "debt_ids": targets,
+            }
+        if is_settled_value(debt.get("is_settled", "FALSE")):
+            return {
+                "success": False,
+                "message": f"Debt {debt_id} sudah berubah/settled. Preview ulang diperlukan.",
+                "failed": [{"debt_id": debt_id, "reason": "settled"}],
+                "debt_ids": targets,
+            }
+        original = parse_sheet_number(debt.get("original_amount", 0))
+        remaining = parse_sheet_number(debt.get("remaining_amount", 0))
+        if abs(original - remaining) > 0.0001:
+            return {
+                "success": False,
+                "message": f"Debt {debt_id} sudah punya pembayaran/mutasi.",
+                "failed": [{"debt_id": debt_id, "reason": "remaining amount changed"}],
+                "debt_ids": targets,
+            }
+
+    return {"success": True, "message": "ok", "debt_ids": targets, "failed": []}
+
+
+# Helper for void debts for transaction.
+def void_debts_for_transaction(transaction_id: str, debt_ids: list[str] | None = None) -> dict:
+    """Void all source-linked debts as one logical mutation family."""
+    preview = preview_void_debts_for_transaction(transaction_id, debt_ids)
+    if not preview.get("success"):
+        return preview
+    targets = list(preview.get("debt_ids") or [])
+
+    results: list[dict] = []
+    for debt_id in targets:
+        result = void_linked_debt_only(debt_id, reason=f"Transaksi sumber {transaction_id} dihapus")
+        if not result.get("success") or result.get("skipped"):
+            message = result.get("message") or f"Gagal void debt {debt_id}."
+            raise PartialMutationError(message, operation="void_debts_for_transaction")
+        results.append(result)
+
     return {
-        "success": not failed,
-        "message": "ok" if not failed else "; ".join(r.get("message", "Gagal void debt") for r in failed),
-        "voided_ids": [r.get("debt_id") for r in results if r.get("success") and not r.get("skipped")],
-        "skipped_ids": [r.get("debt_id") for r in results if r.get("success") and r.get("skipped")],
-        "failed": failed,
+        "success": True,
+        "message": "ok",
+        "voided_ids": [r.get("debt_id") for r in results],
+        "skipped_ids": [],
+        "failed": [],
     }
 
 
@@ -3132,58 +3443,52 @@ def preview_void_debts_by_person(
 
 
 # Helper for void debt ids.
-def void_debt_ids(debt_ids: list[str], *, void_debt_fn) -> dict:
-    """Void multiple debt IDs after user confirmation.
-
-    Args:
-        debt_ids: Full debt IDs approved for voiding.
-
-    Returns:
-        Result dict with per-debt results, aggregate reverse deltas, balances,
-        totals, and voided IDs.
-
-    Side effects:
-        Mutates each selected debt through `void_debt` and may apply related
-        reverse account deltas depending on each debt preview.
-    """
-    # Normalize clean ids before matching.
-    clean_ids = []
-    seen = set()
-    # Iterate through each debt id.
+def void_debt_ids(debt_ids: list[str], *, void_debt_fn, prevalidate_fn=None) -> dict:
+    """Void multiple debt IDs as one logical confirmed operation."""
+    clean_ids: list[str] = []
+    seen: set[str] = set()
     for debt_id in debt_ids or []:
         clean = str(debt_id or "").strip()
         if clean and clean not in seen:
-            # Append the current value to clean ids.
             clean_ids.append(clean)
-            # Append the current value to seen.
             seen.add(clean)
-
-    # Validate missing clean ids before continuing.
     if not clean_ids:
         return {"success": False, "message": "Tidak ada debt_id yang akan divoid.", "results": []}
 
-    # Build results for the response flow.
-    results = []
-    # Iterate through each debt id.
-    for debt_id in clean_ids:
-        # Append the current value to results.
-        results.append(void_debt_fn(debt_id, {}))
+    # Read/validate the whole target set before the first mutation whenever the
+    # caller exposes its normal preview primitive.
+    if prevalidate_fn is not None:
+        previews: list[dict] = []
+        for debt_id in clean_ids:
+            preview = prevalidate_fn(debt_id)
+            previews.append(preview)
+            if not preview.get("success"):
+                return {
+                    "success": False,
+                    "message": preview.get("message") or f"Debt {debt_id} tidak bisa divoid.",
+                    "results": [],
+                    "previews": previews,
+                }
 
-    failed = [r for r in results if not r.get("success")]
-    success_results = [r for r in results if r.get("success")]
+    results: list[dict] = []
+    for debt_id in clean_ids:
+        result = void_debt_fn(debt_id, {})
+        if not result.get("success"):
+            message = result.get("message") or f"Gagal void debt {debt_id}."
+            # The writer can fail after account/debt writes. Prevalidation above
+            # owns ordinary validation failures; writer failures must reach the
+            # outer Sheets transaction even when this is the first target.
+            raise PartialMutationError(message, operation="void_debt_ids")
+        results.append(result)
 
     reverse_deltas: dict[str, float] = {}
-    new_balances = {}
+    new_balances: dict[str, float] = {}
+    debts: list[dict] = []
+    cashflow_txns: list[dict] = []
     total_original = 0.0
     total_remaining = 0.0
-    # Load debts for the current calculation.
-    debts = []
-    cashflow_txns = []
-
-    # Iterate through each result.
-    for result in success_results:
+    for result in results:
         debt = result.get("debt") or {}
-        # Append the current value to debts.
         debts.append(debt)
         total_original += parse_sheet_number(debt.get("original_amount", 0))
         total_remaining += parse_sheet_number(debt.get("remaining_amount", 0))
@@ -3195,18 +3500,18 @@ def void_debt_ids(debt_ids: list[str], *, void_debt_fn) -> dict:
             new_balances[account] = balance
 
     return {
-        "success": not failed,
-        "message": "ok" if not failed else "; ".join(str(r.get("message") or "Gagal void debt") for r in failed),
+        "success": True,
+        "message": "ok",
         "results": results,
-        "failed": failed,
-        "success_results": success_results,
+        "failed": [],
+        "success_results": results,
         "debts": debts,
         "cashflow_txns": cashflow_txns,
         "reverse_deltas": reverse_deltas,
         "new_balances": new_balances,
         "total_original": total_original,
         "total_remaining": total_remaining,
-        "voided_ids": [str((r.get("debt") or {}).get("id", "")).strip() for r in success_results],
+        "voided_ids": [str((r.get("debt") or {}).get("id", "")).strip() for r in results],
     }
 
 

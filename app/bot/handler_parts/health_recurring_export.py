@@ -13,6 +13,7 @@ from app.services.resolver_service import resolve_account_name
 from app.services.recurring_service import get_due_recurring_rules, get_recurring_rule_by_id
 from app.observability import emit_event
 from app.application.external_io import run_scheduled, run_sheets_read
+from app.bot.handler_parts.management_browser import start_recurring_browser
 
 
 def create_unique_export_temp_path() -> str:
@@ -1394,11 +1395,7 @@ async def recurring_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     rules = await run_sheets_read("get_recurring_rules", get_recurring_rules, active_only=False)
 
-    # Send the Telegram response before continuing.
-    await update.message.reply_text(
-        build_recurring_rules_text(rules),
-        parse_mode="Markdown",
-    )
+    await start_recurring_browser(update, context, rules)
 
 
 async def recurring_add_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):

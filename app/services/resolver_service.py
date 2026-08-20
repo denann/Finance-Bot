@@ -142,6 +142,27 @@ def get_account_records_safe() -> list[dict]:
     return _safe_records(SHEET_ACCOUNTS, fallback)
 
 
+# Helper for get account names snapshot.
+def get_account_names_snapshot() -> tuple[list[str], bool]:
+    """Return account names plus whether the Sheets-backed view was read successfully.
+
+    The boolean is False only when the account source itself could not be read.
+    Callers that only need backward-compatible names should keep using
+    ``get_account_names_from_sheet()``.
+    """
+    try:
+        records = get_all_records(SHEET_ACCOUNTS)
+    except Exception:
+        return list(DEFAULT_ACCOUNT_NAMES), False
+
+    names = []
+    for record in records or []:
+        name = str(record.get("account_name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names or list(DEFAULT_ACCOUNT_NAMES), True
+
+
 # Helper for get account names from sheet.
 def get_account_names_from_sheet() -> list[str]:
     """Return active account names from the accounts sheet."""
@@ -365,6 +386,169 @@ def _category_alias_candidates(record: dict) -> list[str]:
     result = [str(record.get("category_name") or "")]
     result.extend(part.strip() for part in aliases.split(",") if part.strip())
     return result
+
+
+def _raw_contains_normalized_phrase(raw_text: str, phrase: str) -> bool:
+    """Match one normalized alias as full token/phrase inside raw text."""
+    raw_key = normalize_lookup_key(raw_text)
+    phrase_key = normalize_lookup_key(phrase)
+    if not raw_key or not phrase_key:
+        return False
+    return bool(re.search(rf"(?:^|\s){re.escape(phrase_key)}(?:$|\s)", raw_key))
+
+
+def resolve_learned_category_from_raw(raw_text: str, transaction_type: str | None) -> dict:
+    """Resolve raw descriptive text through existing category aliases safely.
+
+    This is intentionally a fallback layer. Callers should use it only when
+    deterministic parsing produced the canonical fallback category, so learned
+    aliases never override a stronger parser decision.
+    """
+
+    txn_type = _default_category_type(transaction_type)
+    matches: dict[str, set[str]] = {}
+    for record in get_category_records_safe():
+        name = str(record.get("category_name") or "").strip()
+        record_type = str(record.get("type") or txn_type).strip().lower() or txn_type
+        if not name or record_type != txn_type:
+            continue
+        aliases = [part.strip() for part in str(record.get("aliases") or "").split(",") if part.strip()]
+        for alias in aliases:
+            if _raw_contains_normalized_phrase(raw_text, alias):
+                key = normalize_lookup_key(alias)
+                matches.setdefault(key, set()).add(name)
+
+    resolved_names = {name for names in matches.values() for name in names}
+    if len(resolved_names) == 1:
+        return {"status": "raw_alias", "category_name": next(iter(resolved_names)), "created": False}
+    if len(resolved_names) > 1:
+        return {"status": "ambiguous_alias", "category_name": "", "created": False}
+    return {"status": "missing", "category_name": "", "created": False}
+
+
+def extract_category_learning_alias(raw_text: str) -> str:
+    """Extract a bounded descriptive phrase for explicit post-commit learning."""
+
+    clean = str(raw_text or "").replace("[edited]", " ")
+    clean = normalize_lookup_key(clean)
+    # Remove amounts and common date tokens before selecting descriptive words.
+    clean = re.sub(r"\b\d+(?:\s*(?:rb|ribu|k|jt|juta))?\b", " ", clean)
+    month_words = (
+        "januari februari maret april mei juni juli agustus september oktober november desember "
+        "jan feb mar apr jun jul agu agt sep okt nov des"
+    ).split()
+    blocked = {
+        "transfer", "transaksi", "bayar", "pembayaran", "beli", "dari", "ke", "via", "pakai", "pake",
+        "income", "expense", "pemasukan", "pengeluaran", "tanggal", "tgl", "date", "hari", "bulan", "minggu",
+        "kemarin", "besok", "depan", "lalu", "rp", "idr", "cash", "uang", "duit",
+        *month_words,
+    }
+    blocked.update(normalize_lookup_key(name) for name in get_account_names_from_sheet())
+    tokens = [token for token in clean.split() if len(token) >= 2 and token not in blocked and not token.isdigit()]
+    if not tokens:
+        return ""
+    # A short phrase is more useful than storing the entire transaction text,
+    # while remaining deterministic and phrase-boundary safe at lookup time.
+    return " ".join(tokens[:3])
+
+
+def assess_category_learning_candidate(old_txn: dict, new_txn: dict, updates: dict) -> dict | None:
+    """Return a safe post-commit category-learning proposal, if eligible."""
+
+    if "category" not in (updates or {}):
+        return None
+    old_category = str((old_txn or {}).get("category") or "").strip()
+    new_category = str((new_txn or {}).get("category") or "").strip()
+    if not old_category or not new_category or normalize_lookup_key(old_category) == normalize_lookup_key(new_category):
+        return None
+    parsed_by = str((old_txn or {}).get("parsed_by") or "").strip().lower()
+    if not parsed_by or parsed_by in {"manual", "user", "category_learning"}:
+        return None
+    txn_type = _default_category_type((new_txn or {}).get("type"))
+    target = find_category_by_name(new_category)
+    if not target.get("found"):
+        return None
+    target_record = target.get("record") or {}
+    target_type = str(target_record.get("type") or txn_type).strip().lower() or txn_type
+    if target_type != txn_type:
+        return None
+    alias = extract_category_learning_alias(str((old_txn or {}).get("raw_input") or ""))
+    if not alias:
+        return None
+
+    # Refuse an offer when the exact alias already belongs to another category.
+    alias_key = normalize_lookup_key(alias)
+    owners = set()
+    for record in get_category_records_safe():
+        record_type = str(record.get("type") or txn_type).strip().lower() or txn_type
+        if record_type != txn_type:
+            continue
+        for existing_alias in str(record.get("aliases") or "").split(","):
+            if normalize_lookup_key(existing_alias) == alias_key:
+                owners.add(str(record.get("category_name") or "").strip())
+    if owners and owners != {new_category}:
+        return None
+    if owners == {new_category}:
+        return None
+    return {
+        "alias": alias,
+        "target_category": new_category,
+        "transaction_type": txn_type,
+        "source_transaction_id": str((new_txn or {}).get("id") or ""),
+    }
+
+
+def learn_category_alias(*, alias: str, target_category: str, transaction_type: str) -> dict:
+    """Merge one explicitly approved alias into the existing category row."""
+
+    alias_key = normalize_lookup_key(alias)
+    txn_type = _default_category_type(transaction_type)
+    if not alias_key:
+        return {"success": False, "message": "Alias kosong."}
+    try:
+        records = get_all_records(SHEET_CATEGORIES)
+    except Exception as exc:
+        return {"success": False, "message": f"Gagal membaca kategori: {exc}"}
+
+    target_record = None
+    owners = set()
+    for record in records or []:
+        name = str(record.get("category_name") or "").strip()
+        record_type = str(record.get("type") or txn_type).strip().lower() or txn_type
+        if record_type != txn_type:
+            continue
+        if normalize_lookup_key(name) == normalize_lookup_key(target_category):
+            target_record = record
+        for existing_alias in str(record.get("aliases") or "").split(","):
+            if normalize_lookup_key(existing_alias) == alias_key:
+                owners.add(name)
+
+    if target_record is None:
+        return {"success": False, "message": "Kategori target tidak ditemukan."}
+    if owners and owners != {str(target_record.get("category_name") or target_category).strip()}:
+        return {"success": False, "message": "Alias sudah dipakai kategori lain.", "collision": True}
+    if owners:
+        return {"success": True, "message": "Alias sudah dipelajari.", "noop": True}
+
+    existing = [part.strip() for part in str(target_record.get("aliases") or "").split(",") if part.strip()]
+    try:
+        result = update_category(
+            str(target_record.get("category_name") or target_category),
+            aliases=[*existing, alias],
+        )
+    except Exception as exc:
+        # Learning is optional metadata written after the financial edit commit.
+        # Convert provider/write exceptions into a bounded result so callers can
+        # truthfully report that the transaction remains committed.
+        return {"success": False, "message": f"Gagal menyimpan alias kategori: {exc}"}
+    if not result.get("success"):
+        return result
+    return {
+        "success": True,
+        "message": "Alias kategori berhasil dipelajari.",
+        "category_name": result.get("category_name") or target_category,
+        "alias": alias,
+    }
 
 
 # Helper for category name exists.
@@ -614,6 +798,41 @@ def resolve_category_name(category_input: str, transaction_type: str | None = No
     return {"status": "missing", "category_name": raw, "created": False}
 
 
+def assess_edit_category_choice(updates: dict, preview: dict) -> dict | None:
+    """Return a category clarification when an edit maps to a different existing category.
+
+    This is read-only and shared by direct and staged edit UX so both flows use
+    the same resolver semantics without duplicating category matching rules.
+    """
+    if "category" not in (updates or {}):
+        return None
+    raw_category = str((updates or {}).get("category") or "").strip()
+    if not raw_category:
+        return None
+
+    new_txn = (preview or {}).get("new_txn") or {}
+    old_txn = (preview or {}).get("old_txn") or {}
+    txn_type = str(
+        (updates or {}).get("type") or new_txn.get("type") or old_txn.get("type") or ""
+    ).strip().lower()
+    if txn_type not in {"expense", "income"}:
+        return None
+
+    resolved = resolve_category_name(raw_category, txn_type, allow_create=False)
+    status = str(resolved.get("status") or "").strip().lower()
+    suggested = str(resolved.get("category_name") or "").strip()
+    if not suggested:
+        return None
+    if status in {"alias", "similar", "exact"} and raw_category.lower() != suggested.lower():
+        return {
+            "raw_category": raw_category,
+            "suggested_category": suggested,
+            "status": status,
+            "transaction_type": txn_type,
+        }
+    return None
+
+
 def create_category(category_name: str, transaction_type: str = "expense", emoji: str | None = None, aliases: str = "") -> dict:
     """Append a new category row when no matching category already exists.
 
@@ -784,6 +1003,13 @@ def resolve_parsed_transaction(parsed: dict, raw_text: str = "") -> dict:
 
     if txn_type in {"expense", "income"}:
         category = str(parsed.get("category") or "").strip()
-        parsed["category"] = ensure_category_for_transaction(category, txn_type)
+        resolved_category = ensure_category_for_transaction(category, txn_type)
+        # Learned aliases are a fallback-only layer. Never override a concrete
+        # deterministic category with user-learned metadata.
+        if normalize_lookup_key(resolved_category) == normalize_lookup_key(_default_category_name(txn_type)) and raw_text:
+            learned = resolve_learned_category_from_raw(raw_text, txn_type)
+            if learned.get("status") == "raw_alias" and learned.get("category_name"):
+                resolved_category = str(learned.get("category_name"))
+        parsed["category"] = resolved_category
 
     return parsed

@@ -23,6 +23,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     err_text = str(error or "Unknown error")
 
     from app.services.operation_errors import AtomicOperationError
+    from app.sheets.client import SheetsAtomicWriteError, SheetsCommitOutcomeUnknownError
 
     if isinstance(error, AtomicOperationError):
         if error.reconciliation_required:
@@ -35,6 +36,19 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
                 "❌ *Penyimpanan gagal dan operasi dibatalkan.*\n\n"
                 "Tidak ada hasil sukses yang dinyatakan. Buat preview baru sebelum mencoba lagi."
             )
+    elif isinstance(error, SheetsCommitOutcomeUnknownError) or (
+        isinstance(error, SheetsAtomicWriteError) and error.rollback_ok is False
+    ):
+        user_msg = (
+            "❌ *Hasil penyimpanan belum dapat dipastikan.*\n\n"
+            "Rollback/commit tidak dapat dibuktikan sepenuhnya. Jangan ulangi aksi ini "
+            "sebelum data diperiksa atau direkonsiliasi."
+        )
+    elif isinstance(error, SheetsAtomicWriteError) and error.rollback_ok is True:
+        user_msg = (
+            "❌ *Penyimpanan gagal dan operasi dibatalkan.*\n\n"
+            "Perubahan dari operasi ini sudah di-rollback. Buat preview baru sebelum mencoba lagi."
+        )
     elif isinstance(error, BadRequest) and (
         "Message_too_long" in err_text or "Message is too long" in err_text
     ):

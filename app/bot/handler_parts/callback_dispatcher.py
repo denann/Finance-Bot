@@ -7,6 +7,8 @@ from telegram.ext import ContextTypes
 
 from app.bot.callback_contracts import is_legacy_callback_data
 from app.bot.handler_parts.bulk_flow import handle_bulk_callback, is_bulk_callback_data
+from app.bot.handler_parts.transaction_browser import handle_transaction_browser_callback, is_transaction_browser_callback_data
+from app.bot.handler_parts.management_browser import handle_management_browser_callback, is_management_browser_callback_data
 from app.bot.handler_parts.callback_handler import legacy_callback_handler
 from app.bot.handler_parts.common_imports import (
     is_authorized,
@@ -40,6 +42,12 @@ async def callback_handler(
     data = str(getattr(getattr(update, "callback_query", None), "data", "") or "")
     if is_bulk_callback_data(data):
         await handle_bulk_callback(update, context)
+        return
+    if is_transaction_browser_callback_data(data):
+        await handle_transaction_browser_callback(update, context)
+        return
+    if is_management_browser_callback_data(data):
+        await handle_management_browser_callback(update, context)
         return
     if is_legacy_callback_data(data):
         await legacy_callback_handler(update, context)

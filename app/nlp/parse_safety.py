@@ -7,6 +7,7 @@ from __future__ import annotations
 
 # Import re for this module's local operations.
 import re
+from datetime import datetime
 # Import typing so this module can use its helpers.
 from typing import Any
 
@@ -14,6 +15,7 @@ from typing import Any
 from app.nlp.normalizer import extract_amount_from_text, normalize_text
 # Import app.nlp.regex_parser so this module can use its helpers.
 from app.nlp.regex_parser import ACCOUNT_NAMES, detect_date_result
+from app.clock import business_now
 
 
 NORMAL_PREVIEW = "normal_preview"
@@ -433,8 +435,23 @@ def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str
     # Pending expense section
     has_future_period = _has_future_or_billing_period(clean)
     has_past_or_actual = _has_past_or_actual_keyword(clean)
+    explicit_historical_date = False
+    explicit_future_date = False
+    if date_result.status == "valid" and date_result.explicit_input and date_result.value:
+        try:
+            concrete_date = datetime.strptime(date_result.value, "%Y-%m-%d").date()
+            today = business_now().date()
+            explicit_historical_date = concrete_date <= today
+            explicit_future_date = concrete_date > today
+        except ValueError:
+            pass
+    # A concrete historical date is stronger evidence than a month-name token
+    # that also appears in the generic billing-period vocabulary. Conversely a
+    # concrete future date still needs the existing pending/current decision.
+    if explicit_historical_date:
+        has_future_period = False
     # Future billing periods require clarification even when explicitly planned.
-    if has_future_period and not has_past_or_actual:
+    if explicit_future_date or (has_future_period and not has_past_or_actual):
         # Amount parsing note: keep Indonesian numeric formats stable, for example `331.063k` means Rp331.063.
         _append_unique(flags, "possible_pending_expense")
         _add_reason(
@@ -601,6 +618,13 @@ def assess_parse_safety(text: str, parsed: dict | None) -> dict:
     parsed = parsed or {}
     pre_flags, pre_reasons = detect_pre_parse_clarification_flags(text)
     info_flags, warning_flags, gemini_flags, post_reasons = detect_post_parse_flags(text, parsed)
+
+    if parsed.get("parse_ambiguity") == "runtime_account_source_unavailable":
+        _append_unique(pre_flags, "runtime_account_source_unavailable")
+        _add_reason(
+            pre_reasons,
+            "Daftar rekening sedang tidak dapat diverifikasi, jadi sumber transfer belum aman dianggap sebagai orang atau rekening sendiri.",
+        )
 
     split_bill = parsed.get("split_bill") if isinstance(parsed, dict) else None
     if split_bill:

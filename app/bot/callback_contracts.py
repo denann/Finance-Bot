@@ -10,6 +10,7 @@ LEGACY_CALLBACK_PREFIXES = (
     "cancel",
     "cancel:a_",
     "category_type:",
+    "category_learn:",
     "clarify_parse:",
     "confirm:",
     "debt_acc:",
