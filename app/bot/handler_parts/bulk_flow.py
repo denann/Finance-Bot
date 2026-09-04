@@ -167,14 +167,14 @@ def _semantic_choice_keyboard(session: BulkSession, item: BulkItem) -> InlineKey
     prefix = f"bulk_sem:{session.session_id}:{item.item_id}"
     rows = []
     if build_clarified_debt_payment(raw, parsed):
-        rows.append([InlineKeyboardButton("+ Orang ini bayar ke saya", callback_data=f"{prefix}:debt_payment")])
+        rows.append([InlineKeyboardButton("🟢 Orang ini bayar ke saya", callback_data=f"{prefix}:debt_payment")])
     person = extract_person_candidate(raw) or parsed.get("person_name") or parsed.get("subject")
     amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
     if person and amount > 0:
-        rows.append([InlineKeyboardButton("- Saya hutang ke orang ini", callback_data=f"{prefix}:payable")])
+        rows.append([InlineKeyboardButton("🔴 Saya hutang ke orang ini", callback_data=f"{prefix}:payable")])
     if build_clarified_expense(raw, parsed):
-        rows.append([InlineKeyboardButton("- Pengeluaran biasa", callback_data=f"{prefix}:expense")])
-    rows.append([InlineKeyboardButton("∅ Orang lain yang bayar", callback_data=f"{prefix}:no_cashflow")])
+        rows.append([InlineKeyboardButton("🧾 Pengeluaran biasa", callback_data=f"{prefix}:expense")])
+    rows.append([InlineKeyboardButton("👤 Orang lain yang bayar", callback_data=f"{prefix}:no_cashflow")])
     if person and amount > 0:
         rows.append([InlineKeyboardButton("🤝 Split bill", callback_data=f"{prefix}:split")])
     if build_clarified_fronting(raw, parsed):

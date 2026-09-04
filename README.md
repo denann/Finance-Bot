@@ -53,7 +53,8 @@ The core idea is simple: users can write everyday finance inputs such as `beli k
   remain explicit through `/grafik` and the report commands.
 - Income and cash-in labels use `+`; expense and cash-out labels use `-`.
   Descriptive buttons start with a symbol, while compact numbered selectors
-  intentionally show only their number.
+  intentionally show only their number. Ambiguity choices retain contextual
+  icons such as `🟢`, `🔴`, `🧾`, and `👤` instead of report-style signs.
 - Explicit split input such as
   `Bayar PAM 199.200k dibagi 4 sama Alpat Opik Sapto tanggal 20` keeps `PAM`
   as the expense subject and the names after

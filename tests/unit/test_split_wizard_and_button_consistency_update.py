@@ -10,13 +10,16 @@ from app.application.bulk_input import BulkItemStatus, create_bulk_session
 from app.bot.handler_parts.bulk_flow import (
     _classify_legacy_item,
     _mark_split,
+    _semantic_choice_keyboard,
     _semantic_split_keyboard,
     _split_keyboard,
 )
 from app.bot.handler_parts.management_browser import _list_keyboard
 from app.bot.handler_parts.transaction_flow import (
     meal_split_status_keyboard,
+    parse_clarification_keyboard,
     parse_mixed_item,
+    social_spending_guard_keyboard,
     split_bill_keyboard,
 )
 
@@ -70,6 +73,30 @@ def test_all_split_status_paths_share_the_same_buttons():
     assert _labels(split_bill_keyboard("single")) == expected
     assert _labels(_split_keyboard(session, item)) == expected
     assert _labels(_semantic_split_keyboard(session, item, "status")) == expected
+
+
+def test_ambiguous_meaning_choices_keep_contextual_symbols():
+    """Ambiguity choices use semantic icons instead of cashflow report signs."""
+
+    expected = [
+        "🟢 Orang ini bayar ke saya",
+        "🔴 Saya hutang ke orang ini",
+        "🧾 Pengeluaran biasa",
+        "👤 Orang lain yang bayar",
+    ]
+    assert [row[0] for row in _labels(parse_clarification_keyboard())[:4]] == expected
+    assert _labels(social_spending_guard_keyboard())[1] == ["🧾 Pengeluaran biasa"]
+
+    item = _classify_legacy_item(
+        "Bayar air pam 266.400k via DANA bagi 4 Sapto Alpat Opik tanggal 19 Agustus",
+        parse_mixed_item("Bayar air pam 266.400k via DANA bagi 4 Sapto Alpat Opik tanggal 19 Agustus"),
+        original_index=0,
+        item_id="i1",
+    )
+    session = create_bulk_session([item], session_id="ambiguous1")
+    labels = [row[0] for row in _labels(_semantic_choice_keyboard(session, item)) if len(row) == 1]
+    for label in expected:
+        assert label in labels
 
 
 def test_debt_selector_is_number_only_in_two_rows_of_three():

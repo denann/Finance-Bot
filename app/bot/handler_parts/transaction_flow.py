@@ -1166,10 +1166,10 @@ def parse_clarification_keyboard() -> InlineKeyboardMarkup:
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("+ Orang ini bayar ke saya", callback_data="clarify_parse:debt_payment")],
-        [InlineKeyboardButton("- Saya hutang ke orang ini", callback_data="clarify_parse:payable")],
-        [InlineKeyboardButton("- Pengeluaran biasa", callback_data="clarify_parse:expense")],
-        [InlineKeyboardButton("∅ Orang lain yang bayar", callback_data="clarify_parse:no_cashflow")],
+        [InlineKeyboardButton("🟢 Orang ini bayar ke saya", callback_data="clarify_parse:debt_payment")],
+        [InlineKeyboardButton("🔴 Saya hutang ke orang ini", callback_data="clarify_parse:payable")],
+        [InlineKeyboardButton("🧾 Pengeluaran biasa", callback_data="clarify_parse:expense")],
+        [InlineKeyboardButton("👤 Orang lain yang bayar", callback_data="clarify_parse:no_cashflow")],
         [InlineKeyboardButton("🤝 Split bill", callback_data="clarify_parse:split")],
         [InlineKeyboardButton("🙋 Saya talangin", callback_data="clarify_parse:fronting")],
         [InlineKeyboardButton("✍️ Tulis ulang", callback_data="clarify_parse:rewrite")],
@@ -1330,7 +1330,7 @@ def social_spending_guard_keyboard() -> InlineKeyboardMarkup:
     """
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🤝 Split bill", callback_data="meal_guard:split")],
-        [InlineKeyboardButton("- Pengeluaran biasa", callback_data="meal_guard:expense")],
+        [InlineKeyboardButton("🧾 Pengeluaran biasa", callback_data="meal_guard:expense")],
         [InlineKeyboardButton("✍️ Tulis ulang", callback_data="meal_guard:rewrite")],
         [InlineKeyboardButton("🚫 Batal", callback_data="cancel:meal_guard")],
     ])

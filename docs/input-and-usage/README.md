@@ -23,7 +23,9 @@ financial input.
 The interface uses `+` for income or cash-in and `-` for expense or cash-out.
 Action buttons start with a symbol so their purpose is visible at a glance.
 Number-only buttons are intentional selectors: read the numbered details in
-the message, then select the matching number.
+the message, then select the matching number. Ambiguous meaning choices use
+contextual icons (`🟢`, `🔴`, `🧾`, and `👤`) so the alternatives remain easy
+to distinguish.
 
 Initial example:
 

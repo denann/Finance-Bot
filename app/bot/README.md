@@ -18,7 +18,8 @@ It is responsible for receiving commands, natural text input, images, and inline
 The interface uses plain `+` for income/cash-in and `-` for
 expense/cash-out. Descriptive inline buttons start with a symbol; compact
 number-only selectors are reserved for lists whose details are shown in the
-message. Split-bill paths share one wizard keyboard contract.
+message. Ambiguity choices use contextual icons rather than report-style
+signs. Split-bill paths share one wizard keyboard contract.
 
 ## Receipt images
 
