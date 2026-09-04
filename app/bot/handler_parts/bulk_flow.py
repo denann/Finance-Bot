@@ -49,6 +49,7 @@ from app.bot.handler_parts.transaction_flow import (
     preview_action_keyboard,
     preview_action_question,
     split_bill_needs_decision,
+    split_wizard_keyboard,
     build_meal_split_custom_allocation_prompt,
     build_meal_split_final_payload,
     compute_equal_meal_split_shares,
@@ -132,7 +133,7 @@ async def _classify_lines(input_lines: list[str]) -> list[BulkItem]:
 
 def _cancel_keyboard(session: BulkSession) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("Batal", callback_data=f"bulk_cancel:{session.session_id}"),
+        InlineKeyboardButton("🚫 Batal", callback_data=f"bulk_cancel:{session.session_id}"),
     ]])
 
 
@@ -140,15 +141,15 @@ def _rewrite_remove_keyboard(session: BulkSession, item: BulkItem) -> InlineKeyb
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
-                "Tulis ulang",
+                "✍️ Tulis ulang",
                 callback_data=f"bulk_rewrite:{session.session_id}:{item.item_id}",
             ),
             InlineKeyboardButton(
-                "Hapus item",
+                "🗑 Hapus item",
                 callback_data=f"bulk_remove:{session.session_id}:{item.item_id}",
             ),
         ],
-        [InlineKeyboardButton("Batal", callback_data=f"bulk_cancel:{session.session_id}")],
+        [InlineKeyboardButton("🚫 Batal", callback_data=f"bulk_cancel:{session.session_id}")],
     ])
 
 
@@ -166,45 +167,44 @@ def _semantic_choice_keyboard(session: BulkSession, item: BulkItem) -> InlineKey
     prefix = f"bulk_sem:{session.session_id}:{item.item_id}"
     rows = []
     if build_clarified_debt_payment(raw, parsed):
-        rows.append([InlineKeyboardButton("🟢 Orang ini bayar ke saya", callback_data=f"{prefix}:debt_payment")])
+        rows.append([InlineKeyboardButton("+ Orang ini bayar ke saya", callback_data=f"{prefix}:debt_payment")])
     person = extract_person_candidate(raw) or parsed.get("person_name") or parsed.get("subject")
     amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
     if person and amount > 0:
-        rows.append([InlineKeyboardButton("🔴 Saya hutang ke orang ini", callback_data=f"{prefix}:payable")])
+        rows.append([InlineKeyboardButton("- Saya hutang ke orang ini", callback_data=f"{prefix}:payable")])
     if build_clarified_expense(raw, parsed):
-        rows.append([InlineKeyboardButton("🧾 Pengeluaran biasa", callback_data=f"{prefix}:expense")])
-    rows.append([InlineKeyboardButton("👤 Orang lain yang bayar", callback_data=f"{prefix}:no_cashflow")])
+        rows.append([InlineKeyboardButton("- Pengeluaran biasa", callback_data=f"{prefix}:expense")])
+    rows.append([InlineKeyboardButton("∅ Orang lain yang bayar", callback_data=f"{prefix}:no_cashflow")])
     if person and amount > 0:
         rows.append([InlineKeyboardButton("🤝 Split bill", callback_data=f"{prefix}:split")])
     if build_clarified_fronting(raw, parsed):
         rows.append([InlineKeyboardButton("🙋 Saya talangin", callback_data=f"{prefix}:fronting")])
     rows.append([
         InlineKeyboardButton("✍️ Tulis ulang", callback_data=f"bulk_rewrite:{session.session_id}:{item.item_id}"),
-        InlineKeyboardButton("Hapus item", callback_data=f"bulk_remove:{session.session_id}:{item.item_id}"),
+        InlineKeyboardButton("🗑 Hapus item", callback_data=f"bulk_remove:{session.session_id}:{item.item_id}"),
     ])
-    rows.append([InlineKeyboardButton("Batal", callback_data=f"bulk_cancel:{session.session_id}")])
+    rows.append([InlineKeyboardButton("🚫 Batal", callback_data=f"bulk_cancel:{session.session_id}")])
     return InlineKeyboardMarkup(rows)
 
 
 def _semantic_split_keyboard(session: BulkSession, item: BulkItem, stage: str) -> InlineKeyboardMarkup:
     base = f"{session.session_id}:{item.item_id}"
-    if stage == "payer":
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton("🙋 Saya yang bayar", callback_data=f"bulk_sem_payer:{base}:self")],
-            [InlineKeyboardButton("👤 Bukan saya yang bayar", callback_data=f"bulk_sem_payer:{base}:other")],
-            [InlineKeyboardButton("Batal", callback_data=f"bulk_cancel:{session.session_id}")],
-        ])
-    if stage == "allocation":
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton("⚖️ Bagi rata", callback_data=f"bulk_sem_alloc:{base}:equal")],
-            [InlineKeyboardButton("📊 Atur pembagian", callback_data=f"bulk_sem_alloc:{base}:custom")],
-            [InlineKeyboardButton("Batal", callback_data=f"bulk_cancel:{session.session_id}")],
-        ])
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Sudah bayar", callback_data=f"bulk_sem_status:{base}:paid")],
-        [InlineKeyboardButton("⏳ Belum bayar", callback_data=f"bulk_sem_status:{base}:unpaid")],
-        [InlineKeyboardButton("Batal", callback_data=f"bulk_cancel:{session.session_id}")],
-    ])
+    prefixes = {
+        "payer": "bulk_sem_payer",
+        "allocation": "bulk_sem_alloc",
+        "status": "bulk_sem_status",
+    }
+    keys = {
+        "payer": ("self", "other"),
+        "allocation": ("equal", "custom"),
+        "status": ("paid", "unpaid"),
+    }
+    prefix = prefixes[stage]
+    return split_wizard_keyboard(
+        stage,
+        {key: f"{prefix}:{base}:{key}" for key in keys[stage]},
+        cancel_callback=f"bulk_cancel:{session.session_id}",
+    )
 
 
 def _semantic_wait_item(item: BulkItem, *, reason: str, semantic_state: dict) -> BulkItem:
@@ -250,19 +250,17 @@ def _account_keyboard(session: BulkSession, item: BulkItem) -> InlineKeyboardMar
     prefix = f"bulk_acc:{session.session_id}:{item.item_id}"
     base = account_keyboard(prefix)
     rows = [list(row) for row in base.inline_keyboard[:-1]]
-    rows.append([InlineKeyboardButton("Batal", callback_data=f"bulk_cancel:{session.session_id}")])
+    rows.append([InlineKeyboardButton("🚫 Batal", callback_data=f"bulk_cancel:{session.session_id}")])
     return InlineKeyboardMarkup(rows)
 
 
 def _split_keyboard(session: BulkSession, item: BulkItem) -> InlineKeyboardMarkup:
     base = f"bulk_split:{session.session_id}:{item.item_id}"
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("Sudah dibayar", callback_data=f"{base}:paid"),
-            InlineKeyboardButton("Belum dibayar", callback_data=f"{base}:unpaid"),
-        ],
-        [InlineKeyboardButton("Batal", callback_data=f"bulk_cancel:{session.session_id}")],
-    ])
+    return split_wizard_keyboard(
+        "status",
+        {"paid": f"{base}:paid", "unpaid": f"{base}:unpaid"},
+        cancel_callback=f"bulk_cancel:{session.session_id}",
+    )
 
 
 def _issue_text(item: BulkItem, position: int, total: int) -> str:
@@ -466,12 +464,7 @@ def _mark_split(item: BulkItem, status: str) -> BulkItem:
     parsed = deepcopy(dict(item.parsed_payload))
     apply_split_bill_decision_to_parsed(parsed, status)
     legacy = {"kind": item.kind, "parsed": parsed, "raw": item.raw_input}
-    return _classify_legacy_item(
-        item.raw_input,
-        legacy,
-        original_index=item.original_index,
-        item_id=item.item_id,
-    )
+    return _classify_semantic_legacy_item(item, legacy)
 
 
 async def handle_bulk_callback(

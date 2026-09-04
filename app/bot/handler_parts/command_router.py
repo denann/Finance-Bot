@@ -1074,8 +1074,8 @@ def build_delete_preview_text(preview: dict) -> str:
             txn_type = str(txn.get("type", "")).strip()
 
             icon = {
-                "expense": "❌",
-                "income": "✅",
+                "expense": "-",
+                "income": "+",
                 "transfer": "🔄",
             }.get(txn_type, "❓")
 

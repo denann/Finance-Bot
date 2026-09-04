@@ -78,7 +78,6 @@ from app.bot.handler_parts.command_router import (
     build_delete_preview_text,
     build_gemini_fallback_text,
     build_gemini_low_confidence_text,
-    build_last_transactions_text,
     extract_edit_updates_from_router,
     maybe_text_is_command_typo,
     resolve_txn_refs_from_last,
@@ -505,7 +504,7 @@ async def handle_gemini_intent(update: Update, context: ContextTypes.DEFAULT_TYP
 
         # Iterate through each t.
         for t in results:
-            icon = "➕" if t.get("type") == "income" else "➖" if t.get("type") == "expense" else "🔄"
+            icon = "+" if t.get("type") == "income" else "-" if t.get("type") == "expense" else "🔄"
             lines.append(
                 f"{icon} {md_safe(t.get('date') or '-')} — {md_safe(t.get('description') or '-')}\n"
                 f"   *{format_rupiah(float(t.get('amount', 0) or 0))}* | {md_safe(t.get('category') or '-')}"
@@ -1024,7 +1023,7 @@ async def handle_local_natural_intent(update: Update, context: ContextTypes.DEFA
 
         # Iterate through each t.
         for t in results:
-            icon = "➕" if t.get("type") == "income" else "➖" if t.get("type") == "expense" else "🔄"
+            icon = "+" if t.get("type") == "income" else "-" if t.get("type") == "expense" else "🔄"
             lines.append(
                 f"{icon} {md_safe(t.get('date'))} — {md_safe(t.get('description', '-'))}\n"
                 f"   *{format_rupiah(float(t.get('amount', 0) or 0))}* | {md_safe(t.get('category', '-'))}"
@@ -1814,8 +1813,8 @@ def build_transactions_full_text(transactions: list[dict], title: str, account_f
         net_text = format_expense_net_gross(net_after_receivable, net_gross)
         lines.append(
             "\n*Ringkasan Rekening:*\n"
-            f"✅ Income          : *{format_rupiah(total_income)}*\n"
-            f"❌ Expense         : *{expense_text}*\n"
+            f"+ Income          : *{format_rupiah(total_income)}*\n"
+            f"- Expense         : *{expense_text}*\n"
             f"🔁 Transfer Masuk  : *{format_rupiah(total_transfer_in)}*\n"
             f"🔁 Transfer Keluar : *{format_rupiah(total_transfer_out)}*\n"
             f"📊 Net Rekening    : *{net_text}*\n"
@@ -1831,8 +1830,8 @@ def build_transactions_full_text(transactions: list[dict], title: str, account_f
         net_text = format_expense_net_gross(net_after_receivable, net_gross)
         lines.append(
             "\n*Ringkasan:*\n"
-            f"✅ Income   : *{format_rupiah(total_income)}*\n"
-            f"❌ Expense  : *{expense_text}*\n"
+            f"+ Income   : *{format_rupiah(total_income)}*\n"
+            f"- Expense  : *{expense_text}*\n"
             f"🔄 Transfer : *{format_rupiah(total_transfer)}*\n"
             f"📊 Net      : *{net_text}*\n"
             f"📝 Total    : *{len(transactions)} transaksi*"
@@ -2701,7 +2700,7 @@ def build_edit_category_choice_keyboard(suggested_category: str) -> InlineKeyboa
     label = clean_suggestion if len(clean_suggestion) <= 34 else clean_suggestion[:31].rstrip() + "..."
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(f"✅ Ikuti {label}", callback_data="edit_category_choice:use")],
-        [InlineKeyboardButton("➕ Tambah kategori baru", callback_data="edit_category_choice:create")],
+        [InlineKeyboardButton("+ Tambah kategori baru", callback_data="edit_category_choice:create")],
         [InlineKeyboardButton("❌ Batal", callback_data="cancel:edit_txn")],
     ])
 
@@ -2724,7 +2723,7 @@ def build_bulk_edit_category_choice_keyboard(suggested_category: str) -> InlineK
     label = clean_suggestion if len(clean_suggestion) <= 34 else clean_suggestion[:31].rstrip() + "..."
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(f"✅ Ikuti {label}", callback_data="bulk_edit_category_choice:use")],
-        [InlineKeyboardButton("➕ Tambah kategori baru", callback_data="bulk_edit_category_choice:create")],
+        [InlineKeyboardButton("+ Tambah kategori baru", callback_data="bulk_edit_category_choice:create")],
         [InlineKeyboardButton("❌ Batal", callback_data="cancel:bulk_edit_category")],
     ])
 
@@ -3555,4 +3554,3 @@ async def edit_txn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── Callback Handler ─────────────────────────────────────────────────────────
-

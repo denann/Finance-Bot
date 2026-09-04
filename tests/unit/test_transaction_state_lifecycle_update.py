@@ -21,7 +21,7 @@ def test_transient_selector_cleanup_preserves_long_lived_transaction_reference_c
 
 
 def test_selector_text_consumption_is_before_ordinary_transaction_parsing():
-    source = Path("app/bot/handler_parts/message_handlers.py").read_text()
+    source = Path("app/bot/handler_parts/message_handlers.py").read_text(encoding="utf-8")
     selector = source.index("handle_transaction_selector_text(update, context, user_text)")
     normal_parse = source.index("input_lines = split_user_inputs(user_text)", selector)
     assert selector < normal_parse

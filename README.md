@@ -10,6 +10,7 @@ The core idea is simple: users can write everyday finance inputs such as `beli k
 ## Outline
 
 - [Features](#features)
+- [Current Behavior Notes](#current-behavior-notes)
 - [Tech Stack](#tech-stack)
 - [System Architecture](#system-architecture)
 - [Data & Privacy](#data--privacy)
@@ -45,6 +46,21 @@ The core idea is simple: users can write everyday finance inputs such as `beli k
 | AI insight | Ask, audit, coach, insight | Uses Gemini to explain finance data based on structured context from Google Sheets. |
 | Privacy | Privacy notice and export warning | Explains data flow, Google Sheets storage, Telegram I/O, Gemini usage boundaries, and sensitive export handling. |
 | Deployment | Polling-first setup | Runs locally with `python main.py` or 24/7 on Wispbyte without requiring webhook setup. |
+
+## Current Behavior Notes
+
+- `/last` and `/transaksi` open the same paginated transaction browser. Charts
+  remain explicit through `/grafik` and the report commands.
+- Income and cash-in labels use `+`; expense and cash-out labels use `-`.
+  Descriptive buttons start with a symbol, while compact numbered selectors
+  intentionally show only their number.
+- Explicit split input such as
+  `Bayar PAM 199.200k dibagi 4 sama Alpat Opik Sapto tanggal 20` keeps `PAM`
+  as the expense subject and the names after
+  `sama` as split participants.
+- Confirmed transactions emit a traceable transaction ID in structured logs.
+  Raw finance input remains redacted unless the owner explicitly enables the
+  privacy-sensitive `LOG_INCLUDE_FINANCE_DATA` setting.
 
 ## Tech Stack
 
@@ -88,6 +104,11 @@ Users must protect their own credentials and access:
 - Share the Google Spreadsheet only with the intended service account and trusted users.
 - Do not send credential screenshots or service account files to the bot chat.
 - Use `/privacy` in Telegram to see the user-facing privacy summary.
+
+Structured logs redact raw finance input by default. Setting
+`LOG_INCLUDE_FINANCE_DATA=true` is intended only for short-lived local
+debugging; it makes log and CSV output sensitive and should not be enabled on
+shared hosting.
 
 ## Installation
 
@@ -404,6 +425,11 @@ Do not run the same bot token on your laptop and Wispbyte at the same time.
 
 ## Usage
 
+For the complete guide to natural input, command formats, split
+bills, debt, recurring rules, assets, editing, and troubleshooting, read the
+[Input and Usage Guide](docs/input-and-usage/README.md). The shorter examples
+below cover only the most common paths.
+
 ### First-time flow
 
 Start with:
@@ -439,7 +465,7 @@ BCA ke DANA 200k
 ### Multi input
 
 ```text
-beli kopi 20k dari Cash, beli bensin 50k dari BRI, gaji masuk 8jt ke BCA
+beli kopi 20k dari Cash; beli bensin 50k dari BRI; gaji masuk 8jt ke BCA
 ```
 
 ### Debt and receivable
@@ -470,6 +496,7 @@ saya ditalangin Bagas beli nasi 15k
 ```text
 Beli mie goreng 40k dibagi 2 sama Budi via DANA
 makan 120k patungan bertiga sama Budi dan Rina dari BCA
+Bayar PAM 199.200k dibagi 4 sama Alpat Opik Sapto tanggal 20
 ```
 
 If friends already paid, the saved expense should use only the user's net share. If they have not paid, the bot records the gross paid amount and creates receivable records.
@@ -525,14 +552,17 @@ Expense totals, Top 3 expenses, category ranking, and percentage contribution us
 
 ## Testing and Evaluation
 
-Install development dependencies and run the complete offline suite:
+Install runtime dependencies and pytest, then run the complete offline suite:
 
 ```powershell
-python -m pip install -r requirements-dev.txt
+python -m pip install -r requirements.txt
+python -m pip install pytest
 python -m pytest -q tests
 ```
 
-Default pytest blocks unexpected network, Telegram, Gemini, and real gspread calls. Fixture-driven regressions come from the debug matrix, while live Gemini evaluation is a separate explicit opt-in command. See `docs/testing.md` for commands, fixture format, coverage classification, report comparison, and regression gates.
+The test suite uses local fakes at external boundaries; it must not use
+production credentials or data. See `docs/testing.md` for the current commands,
+fixture format, and coverage boundaries.
 
 ## Project Structure
 
@@ -546,11 +576,10 @@ app/
 ├── services/            # Finance business logic
 └── sheets/              # Google Sheets client and schema handling
 
-docs/                    # Technical documentation
-evals/                   # Opt-in Gemini parser evaluation, reports, and gates
-scripts/                 # Setup, debug, and regression scripts
-tests/                   # Unit, service, integration, fake, and regression suites
-.github/workflows/       # Offline CI without production credentials
+docs/                    # Technical and user documentation
+scripts/                 # Documentation checks, log viewing, and CLI compatibility
+tests/                   # Unit, service, integration, fake, regression, and architecture suites
+benchmarks/              # Local synthetic benchmark helpers
 assets/                  # README diagrams
 main.py                  # Application entry point
 ```
@@ -594,7 +623,7 @@ If Google Sheets fails:
 
 If a slash command becomes a transaction preview:
 
-- Apply the latest routing patch.
+- Restart the bot from the current checkout so the loaded handlers match the source.
 - Slash commands should never be parsed as expenses.
 - Test `/set_saldo BRI 2500000` and `/set_sald BRI 2500000` as regression checks.
 

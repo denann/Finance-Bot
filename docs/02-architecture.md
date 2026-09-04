@@ -51,7 +51,7 @@ One request-scoped budget is shared by parser, router, AI commands, multi-input,
 
 - [Phase 2 Boundary Map](architecture/phase-2-boundary-map.md)
 - [Callback Routing Inventory](architecture/callback-routing-inventory.md)
-- [Phase 3 Performance Results](performance/phase-3-benchmark-results.md)
+- [Benchmark Guide](../benchmarks/README.md)
 
 | Architecture area | Current owner |
 | :--- | :--- |

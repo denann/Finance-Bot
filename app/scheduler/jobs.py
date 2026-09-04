@@ -229,8 +229,8 @@ async def job_daily_summary():
             return
 
         lines = [f"📅 *Ringkasan Harian — {report['date']}*\n"]
-        lines.append(f"✅ Pemasukan : *{format_rupiah(report['total_income'])}*")
-        lines.append(f"❌ Pengeluaran: *{format_scheduler_expense_amount(report['total_expense'], report.get('total_gross_expense'))}*")
+        lines.append(f"+ Pemasukan : *{format_rupiah(report['total_income'])}*")
+        lines.append(f"- Pengeluaran: *{format_scheduler_expense_amount(report['total_expense'], report.get('total_gross_expense'))}*")
         lines.append(f"📊 Net       : *{format_rupiah(report['net'])}*")
         lines.append(f"📝 Transaksi : {report['count']} item\n")
 
@@ -289,8 +289,8 @@ async def job_weekly_summary():
             await send_message("\n".join(lines))
             return
 
-        lines.append(f"✅ Pemasukan : *{format_rupiah(report['total_income'])}*")
-        lines.append(f"❌ Pengeluaran: *{format_scheduler_expense_amount(report['total_expense'], report.get('total_gross_expense'))}*")
+        lines.append(f"+ Pemasukan : *{format_rupiah(report['total_income'])}*")
+        lines.append(f"- Pengeluaran: *{format_scheduler_expense_amount(report['total_expense'], report.get('total_gross_expense'))}*")
         lines.append(f"📊 Net       : *{format_rupiah(report['net'])}*")
         lines.append(f"📝 Transaksi : {report['count']} item\n")
 
@@ -345,8 +345,8 @@ async def job_monthly_summary():
             await send_message("\n".join(lines))
             return
 
-        lines.append(f"✅ Pemasukan : *{format_rupiah(report['total_income'])}*")
-        lines.append(f"❌ Pengeluaran: *{format_scheduler_expense_amount(report['total_expense'], report.get('total_gross_expense'))}*")
+        lines.append(f"+ Pemasukan : *{format_rupiah(report['total_income'])}*")
+        lines.append(f"- Pengeluaran: *{format_scheduler_expense_amount(report['total_expense'], report.get('total_gross_expense'))}*")
         lines.append(f"📊 Net       : *{format_rupiah(report['net'])}*")
         lines.append(f"📝 Transaksi : {report['count']} item\n")
 

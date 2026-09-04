@@ -7,6 +7,7 @@ import sys
 import types
 
 from app.clock import freeze_business_time
+from app.bot.handler_parts.transaction_flow import attach_split_bill_if_any
 from app.nlp.normalizer import extract_amount_from_text
 from app.nlp.parse_safety import CLARIFICATION, assess_parse_safety, detect_pre_parse_clarification_flags
 from app.nlp.regex_parser import detect_date_result, parse_debt_input, parse_with_regex
@@ -96,6 +97,23 @@ def test_amount_regressions_stay_intact():
     assert extract_amount_from_text("183,615k") == 183615
     assert extract_amount_from_text("1.5jt") == 1500000
     assert extract_amount_from_text("1,5 juta") == 1500000
+
+
+def test_explicit_split_after_bayar_keeps_subject_out_of_person_routing():
+    """Keep explicit utility split inputs out of person-payment ambiguity."""
+
+    for subject in ("pam", "air"):
+        raw = f"Bayar {subject} 199.200k dibagi 4 sama alpat opik sapto tanggal 20"
+        parsed = parse_with_regex(raw)
+        assert parsed is not None
+        attach_split_bill_if_any(parsed, raw)
+
+        pre_flags = assess_parse_safety(raw, {})["risk_flags"]
+        parsed_flags = assess_parse_safety(raw, parsed)["risk_flags"]
+        assert "person_plus_bayar_without_debt_keyword" not in pre_flags
+        assert "split_participants_missing" not in parsed_flags
+        assert parsed["subject"] == subject.title()
+        assert parsed["split_bill"]["person_names"] == ["Alpat", "Opik", "Sapto"]
 
 
 def test_incoming_person_grammar_defers_to_full_and_runtime_own_account_names(monkeypatch):

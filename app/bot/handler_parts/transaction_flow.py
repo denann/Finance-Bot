@@ -279,8 +279,8 @@ def build_mixed_preview(mixed_items: list[dict]) -> str:
             )
 
     lines.append("\n*Ringkasan awal:*")
-    lines.append(f"❌ Transaksi Expense: *{format_rupiah(total_expense)}*")
-    lines.append(f"✅ Transaksi Income : *{format_rupiah(total_income)}*")
+    lines.append(f"- Transaksi Expense: *{format_rupiah(total_expense)}*")
+    lines.append(f"+ Transaksi Income : *{format_rupiah(total_income)}*")
     lines.append(f"💸 Total Nominal Debt: *{format_rupiah(total_debt)}*")
 
     # Extract account summary for validation.
@@ -364,8 +364,8 @@ def _mixed_item_detail_lines(item: dict, index: int) -> list[str]:
 
     if kind == "transaction":
         type_label = {
-            "expense": "❌ Pengeluaran",
-            "income": "✅ Pemasukan",
+            "expense": "- Pengeluaran",
+            "income": "+ Pemasukan",
             "transfer": "🔄 Transfer",
         }.get(parsed.get("type"), "❓ Transaksi")
         lines = [f"{index}. *{type_label}*"]
@@ -1166,10 +1166,10 @@ def parse_clarification_keyboard() -> InlineKeyboardMarkup:
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🟢 Orang ini bayar ke saya", callback_data="clarify_parse:debt_payment")],
-        [InlineKeyboardButton("🔴 Saya hutang ke orang ini", callback_data="clarify_parse:payable")],
-        [InlineKeyboardButton("🧾 Pengeluaran biasa", callback_data="clarify_parse:expense")],
-        [InlineKeyboardButton("👤 Orang lain yang bayar", callback_data="clarify_parse:no_cashflow")],
+        [InlineKeyboardButton("+ Orang ini bayar ke saya", callback_data="clarify_parse:debt_payment")],
+        [InlineKeyboardButton("- Saya hutang ke orang ini", callback_data="clarify_parse:payable")],
+        [InlineKeyboardButton("- Pengeluaran biasa", callback_data="clarify_parse:expense")],
+        [InlineKeyboardButton("∅ Orang lain yang bayar", callback_data="clarify_parse:no_cashflow")],
         [InlineKeyboardButton("🤝 Split bill", callback_data="clarify_parse:split")],
         [InlineKeyboardButton("🙋 Saya talangin", callback_data="clarify_parse:fronting")],
         [InlineKeyboardButton("✍️ Tulis ulang", callback_data="clarify_parse:rewrite")],
@@ -1330,7 +1330,7 @@ def social_spending_guard_keyboard() -> InlineKeyboardMarkup:
     """
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🤝 Split bill", callback_data="meal_guard:split")],
-        [InlineKeyboardButton("🧾 Pengeluaran biasa", callback_data="meal_guard:expense")],
+        [InlineKeyboardButton("- Pengeluaran biasa", callback_data="meal_guard:expense")],
         [InlineKeyboardButton("✍️ Tulis ulang", callback_data="meal_guard:rewrite")],
         [InlineKeyboardButton("🚫 Batal", callback_data="cancel:meal_guard")],
     ])
@@ -1376,6 +1376,50 @@ def build_social_spending_expense(raw: str, guard: dict) -> dict:
 
 
 # Helper for meal split payer keyboard.
+def split_wizard_keyboard(
+    stage: str,
+    callbacks: dict[str, str],
+    *,
+    cancel_callback: str,
+    rewrite_callback: str | None = None,
+) -> InlineKeyboardMarkup:
+    """Build the shared split-bill wizard keyboard for single and bulk flows.
+
+    Args:
+        stage: One of ``payer``, ``allocation``, or ``status``.
+        callbacks: Callback data keyed by the choices available at that stage.
+        cancel_callback: Callback data for cancelling the active flow.
+        rewrite_callback: Optional callback data for rewriting the source input.
+
+    Returns:
+        A consistent Telegram keyboard for the requested wizard stage.
+
+    Side effects:
+        None.
+
+    Flow constraints:
+        This helper only builds controls. Callers retain their own scoped state
+        and must still show a final preview before any finance write.
+    """
+    choices = {
+        "payer": [("🙋 Saya yang bayar", "self"), ("👤 Bukan saya yang bayar", "other")],
+        "allocation": [("⚖️ Bagi rata", "equal"), ("📊 Atur pembagian", "custom")],
+        "status": [("✅ Sudah dibayar", "paid"), ("⏳ Belum dibayar", "unpaid")],
+    }.get(stage)
+    if choices is None:
+        raise ValueError(f"Tahap split bill tidak dikenal: {stage}")
+
+    if stage == "status":
+        rows = [[InlineKeyboardButton(label, callback_data=callbacks[key]) for label, key in choices]]
+    else:
+        rows = [[InlineKeyboardButton(label, callback_data=callbacks[key])] for label, key in choices]
+    if rewrite_callback:
+        rows.append([InlineKeyboardButton("✍️ Tulis ulang", callback_data=rewrite_callback)])
+    rows.append([InlineKeyboardButton("🚫 Batal", callback_data=cancel_callback)])
+    return InlineKeyboardMarkup(rows)
+
+
+# Helper for meal split payer keyboard.
 def meal_split_payer_keyboard() -> InlineKeyboardMarkup:
     """Coordinate the meal split payer keyboard logic in the Telegram handler layer.
 
@@ -1391,12 +1435,12 @@ def meal_split_payer_keyboard() -> InlineKeyboardMarkup:
     Flow constraints:
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🙋 Saya yang bayar", callback_data="meal_split:payer:self")],
-        [InlineKeyboardButton("👤 Bukan saya yang bayar", callback_data="meal_split:payer:other")],
-        [InlineKeyboardButton("✍️ Tulis ulang", callback_data="meal_guard:rewrite")],
-        [InlineKeyboardButton("🚫 Batal", callback_data="cancel:meal_split")],
-    ])
+    return split_wizard_keyboard(
+        "payer",
+        {"self": "meal_split:payer:self", "other": "meal_split:payer:other"},
+        cancel_callback="cancel:meal_split",
+        rewrite_callback="meal_guard:rewrite",
+    )
 
 
 # Helper for build meal split payer prompt.
@@ -1414,12 +1458,12 @@ def build_meal_split_payer_prompt(guard: dict) -> str:
 # Helper for meal split allocation keyboard.
 def meal_split_allocation_keyboard() -> InlineKeyboardMarkup:
     """Ask whether split bill is equal or custom."""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚖️ Bagi rata", callback_data="meal_split:allocation:equal")],
-        [InlineKeyboardButton("📊 Atur pembagian", callback_data="meal_split:allocation:custom")],
-        [InlineKeyboardButton("✍️ Tulis ulang", callback_data="meal_guard:rewrite")],
-        [InlineKeyboardButton("🚫 Batal", callback_data="cancel:meal_split")],
-    ])
+    return split_wizard_keyboard(
+        "allocation",
+        {"equal": "meal_split:allocation:equal", "custom": "meal_split:allocation:custom"},
+        cancel_callback="cancel:meal_split",
+        rewrite_callback="meal_guard:rewrite",
+    )
 
 
 # Helper for build meal split allocation prompt.
@@ -1552,18 +1596,11 @@ def parse_meal_split_allocation(text: str, amount: float, people: list[str]) -> 
 # Helper for meal split status keyboard.
 def meal_split_status_keyboard(payer: str) -> InlineKeyboardMarkup:
     """Ask whether the relevant share has already been paid."""
-    if payer == "self":
-        paid_label = "✅ Sudah bayar"
-        unpaid_label = "⏳ Belum bayar"
-    # Use the fallback path when no earlier branch matched.
-    else:
-        paid_label = "✅ Sudah bayar"
-        unpaid_label = "⏳ Belum bayar"
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(paid_label, callback_data="meal_split:status:paid")],
-        [InlineKeyboardButton(unpaid_label, callback_data="meal_split:status:unpaid")],
-        [InlineKeyboardButton("🚫 Batal", callback_data="cancel:meal_split")],
-    ])
+    return split_wizard_keyboard(
+        "status",
+        {"paid": "meal_split:status:paid", "unpaid": "meal_split:status:unpaid"},
+        cancel_callback="cancel:meal_split",
+    )
 
 
 # Helper for build meal split status prompt.
@@ -3001,8 +3038,8 @@ def format_split_bill_preview_line(parsed: dict) -> str:
 def build_preview(parsed: dict) -> str:
     """Build the data structure or message text for preview."""
     type_label = {
-        "expense": "❌ Pengeluaran",
-        "income": "✅ Pemasukan",
+        "expense": "- Pengeluaran",
+        "income": "+ Pemasukan",
         "transfer": "🔄 Transfer",
     }.get(parsed.get("type"), "❓")
 
@@ -3084,8 +3121,8 @@ def build_batch_preview(parsed_items: list[dict]) -> str:
         date_key = str(parsed.get("date") or "-").strip() or "-"
         grouped_by_date.setdefault(date_key, []).append((idx, parsed))
 
-    lines.append(f"❌ Expense : {format_rupiah(total_expense)}")
-    lines.append(f"✅ Income  : {format_rupiah(total_income)}")
+    lines.append(f"- Expense : {format_rupiah(total_expense)}")
+    lines.append(f"+ Income  : {format_rupiah(total_income)}")
 
     if category_summary:
         lines.extend(["", "📊 *Kategori*"])
@@ -3111,8 +3148,8 @@ def build_batch_preview(parsed_items: list[dict]) -> str:
         for idx, parsed in grouped_by_date[date_key]:
             txn_type = parsed.get("type")
             type_icon = {
-                "expense": "❌",
-                "income": "✅",
+                "expense": "-",
+                "income": "+",
                 "transfer": "🔄",
             }.get(txn_type, "❓")
             amount = _receipt_amount(parsed.get("amount"), 0)
@@ -4657,13 +4694,14 @@ def split_bill_keyboard(scope: str = "single", item_index: int | None = None) ->
         Preserve the existing Telegram flow, including preview-before-save and Batal handling where cancellation is possible.
     """
     suffix = f":{item_index}" if item_index is not None else ""
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Sudah dibayar", callback_data=f"split:paid:{scope}{suffix}"),
-            InlineKeyboardButton("🟢 Belum, masuk piutang", callback_data=f"split:unpaid:{scope}{suffix}"),
-        ],
-        [InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{scope}")],
-    ])
+    return split_wizard_keyboard(
+        "status",
+        {
+            "paid": f"split:paid:{scope}{suffix}",
+            "unpaid": f"split:unpaid:{scope}{suffix}",
+        },
+        cancel_callback=f"cancel:{scope}",
+    )
 
 
 # Helper for mixed split bill keyboard.
@@ -5089,8 +5127,8 @@ def append_saved_summary_lines(lines: list[str], items: list[dict], title: str =
     # Build summary for the response flow.
     summary = summarize_saved_transaction_items(items)
     lines.append(f"\n📊 *{title}:*")
-    lines.append(f"❌ Pengeluaran: *{format_rupiah(summary['expense'])}*")
-    lines.append(f"✅ Pemasukan : *{format_rupiah(summary['income'])}*")
+    lines.append(f"- Pengeluaran: *{format_rupiah(summary['expense'])}*")
+    lines.append(f"+ Pemasukan : *{format_rupiah(summary['income'])}*")
     if summary["transfer"]:
         lines.append(f"🔄 Transfer  : *{format_rupiah(summary['transfer'])}*")
     lines.append(f"📌 Net       : *{format_rupiah(summary['net'])}*")
@@ -5807,14 +5845,14 @@ def build_debt_confirm_preview(
         debt_effect = "-"
 
     cashflow_type = {
-        "expense": "❌ Pengeluaran",
-        "income": "✅ Cash In / Pemasukan",
+        "expense": "- Pengeluaran",
+        "income": "+ Cash In / Pemasukan",
         "transfer": "🔄 Transfer",
         "debt_offset": "🔁 Debt Offset / Tanpa Rekening",
         "debt_only": "📝 Debt Fact / Tanpa Rekening",
     }.get(transaction_parsed.get("type"), "❓")
     if transaction_parsed.get("type") == "expense" and transaction_parsed.get("skip_account"):
-        cashflow_type = "❌ Pengeluaran / tanpa update saldo rekening"
+        cashflow_type = "- Pengeluaran / tanpa update saldo rekening"
 
     return (
         f"{title}\n\n"
@@ -5861,14 +5899,14 @@ def build_debt_batch_confirm_preview(
         category = transaction_parsed.get("category") or "-"
 
         if txn_type == "income":
-            cashflow_label = "✅ Cash In"
+            cashflow_label = "+ Cash In"
             total_cash_in += amount
         elif txn_type == "expense":
             if transaction_parsed.get("skip_account"):
-                cashflow_label = "❌ Expense fact / tanpa update saldo"
+                cashflow_label = "- Expense fact / tanpa update saldo"
             # Use the fallback path when no earlier branch matched.
             else:
-                cashflow_label = "❌ Cash Out"
+                cashflow_label = "- Cash Out"
                 total_cash_out += amount
         elif txn_type == "debt_offset":
             cashflow_label = "🔁 Debt Offset / tanpa rekening"
@@ -5901,8 +5939,8 @@ def build_debt_batch_confirm_preview(
         )
 
     lines.append("\n*Ringkasan Cashflow:*")
-    lines.append(f"✅ Total Cash In : *{format_rupiah(total_cash_in)}*")
-    lines.append(f"❌ Total Cash Out: *{format_rupiah(total_cash_out)}*")
+    lines.append(f"+ Total Cash In : *{format_rupiah(total_cash_in)}*")
+    lines.append(f"- Total Cash Out: *{format_rupiah(total_cash_out)}*")
     lines.append("\nSimpan semua utang/piutang ini?")
 
     return "\n".join(lines)
@@ -5955,9 +5993,9 @@ def build_debt_batch_account_prompt(debt_items: list[dict]) -> str:
     # Keep this section separated from the surrounding flow.
     lines.append("\n*Estimasi cashflow awal:*")
     # Keep this section separated from the surrounding flow.
-    lines.append(f"✅ Cash In : *{format_rupiah(total_cash_in)}*")
+    lines.append(f"+ Cash In : *{format_rupiah(total_cash_in)}*")
     # Keep this section separated from the surrounding flow.
-    lines.append(f"❌ Cash Out: *{format_rupiah(total_cash_out)}*")
+    lines.append(f"- Cash Out: *{format_rupiah(total_cash_out)}*")
     # Keep this section separated from the surrounding flow.
     lines.append("\n💳 Pilih rekening cashflow untuk semua item, atau pilih *Sudah berlalu* jika hanya ingin mencatat debt tanpa mengubah saldo:")
 

@@ -1256,7 +1256,7 @@ def _detail_keyboard(session: dict, ref_no: int) -> InlineKeyboardMarkup:
     if ref_no > 1:
         nav.append(InlineKeyboardButton("◀️ Previous", callback_data=f"txb:{sid}:v:{ref_no}"))
     if ref_no < total:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"txb:{sid}:n:{ref_no}"))
+        nav.append(InlineKeyboardButton("▶️ Next", callback_data=f"txb:{sid}:n:{ref_no}"))
     rows = [
         [InlineKeyboardButton("✏️ Edit", callback_data=f"txb:{sid}:e:{ref_no}"), InlineKeyboardButton("🗑 Hapus", callback_data=f"txb:{sid}:x:{ref_no}")],
         [InlineKeyboardButton("📋 Copy ID", copy_text=CopyTextButton(txn_id))],
@@ -1322,8 +1322,8 @@ async def _browser_summary(query, context, session: dict, *, chat_id: int | None
         elif balance_error:
             lines.append("⚠️ Saldo Saat Ini: *tidak tersedia*")
         lines.extend([
-            f"✅ Pemasukan: *{format_rupiah(report.get('total_income', 0))}*",
-            f"❌ Pengeluaran: *{format_expense_net_gross(report.get('total_expense', 0), report.get('total_gross_expense', 0))}*",
+            f"+ Pemasukan: *{format_rupiah(report.get('total_income', 0))}*",
+            f"- Pengeluaran: *{format_expense_net_gross(report.get('total_expense', 0), report.get('total_gross_expense', 0))}*",
             f"🔁 Transfer Masuk: *{format_rupiah(report.get('total_transfer_in', 0))}*",
             f"🔁 Transfer Keluar: *{format_rupiah(report.get('total_transfer_out', 0))}*",
             f"📊 Pergerakan Bersih Periode: *{format_rupiah(report.get('net', 0))}*",
@@ -1331,8 +1331,8 @@ async def _browser_summary(query, context, session: dict, *, chat_id: int | None
         ])
     else:
         lines.extend([
-            f"✅ Pemasukan: *{format_rupiah(report.get('total_income', 0))}*",
-            f"❌ Pengeluaran: *{format_expense_net_gross(report.get('total_expense', 0), report.get('total_gross_expense', 0))}*",
+            f"+ Pemasukan: *{format_rupiah(report.get('total_income', 0))}*",
+            f"- Pengeluaran: *{format_expense_net_gross(report.get('total_expense', 0), report.get('total_gross_expense', 0))}*",
             f"🔁 Transfer Antar Rekening: *{format_rupiah(report.get('total_transfer', 0))}* _(non-P&L)_",
             f"📊 Hasil Bersih Periode: *{format_rupiah(report.get('net', 0))}*",
             f"📝 Snapshot Aktif: *{report.get('count', 0)} transaksi*",

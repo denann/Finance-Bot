@@ -7,9 +7,18 @@ It is responsible for receiving commands, natural text input, images, and inline
 ## Main files
 
 - `application.py`: builds the Telegram Application and registers handlers.
+- `command_registry.py`: canonical command names, aliases, and compatibility metadata.
+- `callback_contracts.py`: callback ownership and bounded routing predicates.
+- `command_mutations.py`: allow-listed mutations executed after immutable confirmation.
 - `handlers.py`: re-exports handler modules for a stable import path.
 - `keyboards.py`: contains reusable inline keyboard helpers.
+- `pending_actions.py`: immutable, short-lived, one-shot confirmation actions.
 - `handler_parts/`: contains split handler modules for commands, messages, callbacks, and transaction preview flows.
+
+The interface uses plain `+` for income/cash-in and `-` for
+expense/cash-out. Descriptive inline buttons start with a symbol; compact
+number-only selectors are reserved for lists whose details are shown in the
+message. Split-bill paths share one wizard keyboard contract.
 
 ## Receipt images
 

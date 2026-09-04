@@ -37,7 +37,7 @@ EXPECTED_COMMANDS = (
 
 EXPECTED_CALLBACK_PREFIXES = {
     "acc:", "batch_acc:", "bulk_edit_category_choice:", "cancel", "cancel:a_",
-    "category_type:", "clarify_parse:", "confirm:", "debt_acc:",
+    "category_learn:", "category_type:", "clarify_parse:", "confirm:", "debt_acc:",
     "debt_batch_acc:", "debt_overpay:", "debt_settle_acc:",
     "debt_settle_overpay:", "edit_category_choice:", "editflow:",
     "meal_guard:", "meal_split:", "mixed_acc:", "pay_debt:",
@@ -137,6 +137,10 @@ def test_callback_contract_snapshot() -> None:
         "bulk_rewrite:",
         "bulk_remove:",
         "bulk_cancel:",
+        "bulk_sem:",
+        "bulk_sem_payer:",
+        "bulk_sem_alloc:",
+        "bulk_sem_status:",
     )
 
 

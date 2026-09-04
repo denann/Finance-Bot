@@ -144,8 +144,13 @@ Split bill:
 - `makan steak 400k dibagi 2 sama Budi dari DANA`
 - `hotel 900k dibagi 3 sama Raka Maya tanggal 2026-07-06`
 - `belanja dapur 300k dibagi 4 sama Budi Joko Maya dari BRI`
+- `Bayar wifi 285.550k via DANA bagi 4 Sapto Alpat Opik tanggal 19 Agustus`
 
-Kalau teman belum bayar, bagian teman masuk piutang aktif.
+Semua jalur split bill memakai wizard yang sama, baik dari input langsung,
+input ambigu, maupun multi input. Pilih `Sudah dibayar` jika bagian teman sudah
+diterima, atau `Belum dibayar` jika bagian teman harus masuk piutang aktif.
+Setelah status dipilih, item lanjut ke preview dan tidak menanyakan status yang
+sama berulang kali.
 
 Kompensasi atau potong silang tidak mengubah saldo rekening:
 
@@ -172,6 +177,10 @@ Kelola debt:
 - `/debt_settle Maya 1 3 5` - settle nomor debt tertentu.
 
 Nomor debt berasal dari detail terakhir `/hutang nama`. Jika terakhir membuka `/hutang Bagas`, lalu settle untuk Raka, bot akan menolak agar tidak salah orang.
+
+Daftar `/hutang` menampilkan rincian di pesan dan tombol nomor yang ringkas.
+Enam nomor ditata dalam dua baris, masing-masing tiga tombol. Cocokkan nomor
+tombol dengan rincian pada pesan sebelum memilih.
 
 ## Laporan dan Grafik
 
@@ -473,8 +482,10 @@ Fitur inti mengubah data. Gemini/RAG hanya membaca dan memberi insight. Data yan
 - Jika format command tidak terbaca, cek `/help <topik>` sesuai fitur.
 - Jika numeric ref tidak tersedia, buka transaction browser atau gunakan selector `/edit_txn` / `/delete_txn` tanpa ref.
 - Jika `pending_id`, `asset_id`, atau `rec_xxx` tidak diketahui, jalankan command list terkait.
-- Jika manual PDF belum tersedia, generate ulang dengan `python scripts/generate_help_manual_pdf.py`.
-- Jika font Poppins belum terpasang, generator PDF memakai fallback font sans-serif yang tersedia.
+- Jika manual PDF belum tersedia atau tertinggal dari Markdown, gunakan
+  toolchain PDF yang disetujui, render seluruh halaman, lalu periksa hasilnya
+  sebelum mengganti `docs/help_manual.pdf`. Repository aktif belum memuat
+  generator PDF.
 
 ## Konfirmasi, Pembatalan, dan Batas Keselamatan
 
@@ -483,6 +494,9 @@ Fitur inti mengubah data. Gemini/RAG hanya membaca dan memberi insight. Data yan
 - `/cancel` dan `/batal` membatalkan flow aktif sebelum mutation dimulai.
 - Pending expense tidak mengubah saldo sampai `/pending_paid` dikonfirmasi.
 - Multi input mempertahankan item yang valid sambil meminta klarifikasi item bermasalah; batch tidak ditulis sebelum preview final.
+- Simbol `+` berarti pemasukan/cash-in dan `-` berarti pengeluaran/cash-out.
+  Tombol tindakan memakai simbol di awal; tombol yang hanya berisi nomor adalah
+  selector ringkas yang merujuk ke rincian pada pesan.
 - Google Sheets bukan database transactional penuh. Jika hasil mutation tidak dapat dipastikan, jangan ulangi command sampai transaksi, saldo, dan record terkait direkonsiliasi.
 - Timeout tidak membuktikan write sinkron berhenti. Pesan `rekonsiliasi diperlukan` harus ditangani sebagai status operasional, bukan kegagalan biasa.
 - Gemini membantu parsing/insight secara terbatas, tetapi tidak boleh menulis transaksi atau melewati konfirmasi.

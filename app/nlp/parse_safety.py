@@ -365,7 +365,12 @@ def detect_pre_parse_clarification_flags(text: str) -> tuple[list[str], list[str
         _append_unique(flags, "possible_split_not_attached")
         _add_reason(reasons, "Beberapa orang disebut pada transaksi makan, tetapi maksud split bill belum eksplisit.")
 
-    if not _has_debt_keyword(clean):
+    # An explicit split phrase owns the names after `sama`; do not reinterpret
+    # the expense subject after `bayar` as a debt/payment counterparty first.
+    has_explicit_split = bool(
+        re.search(r"\b(?:dibagi|di\s*-?\s*bagi|bagi|split|share|patungan|ptpt)\b", clean)
+    )
+    if not _has_debt_keyword(clean) and not has_explicit_split:
         person_pays = re.search(
             r"^\s*(?P<person>[a-zA-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]{0,30}?)\s+(?:bayar|byr)\b(?=.*(?:\d|rp|idr))",
             clean,
@@ -630,6 +635,15 @@ def assess_parse_safety(text: str, parsed: dict | None) -> dict:
     if split_bill:
         participants = int(split_bill.get("participants", 0) or 0)
         named_people = len(split_bill.get("person_names") or [])
+        if named_people:
+            # The split parser is authoritative once it has concrete names.
+            # This supports compact input such as `bagi 4 Budi Sari Raka`.
+            pre_flags = [flag for flag in pre_flags if flag != "split_participants_missing"]
+            pre_reasons = [
+                reason
+                for reason in pre_reasons
+                if reason != "Nama peserta split bill belum disebutkan."
+            ]
         if participants and participants != named_people + 1:
             _append_unique(pre_flags, "split_participant_count_mismatch")
             _add_reason(pre_reasons, "Jumlah peserta split tidak sesuai dengan nama orang yang disebutkan.")

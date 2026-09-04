@@ -191,7 +191,7 @@ def _set_balance_similarity_keyboard() -> InlineKeyboardMarkup:
     """
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Pakai rekening existing", callback_data="set_balance_similar:use_existing")],
-        [InlineKeyboardButton("➕ Tetap buat rekening baru", callback_data="set_balance_similar:create_new")],
+        [InlineKeyboardButton("+ Tetap buat rekening baru", callback_data="set_balance_similar:create_new")],
         [InlineKeyboardButton("✍️ Tulis ulang", callback_data="cancel:set_balance_rewrite")],
         [InlineKeyboardButton("❌ Batal", callback_data="cancel:set_balance")],
     ])
@@ -1069,8 +1069,8 @@ def append_report_comparison_lines(lines: list[str], report: dict, label: str):
         return
 
     lines.append(f"📈 Vs {label}:")
-    lines.append(f"   ✅ Pemasukan : {format_report_delta(comparison.get('total_income'), positive_when_up=True)}")
-    lines.append(f"   ❌ Pengeluaran: {format_report_delta(comparison.get('total_expense'), positive_when_up=False)}")
+    lines.append(f"   + Pemasukan : {format_report_delta(comparison.get('total_income'), positive_when_up=True)}")
+    lines.append(f"   - Pengeluaran: {format_report_delta(comparison.get('total_expense'), positive_when_up=False)}")
     lines.append(f"   📊 Net       : {format_report_delta(comparison.get('net'), positive_when_up=True)}")
     lines.append(f"   📝 Transaksi : {format_report_delta(comparison.get('count'), positive_when_up=False, as_count=True)}\n")
 
@@ -1119,16 +1119,16 @@ def append_report_metric_lines(lines: list[str], report: dict):
         category_filter = (report or {}).get("category_filter")
         if category_filter:
             lines.append(f"📁 Kategori : *{md_safe(category_filter)}*")
-        lines.append(f"✅ Pemasukan      : *{format_rupiah(report.get('total_income', 0))}*")
-        lines.append(f"❌ Pengeluaran    : *{get_report_expense_display(report)}*")
+        lines.append(f"+ Pemasukan      : *{format_rupiah(report.get('total_income', 0))}*")
+        lines.append(f"- Pengeluaran    : *{get_report_expense_display(report)}*")
         lines.append(f"🔁 Transfer Masuk : *{format_rupiah(report.get('total_transfer_in', 0))}*")
         lines.append(f"🔁 Transfer Keluar: *{format_rupiah(report.get('total_transfer_out', 0))}*")
         lines.append(f"📊 Net Rekening   : *{format_rupiah(report.get('net', 0))}*")
         lines.append(f"📝 Transaksi      : {report.get('count', 0)} item")
         return
 
-    lines.append(f"✅ Pemasukan : *{format_rupiah(report['total_income'])}*")
-    lines.append(f"❌ Pengeluaran: *{get_report_expense_display(report)}*")
+    lines.append(f"+ Pemasukan : *{format_rupiah(report['total_income'])}*")
+    lines.append(f"- Pengeluaran: *{get_report_expense_display(report)}*")
     lines.append(f"📊 Net       : *{format_rupiah(report['net'])}*")
     lines.append(f"📝 Transaksi : {report['count']} item")
 
@@ -1155,8 +1155,8 @@ def append_account_report_lines(lines: list[str], report: dict):
     lines.append(f"🏦 Rekening : *{md_safe(account)}*")
     if balance is not None:
         lines.append(f"💰 Saldo Saat Ini : *{format_rupiah(balance)}*")
-    lines.append(f"✅ Pemasukan      : *{format_rupiah(report.get('total_income', 0))}*")
-    lines.append(f"❌ Pengeluaran    : *{get_report_expense_display(report)}*")
+    lines.append(f"+ Pemasukan      : *{format_rupiah(report.get('total_income', 0))}*")
+    lines.append(f"- Pengeluaran    : *{get_report_expense_display(report)}*")
     lines.append(f"🔁 Transfer Masuk : *{format_rupiah(report.get('total_transfer_in', 0))}*")
     lines.append(f"🔁 Transfer Keluar: *{format_rupiah(report.get('total_transfer_out', 0))}*")
     lines.append(f"📊 Pergerakan Bersih: *{format_rupiah(report.get('net', 0))}*")
@@ -1443,10 +1443,10 @@ def append_category_detail_summary(lines: list[str], report: dict, comparison_la
     if account:
         lines.append(f"🏦 Rekening : *{md_safe(account)}*")
     if total_income > 0:
-        lines.append(f"✅ Pemasukan : *{format_rupiah(total_income)}*")
+        lines.append(f"+ Pemasukan : *{format_rupiah(total_income)}*")
     # Handle total expense > 0 or total income == 0.
     if total_expense > 0 or total_income == 0:
-        lines.append(f"❌ Pengeluaran: *{get_report_expense_display(report)}*")
+        lines.append(f"- Pengeluaran: *{get_report_expense_display(report)}*")
     if account:
         transfer_in = float((report or {}).get("total_transfer_in", 0) or 0)
         transfer_out = float((report or {}).get("total_transfer_out", 0) or 0)
@@ -2583,6 +2583,8 @@ def extract_split_bill_total_amount(raw_text: str) -> float | None:
     patterns = [
         # 22k dibagi 2 sama raka
         rf"{amount_token}\s+{split_word}\s*(?:jadi\s*)?\d+",
+        # 285.550k via DANA bagi 4 sapto alpat opik
+        rf"{amount_token}(?:(?!\b{split_word}\b).){{1,60}}\b{split_word}\s*(?:jadi\s*)?\d+",
         # 22k sama raka dibagi 2
         rf"{amount_token}\s+{friend_marker}\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{{0,80}}\s+{split_word}\s*(?:jadi\s*)?\d+",
     ]

@@ -1675,7 +1675,7 @@ def detect_date_result(text: str) -> DateDetectionResult:
         flags=re.IGNORECASE,
     )
     if natural_match:
-        raw_value = natural_match.group(0)
+        raw_value = natural_match.group(0).strip()
         day = int(natural_match.group(1))
         month = month_names[natural_match.group(2).lower()]
         year = int(natural_match.group(3)) if natural_match.group(3) else today.year

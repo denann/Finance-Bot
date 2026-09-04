@@ -66,8 +66,8 @@ def _category_flow_keyboard(mode: str) -> InlineKeyboardMarkup:
     # Keep the requested layout: one row, two columns.
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("Expense", callback_data=f"category_type:{mode}:expense"),
-            InlineKeyboardButton("Income", callback_data=f"category_type:{mode}:income"),
+            InlineKeyboardButton("- Expense", callback_data=f"category_type:{mode}:expense"),
+            InlineKeyboardButton("+ Income", callback_data=f"category_type:{mode}:income"),
         ],
         [InlineKeyboardButton("❌ Batal", callback_data=f"cancel:category_{mode}")],
     ])
@@ -956,7 +956,7 @@ async def handle_category_confirm_callback(query, context: ContextTypes.DEFAULT_
                     context.user_data[BULK_EDIT_CATEGORY_DECISION_KEY] = bulk_state
                 label = detected_category if len(detected_category) <= 34 else detected_category[:31].rstrip() + "..."
                 duplicate_markup = InlineKeyboardMarkup([
-                    [InlineKeyboardButton(f"Ikuti {label}", callback_data="bulk_edit_category_choice:use")],
+                    [InlineKeyboardButton(f"✅ Ikuti {label}", callback_data="bulk_edit_category_choice:use")],
                     [InlineKeyboardButton("❌ Batal", callback_data="cancel:bulk_edit_category")],
                 ])
             # Send the Telegram response before continuing.
@@ -976,7 +976,7 @@ async def handle_category_confirm_callback(query, context: ContextTypes.DEFAULT_
         if bulk_state.get("paused_for_category_add") is not None:
             # Resume is explicit so category write and transaction bulk preview stay separated.
             resume_markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("Lanjut bulk edit", callback_data="bulk_edit_category_choice:resume")],
+                [InlineKeyboardButton("➡️ Lanjut bulk edit", callback_data="bulk_edit_category_choice:resume")],
                 [InlineKeyboardButton("❌ Batal", callback_data="cancel:bulk_edit_category")],
             ])
         # Send the Telegram response before continuing.

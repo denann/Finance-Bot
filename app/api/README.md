@@ -4,9 +4,10 @@ This folder contains the optional FastAPI layer for webhook deployment.
 
 Polling is the default runtime for this project. The API layer is useful only when the bot is deployed with a public HTTPS webhook.
 
-## Main file
+## Main files
 
 - `webhook.py`: receives Telegram updates and forwards them to the Telegram Application.
+- `diagnostics.py`: owns the disabled-by-default authenticated diagnostic route and sanitized checks.
 
 ## When to use it
 

@@ -54,7 +54,7 @@ def account_keyboard(prefix: str = "acc", include_skip: bool = True) -> InlineKe
     # Extract account names for validation.
     account_names = _get_runtime_account_names()
     buttons = [
-        InlineKeyboardButton(acc, callback_data=f"{prefix}:{acc}")
+        InlineKeyboardButton(f"🏦 {acc}", callback_data=f"{prefix}:{acc}")
         # Iterate through each acc.
         for acc in account_names
     ]

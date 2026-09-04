@@ -37,7 +37,7 @@ def prepare_delete_transactions(
     row_indices: list[int] | None = None,
     txn_ids: list[str] | None = None,
 ) -> UseCaseResult:
-    """Build the exact delete/dependency preview used by Telegram flows.
+    """Build the exact delete/dependency preview used by bot flows.
 
     Transaction identity resolution stays in ``transaction_service`` while
     debt eligibility stays in ``debt_service``.  Payment transactions keep

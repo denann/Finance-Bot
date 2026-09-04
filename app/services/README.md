@@ -10,10 +10,14 @@ Handlers should stay focused on Telegram interaction. Services handle the actual
 - `debt_service.py`: debt, receivable, payment, settlement, void, and edit logic.
 - `budget_service.py`: budget setup and budget realization.
 - `report_service.py`: transaction reports and search.
+- `chart_service.py`: read-only transaction and category chart generation.
 - `pending_expense_service.py`: planned expenses and future bills.
 - `recurring_service.py`: recurring rules and logs.
 - `net_worth_service.py`: assets and net worth snapshots.
 - `finance_insight_service.py`: structured context for AI insight.
+- `resolver_service.py`: deterministic account and category resolution used by services.
+- `privacy_service.py`: user-facing privacy summary content.
+- `operation_errors.py`: shared mutation outcome and partial-failure contracts.
 
 ## Ownership Contract
 

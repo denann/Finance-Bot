@@ -137,7 +137,8 @@ Debt dipakai untuk memisahkan utang/piutang dari transaksi biasa. Flow ini menja
 `Beli tissue 10k dibagi 4 sama Raka Fajar Bagas`
 `Beli token 500k dibagi 4 sama Raka:100% Fajar:80% Bagas:100%`
 `Beli token 500k dibagi 4 sama Raka 125k Fajar 100k Bagas 125k`
-Tanda `:` opsional. Kalau teman belum bayar, bagian teman masuk piutang aktif.
+`Bayar wifi 285.550k via DANA bagi 4 Sapto Alpat Opik tanggal 19 Agustus`
+Tanda `:` opsional. Semua jalur split memakai wizard yang sama. Pilih `Sudah dibayar` jika bagian teman sudah diterima atau `Belum dibayar` jika bagian teman masuk piutang aktif.
 
 *Kompensasi / potong silang*
 `potong piutang Dimas 20k buat badminton`
@@ -162,6 +163,7 @@ Saldo rekening tidak berubah karena ini hanya mencatat relasi utang/piutang.
 
 Nomor debt berasal dari detail terakhir `/hutang nama`.
 Jika terakhir membuka `/hutang Bagas`, lalu settle untuk Raka, bot akan menolak.
+Daftar `/hutang` menaruh rincian di pesan dan nomor pilihan dalam grid ringkas 3 kolom.
 Kalau amount lebih besar dari net debt, bot memberi warning.""",
     "laporan": """📊 *Help Laporan*
 

@@ -555,7 +555,7 @@ def build_overpayment_decision_text(parsed: dict, outcome: dict) -> str:
         f"📌 Sisa {target_label} sebelum bayar: *{format_rupiah(outcome.get('target_remaining_before', 0))}*",
         f"📌 Sisa {opposite_label} sebelum bayar: *{format_rupiah(outcome.get('opposite_remaining_before', 0))}*",
         f"📊 Saldo net yang perlu dibayar: *{format_rupiah(outcome.get('net_payment_capacity', 0))}*",
-        f"➕ Kelebihan bayar: *{format_rupiah(overpaid)}*",
+        f"+ Kelebihan bayar: *{format_rupiah(overpaid)}*",
         "",
         "Pilih perlakuan untuk uang lebihnya:",
         "1. *Anggap lunas/bonus* → debt lama ditutup, kelebihan tidak jadi hutang baru.",
@@ -868,7 +868,7 @@ async def _offer_category_learning_after_committed_edit(
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[ 
             InlineKeyboardButton("✅ Pelajari", callback_data=f"category_learn:{action_id}:approve"),
-            InlineKeyboardButton("Lewati", callback_data=f"category_learn:{action_id}:skip"),
+            InlineKeyboardButton("⏭️ Lewati", callback_data=f"category_learn:{action_id}:skip"),
         ]]),
     )
     bind_action_message(context.user_data, action_id, getattr(sent, "message_id", None))
@@ -1493,6 +1493,25 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             return
 
         if choice == "split":
+            # Preserve every explicitly named split participant instead of
+            # falling back to the ambiguous word immediately after `bayar`.
+            clarified = build_clarified_expense(raw, parsed)
+            if clarified and split_bill_needs_decision(clarified):
+                context.user_data["pending_parsed"] = clarified
+                context.user_data["pending_raw"] = raw
+                context.user_data.pop("pending_debt", None)
+                context.user_data.pop("pending_debt_batch", None)
+                context.user_data.pop("pending_batch", None)
+                context.user_data.pop("pending_mixed", None)
+                clear_parse_clarification_state(context)
+                await safe_edit_message(
+                    query,
+                    build_split_bill_prompt_from_parsed(clarified),
+                    parse_mode="Markdown",
+                    reply_markup=split_bill_keyboard("single"),
+                )
+                return
+
             amount = float(parsed.get("amount") or parse_human_amount(raw) or 0)
             person = extract_person_candidate(raw) or parsed.get("person_name") or parsed.get("subject") or ""
             person = re.sub(r"\s+", " ", str(person or "")).strip().title()
@@ -4042,7 +4061,7 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             elif intent == "offset_debt":
                 target_label = "piutang" if debt_result.get("target_debt_type") == "receivable" else "utang"
                 lines.append(f"🔁 Kompensasi dengan *{person}*")
-                lines.append(f"➖ Potong {target_label}: *{format_rupiah(debt_result.get('offset_applied', amount))}*")
+                lines.append(f"- Potong {target_label}: *{format_rupiah(debt_result.get('offset_applied', amount))}*")
                 if debt_result.get("overage", 0):
                     new_label = "utang" if debt_result.get("resulting_debt_type") == "payable" else "piutang"
                     lines.append(f"⚠️ Sisa menjadi {new_label} baru: *{format_rupiah(debt_result.get('overage', 0))}*")
@@ -4454,7 +4473,7 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                     target_label = "piutang" if debt_result.get("target_debt_type") == "receivable" else "utang"
                     result_lines.append(
                         f"{i}. 🔁 Kompensasi *{person}*\n"
-                        f"   ➖ Potong {target_label}: *{format_rupiah(debt_result.get('offset_applied', amount))}*\n"
+                        f"   - Potong {target_label}: *{format_rupiah(debt_result.get('offset_applied', amount))}*\n"
                         f"   📊 Sisa piutang: *{format_rupiah(debt_result.get('remaining_receivable', 0))}*\n"
                         f"   📊 Sisa utang: *{format_rupiah(debt_result.get('remaining_payable', 0))}*"
                     )
@@ -4862,4 +4881,3 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
     # Keep this section separated from the surrounding flow.
     await safe_edit_message(query, "❌ Tombol tidak dikenali atau sesi sudah tidak valid.")
-

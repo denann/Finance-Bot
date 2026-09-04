@@ -1310,7 +1310,7 @@ def build_recurring_rules_text(rules: list[dict]) -> str:
         status_icon = "✅" if is_active else "⛔"
 
         txn_type = str(rule.get("type", "")).strip()
-        type_icon = "❌" if txn_type == "expense" else "✅" if txn_type == "income" else "❓"
+        type_icon = "-" if txn_type == "expense" else "+" if txn_type == "income" else "❓"
 
         lines.append(
             f"{i}. {status_icon} {type_icon} *{rule.get('name', '-')}*\n"

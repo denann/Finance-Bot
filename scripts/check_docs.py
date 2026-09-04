@@ -23,7 +23,7 @@ CURRENT_DOCS = (
     "07-ai-and-gemini.md", "08-configuration-and-deployment.md",
     "09-function-reference.md", "10-maintenance.md", "testing.md",
     "operations/runbook.md", "help_manual.md", "documentation-source-of-truth.md",
-    "phase-0-to-5/README.md",
+    "input-and-usage/README.md", "phase-0-to-5/README.md",
 )
 LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 COMMAND_RE = re.compile(r"(?<![\w/])/([a-z][a-z0-9_]*)", re.IGNORECASE)
@@ -151,9 +151,8 @@ def check_index(errors: list[str]) -> None:
     for relative in CURRENT_DOCS:
         if relative not in index:
             errors.append(f"docs/README.md: missing primary document `{relative}`")
-    required_notice = "historical audit and implementation records"
-    if required_notice not in index.lower():
-        errors.append("docs/README.md: docs/audit historical-source notice is missing")
+    if not re.search(r"historical\s+audit\s+and\s+implementation\s+records", index, re.IGNORECASE):
+        errors.append("docs/README.md: historical-record notice is missing")
 
 
 def check_commands(errors: list[str]) -> None:
@@ -229,8 +228,8 @@ def check_policy_and_privacy(errors: list[str]) -> None:
             errors.append("documentation: possible raw credential or private key found")
             break
     source_truth = (DOCS / "documentation-source-of-truth.md").read_text(encoding="utf-8")
-    if "docs/help_manual.md" not in source_truth or "scripts/generate_help_manual_pdf.py" not in source_truth:
-        errors.append("documentation-source-of-truth.md: generated PDF source/command not declared")
+    if "docs/help_manual.md" not in source_truth or "docs/help_manual.pdf" not in source_truth:
+        errors.append("documentation-source-of-truth.md: manual source and delivery artifact must be declared")
     manual = (DOCS / "help_manual.md").read_text(encoding="utf-8").lower()
     if "contoh" in manual and not any(word in manual for word in ("fiktif", "synthetic", "dummy")):
         errors.append("docs/help_manual.md: examples must be identified as fictional/dummy data")

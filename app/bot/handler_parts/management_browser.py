@@ -73,20 +73,22 @@ def _page_keyboard(prefix: str, state: dict, *, detail_buttons: list[list] | Non
     if page > 0:
         nav.append(InlineKeyboardButton("◀️ Previous", callback_data=f"{prefix}:{state['session_id']}:p:{page - 1}"))
     if page + 1 < pages:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"{prefix}:{state['session_id']}:p:{page + 1}"))
+        nav.append(InlineKeyboardButton("▶️ Next", callback_data=f"{prefix}:{state['session_id']}:p:{page + 1}"))
     if nav:
         rows.append(nav)
-    rows.append([InlineKeyboardButton(f"Hal {page + 1}/{pages}", callback_data=f"{prefix}:{state['session_id']}:z:0")])
+    rows.append([InlineKeyboardButton(f"📄 Hal {page + 1}/{pages}", callback_data=f"{prefix}:{state['session_id']}:z:0")])
     return InlineKeyboardMarkup(rows)
 
 
-def _list_keyboard(prefix: str, state: dict, label_fn) -> InlineKeyboardMarkup:
+def _list_keyboard(prefix: str, state: dict, label_fn, *, columns: int = 1) -> InlineKeyboardMarkup:
     records = state.get("records") or []
     start, end, _pages = _bounds(len(records), int(state.get("page") or 0))
-    rows = [
-        [InlineKeyboardButton(_compact_button(label_fn(i + 1, records[i])), callback_data=f"{prefix}:{state['session_id']}:d:{i}")]
+    buttons = [
+        InlineKeyboardButton(_compact_button(label_fn(i + 1, records[i])), callback_data=f"{prefix}:{state['session_id']}:d:{i}")
         for i in range(start, end)
     ]
+    width = max(1, int(columns or 1))
+    rows = [buttons[index:index + width] for index in range(0, len(buttons), width)]
     return _page_keyboard(prefix, state, detail_buttons=rows)
 
 
@@ -187,7 +189,7 @@ async def start_debt_browser(
     context.user_data[DEBT_BROWSER_KEY] = state
     await update.message.reply_text(
         _debt_list_text(state), parse_mode="Markdown",
-        reply_markup=_list_keyboard("deb", state, lambda n, x: f"{n}. {x.get('person_name') or '-'} · {format_rupiah(x.get('remaining_amount', 0))}"),
+        reply_markup=_list_keyboard("deb", state, lambda n, _x: str(n), columns=3),
     )
 
 
@@ -348,7 +350,7 @@ async def _handle_debt(update, context, sid: str, action: str, raw: str) -> None
         if page < 0 or page >= pages:
             await query.answer(); return
         await query.answer(); state["page"] = page
-        await safe_edit_message(query, _debt_list_text(state), parse_mode="Markdown", reply_markup=_list_keyboard("deb", state, lambda n, x: f"{n}. {x.get('person_name') or '-'} · {format_rupiah(x.get('remaining_amount', 0))}")); return
+        await safe_edit_message(query, _debt_list_text(state), parse_mode="Markdown", reply_markup=_list_keyboard("deb", state, lambda n, _x: str(n), columns=3)); return
     index, item = _selected(state, raw)
     if not item:
         await query.answer("Rincian debt tidak ada di snapshot ini.", show_alert=True); return
@@ -358,7 +360,7 @@ async def _handle_debt(update, context, sid: str, action: str, raw: str) -> None
         await safe_edit_message(query, _debt_detail_text(item, index + 1), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows)); return
     if action == "b":
         await query.answer(); state["page"] = index // PAGE_SIZE
-        await safe_edit_message(query, _debt_list_text(state), parse_mode="Markdown", reply_markup=_list_keyboard("deb", state, lambda n, x: f"{n}. {x.get('person_name') or '-'} · {format_rupiah(x.get('remaining_amount', 0))}")); return
+        await safe_edit_message(query, _debt_list_text(state), parse_mode="Markdown", reply_markup=_list_keyboard("deb", state, lambda n, _x: str(n), columns=3)); return
     if action not in {"s", "e", "v"}:
         await query.answer("Aksi debt tidak dikenali.", show_alert=True); return
 

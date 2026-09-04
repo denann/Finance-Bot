@@ -6,6 +6,7 @@ The role of this folder is to connect user input, backend logic, Google Sheets, 
 
 ## Main folders
 
+- `application/`: typed use cases, request snapshots, bulk state, and governed external work.
 - `api/`: optional FastAPI webhook endpoint.
 - `bot/`: Telegram bot application, commands, messages, callbacks, and keyboards.
 - `nlp/`: parser, normalizer, parse safety, and Gemini helpers.
@@ -19,4 +20,4 @@ Telegram handlers should decide what the user wants. Services should decide what
 
 ## Ownership Contract
 
-`application/` coordinates typed use cases between Telegram and services. Dependencies flow from `bot/` and `api/` toward application/services, then through governed `sheets/` or NLP boundaries. Tests live under matching unit, service, and integration suites. Deployment files, generated manuals, and ad hoc finance rules do not belong in unrelated application modules.
+`application/` coordinates typed use cases between Telegram and services. Shared runtime utilities such as configuration, clocks, formatting, observability, and operation boundaries stay at the package root. Dependencies flow from `bot/` and `api/` toward application/services, then through governed `sheets/` or NLP boundaries. Tests live under matching unit, service, and integration suites. Deployment files, generated manuals, and ad hoc finance rules do not belong in unrelated application modules.

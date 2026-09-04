@@ -402,7 +402,7 @@ def test_detail_keyboard_uses_native_copy_text_and_only_approved_top_level_actio
 
     assert labels[0] == ["✏️ Edit", "🗑 Hapus"]
     assert labels[1] == ["📋 Copy ID"]
-    assert labels[2] == ["◀️ Previous", "Next ▶️"]
+    assert labels[2] == ["◀️ Previous", "▶️ Next"]
     assert labels[3] == ["↩️ Kembali ke Daftar"]
     copy_button = markup.inline_keyboard[1][0]
     assert copy_button.callback_data is None

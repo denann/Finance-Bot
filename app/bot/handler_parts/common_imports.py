@@ -657,8 +657,8 @@ def build_transaction_display_lines(
     txn_type = str(txn.get("type", "") or "").strip().lower()
     amount = _safe_float_for_display(txn.get("amount", 0))
     icon = {
-        "expense": "❌",
-        "income": "✅",
+        "expense": "-",
+        "income": "+",
         "transfer": "🔄",
     }.get(txn_type, "❓")
 
@@ -811,8 +811,8 @@ def build_transactions_full_text_shared(
         if current_balance is not None:
             summary_lines.append(f"💰 Saldo Saat Ini : *{format_rupiah(current_balance)}*")
         summary_lines.extend([
-            f"✅ Income          : *{format_rupiah(total_income)}*",
-            f"❌ Expense         : *{expense_text}*",
+            f"+ Income          : *{format_rupiah(total_income)}*",
+            f"- Expense         : *{expense_text}*",
             f"🔁 Transfer Masuk  : *{format_rupiah(total_transfer_in)}*",
             f"🔁 Transfer Keluar : *{format_rupiah(total_transfer_out)}*",
             f"📊 Net Rekening    : *{net_text}*",
@@ -829,8 +829,8 @@ def build_transactions_full_text_shared(
         net_text = format_expense_net_gross(net_after_receivable, net_gross)
         lines.append(
             "\n*Ringkasan:*\n"
-            f"✅ Income   : *{format_rupiah(total_income)}*\n"
-            f"❌ Expense  : *{expense_text}*\n"
+            f"+ Income   : *{format_rupiah(total_income)}*\n"
+            f"- Expense  : *{expense_text}*\n"
             f"🔄 Transfer : *{format_rupiah(total_transfer)}*\n"
             f"📊 Net      : *{net_text}*\n"
             f"📝 Total    : *{len(transactions)} transaksi*"
@@ -1475,6 +1475,7 @@ def extract_split_bill_total_amount(raw_text: str) -> float | None:
 
     patterns = [
         rf"{amount_token}\s+{split_word}\s*(?:jadi\s*)?\d+",
+        rf"{amount_token}(?:(?!\b{split_word}\b).){{1,60}}\b{split_word}\s*(?:jadi\s*)?\d+",
         rf"{amount_token}\s+{friend_marker}\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s,;&]{{0,80}}\s+{split_word}\s*(?:jadi\s*)?\d+",
     ]
 

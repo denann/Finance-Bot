@@ -6,7 +6,7 @@ import shlex
 import types
 
 
-SOURCE = Path('app/bot/handler_parts/message_handlers.py').read_text()
+SOURCE = Path('app/bot/handler_parts/message_handlers.py').read_text(encoding='utf-8')
 TREE = ast.parse(SOURCE)
 
 

@@ -46,7 +46,7 @@ def test_phase5_documents_are_indexed_and_do_not_claim_implementation() -> None:
         "phase-5-current-scale-boundary.md", "persistence-contract-assessment.md",
         "persistence-options.md", "scale-and-migration-triggers.md",
         "adr-001-scale-and-persistence.md", "future-migration-and-tenant-plan.md",
-        "phase-5-scale-evidence.md", "phase-5-scale-staging.md",
+        "phase-5-scale-staging.md",
     )
     assert all(name in index for name in required)
     assert "design only" in future

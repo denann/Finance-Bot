@@ -41,5 +41,5 @@ def test_manual_pdf_source_and_historical_policy_are_declared() -> None:
     index = (check_docs.DOCS / "README.md").read_text(encoding="utf-8").lower()
 
     assert "docs/help_manual.md" in source_truth
-    assert "scripts/generate_help_manual_pdf.py" in source_truth
+    assert "docs/help_manual.pdf" in source_truth
     assert "historical audit and implementation records" in index
