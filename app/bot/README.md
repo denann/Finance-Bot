@@ -7,6 +7,8 @@ It is responsible for receiving commands, natural text input, images, and inline
 ## Main files
 
 - `application.py`: builds the Telegram Application and registers handlers.
+- `output.py`: adds contextual icon legends to Telegram text and media captions;
+  the application and scheduler both use its `FinanceBot` transport.
 - `command_registry.py`: canonical command names, aliases, and compatibility metadata.
 - `callback_contracts.py`: callback ownership and bounded routing predicates.
 - `command_mutations.py`: allow-listed mutations executed after immutable confirmation.

@@ -1158,11 +1158,6 @@ async def safe_edit_message(query, text: str, parse_mode: str | None = None, rep
     chunks = split_long_message(text)
     first = chunks[0]
 
-    if len(chunks) > 1:
-        suffix = "\n\n📄 *Pesan terlalu panjang, detail lanjutan dikirim di bawah.*"
-        max_first_len = TELEGRAM_SAFE_MESSAGE_LIMIT - len(suffix) - 10
-        first = first[:max_first_len].rstrip() + suffix
-
     async def _edit(payload: str, mode: str | None, markup):
         """Handle the asynchronous edit flow in the Telegram handler layer.
 

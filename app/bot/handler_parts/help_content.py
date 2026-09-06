@@ -24,6 +24,7 @@ Gunakan `/quickstart` untuk panduan awal user baru.
 Gunakan `/manual` untuk PDF panduan lengkap.
 Gunakan `/privacy` untuk ringkasan data privacy dan keamanan credential.
 Tombol *Batal* bisa membatalkan wizard atau preview aktif.
+Legenda ikon tersedia di bawah pesan atau sebagai pesan lanjutan jika terlalu panjang.
 
 *Contoh input umum*
 `beli kopi 20k dari Cash`
@@ -107,6 +108,8 @@ Bisa dipisah enter, titik koma, atau kalimat natural.
 
 Satu baris:
 `beli kopi 10k; beli nasi 20k; Budi minjem 50k`
+
+Saat edit multi input, pilih nomor dari rincian lengkap. Nilai lama ditampilkan setelah memilih atribut; selesai edit mengembalikan seluruh preview yang sudah diperbarui. Kategori yang cocok dengan nama/alias existing meminta konfirmasi sebelum diterapkan.
 
 *Data historis*
 Kalau transaksi sudah berlalu dan saldo tidak mau diubah, pilih tombol `Sudah berlalu / jangan ubah saldo`.

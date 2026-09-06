@@ -123,6 +123,8 @@ from app.bot.handler_parts.transaction_flow import (
     build_preview_edit_keyboard,
     build_preview_field_help,
     build_preview_field_value_prompt,
+    current_preview_edit_payload,
+    handle_preview_category_choice,
     build_receipt_account_prompt,
     build_receipt_all_mixed_items,
     build_receipt_final_preview,
@@ -2009,6 +2011,10 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         action = parts[1] if len(parts) > 1 else ""
         scope = parts[2] if len(parts) > 2 else "single"
 
+        if action == "category":
+            await handle_preview_category_choice(update, context, scope, parts[3] if len(parts) > 3 else "", parts[4] if len(parts) > 4 else "")
+            return
+
         if action == "continue":
             # Await proceed after preview edit before continuing.
             await proceed_after_preview_edit(query, context, scope)
@@ -2036,7 +2042,7 @@ async def legacy_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             # Send the Telegram response before continuing.
             await safe_edit_message(
                 query,
-                build_preview_field_value_prompt(scope, field),
+                build_preview_field_value_prompt(scope, field, current_preview_edit_payload(context.user_data, state)),
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Batal", callback_data=f"cancel:{scope}")]]),
             )

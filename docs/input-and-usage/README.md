@@ -27,6 +27,10 @@ the message, then select the matching number. Ambiguous meaning choices use
 contextual icons (`🟢`, `🔴`, `🧾`, and `👤`) so the alternatives remain easy
 to distinguish.
 
+Messages and media captions include a legend for the icons present in their
+text or action buttons. If the legend exceeds Telegram's length limit, it
+appears in a follow-up message below the original content.
+
 Initial example:
 
 ```text
@@ -119,6 +123,16 @@ batch item description. If one item is ambiguous, the bot can clarify that
 item without discarding the others. The batch must reach a final preview
 before it can be saved.
 
+When editing a pending batch, the item selector shows the full dated details,
+including category, account, spending type, and description. Choose its original
+item number. Selecting an attribute shows its current value and an example
+answer. After the edit, the complete batch preview returns with that item
+updated. Nothing is saved until you confirm the batch.
+
+If an edited category such as `other` matches an existing category such as
+`Other Expense`, the bot asks you to use the existing category or enter another
+name. Other edits in the same message remain pending during this decision.
+
 ## Expenses, Income, and Transfers
 
 Expense examples:
@@ -164,6 +178,10 @@ saya ditalangin Bagas beli nasi uduk 10k
 `catat utang ke Budi 200k` records a debt relationship without increasing an
 account balance. In contrast, `saya pinjam 100k ke Budi` represents received
 money and requires a cash-flow account.
+
+The initial debt preview shows the detected account, so you can cross-check
+input such as `Minjem tabungan naca 900k via BSI tanggal 18 Agustus` before
+confirmation. If no account is available, the bot asks you to choose one.
 
 ### Writing an Explicit Split Bill
 

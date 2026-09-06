@@ -489,6 +489,15 @@ Fitur inti mengubah data. Gemini/RAG hanya membaca dan memberi insight. Data yan
 
 ## Konfirmasi, Pembatalan, dan Batas Keselamatan
 
+- Saat edit multi input, pilih nomor dari rincian lengkap bertanggal. Setelah
+  selesai, seluruh preview ditampilkan kembali dengan item yang sudah diedit.
+- Setelah memilih atribut edit, pesan menampilkan nilai lama dan contoh jawaban.
+- Input kategori seperti `other` yang cocok dengan kategori existing meminta
+  konfirmasi terlebih dahulu; perubahan lain pada pesan yang sama tetap ditahan.
+- Preview utang menampilkan rekening yang terdeteksi untuk diperiksa.
+- Pesan dan caption gambar/dokumen menyertakan legenda ikon yang digunakan.
+  Legenda panjang dikirim pada pesan lanjutan agar rincian tetap utuh.
+
 - Flow yang mengubah data memakai preview final dan tombol `Simpan`/`Batal`.
 - Preview memiliki ID tindakan satu kali. Tombol lama, sudah dipakai, salah pesan, kedaluwarsa, atau hilang setelah restart akan ditolak.
 - `/cancel` dan `/batal` membatalkan flow aktif sebelum mutation dimulai.

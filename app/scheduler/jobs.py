@@ -12,7 +12,8 @@ from app.clock import business_now
 from app.application.external_io import run_scheduled
 from app.sheets.client import sheets_request_snapshot
 # Import telegram so this module can use its helpers.
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from app.bot.output import FinanceBot as Bot
 # Import app.config so this module can use its helpers.
 from app.config import TELEGRAM_BOT_TOKEN, ALLOWED_USER_ID
 # Import app.services.report_service so this module can use its helpers.

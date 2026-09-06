@@ -36,6 +36,10 @@ external boundaries.
 
 ## Focused Commands
 
+`tests/unit/test_preview_edit_details_and_legends.py` covers detailed batch
+editing, category confirmation and stale callbacks, debt account visibility,
+and legend delivery without altering preview IDs or callback data.
+
 ```powershell
 python -m pytest -q tests/unit
 python -m pytest -q tests/service

@@ -110,6 +110,7 @@ from app.observability import (
     observe_duration,
 )
 from app.application.gemini_governance import gemini_request_scope
+from app.bot.output import FinanceBot
 
 
 # Wrapper ini menjaga setiap aksi Telegram berada dalam satu konteks rollback Sheets.
@@ -379,7 +380,7 @@ def build_telegram_app() -> Application:
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN belum diisi di .env.")
 
-    telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    telegram_app = Application.builder().bot(FinanceBot(token=TELEGRAM_BOT_TOKEN)).build()
     register_handlers(telegram_app)
     register_job_queue_jobs(telegram_app)
     return telegram_app

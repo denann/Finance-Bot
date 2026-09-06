@@ -14,9 +14,12 @@ from app.bot.handler_parts.networth_assets import build_asset_confirm_preview
 from app.services.resolver_service import resolve_parsed_transaction
 from app.services.debt_service import create_split_bill_receivables, validate_split_bill_receivables
 # Import app.nlp.regex_parser so this module can use its helpers.
-from app.nlp.regex_parser import detect_category, detect_account
+from app.nlp.regex_parser import detect_category, detect_account, attach_debt_account_payload
 # Import app.nlp.normalizer so this module can use its helpers.
 from app.nlp.normalizer import normalize_text
+from secrets import token_hex
+from types import SimpleNamespace
+from app.services.resolver_service import assess_edit_category_choice
 
 
 # Helper for parse input.
@@ -836,6 +839,7 @@ def parse_mixed_item_local(line: str) -> dict:
     debt_parsed = parse_debt_input(line)
     if debt_parsed:
         debt_parsed = enrich_ditalangin_split_bill_if_any(debt_parsed, line)
+        debt_parsed = attach_debt_account_payload(debt_parsed, line)
         return {"kind": "debt", "parsed": debt_parsed, "raw": line}
 
     missing_amount_income = parse_income_missing_amount(line)
@@ -2045,39 +2049,6 @@ def build_mixed_account_prompt(mixed_items: list[dict]) -> str:
     )
 
 
-# Helper for build updated item summary.
-def build_updated_item_summary(item: dict, index: int | None = None) -> str:
-    """Build the data structure or message text for updated item summary."""
-    prefix = f"Item {index}" if index else "Item"
-    kind = item.get("kind") if isinstance(item, dict) else None
-    parsed = item.get("parsed", {}) if isinstance(item, dict) else {}
-
-    if kind == "transaction":
-        label = md_safe(parsed.get("description") or parsed.get("subject") or "Transaksi")
-        amount = _receipt_amount(parsed.get("amount"), 0)
-        category = md_safe(parsed.get("category") or "-")
-        account = md_safe(parsed.get("account") or "-")
-        return (
-            f"✅ *{prefix} sudah diupdate.*\n"
-            f"• {label}\n"
-            f"• {format_rupiah(amount)} | {category}\n"
-            f"• Rekening: {account}"
-        )
-
-    if kind == "debt":
-        person = md_safe(parsed.get("person_name") or "-")
-        amount = _receipt_amount(parsed.get("amount"), 0)
-        account = md_safe(parsed.get("account") or "-")
-        return (
-            f"✅ *{prefix} debt sudah diupdate.*\n"
-            f"• {person}\n"
-            f"• {format_rupiah(amount)}\n"
-            f"• Rekening: {account}"
-        )
-
-    return f"✅ *{prefix} sudah diupdate.*"
-
-
 # Helper for preview edit fields for scope.
 def _preview_edit_fields_for_scope(scope: str) -> list[tuple[str, str]]:
     """Coordinate the preview edit fields for scope logic in the Telegram handler layer.
@@ -2190,7 +2161,7 @@ def build_preview_field_help(scope: str, field: str) -> str:
 
 
 # Helper for build preview field value prompt.
-def build_preview_field_value_prompt(scope: str, field: str) -> str:
+def build_preview_field_value_prompt(scope: str, field: str, current: dict | None = None) -> str:
     """Build the direct-value prompt after the user taps one edit field."""
     examples = {
         "amount": ("Nominal", "Tulis nominal yang kamu mau.", "20k"),
@@ -2216,8 +2187,12 @@ def build_preview_field_value_prompt(scope: str, field: str) -> str:
         field,
         (field.replace("_", " ").title(), "Tulis nilai baru yang kamu mau.", "nilai baru"),
     )
+    old_value = (current or {}).get(field)
+    if old_value in (None, ""):
+        old_value = "Belum diisi"
     return (
         f"✏️ *Edit {md_safe(title)}*\n\n"
+        f"Nilai lama: *{md_safe(old_value)}*\n\n"
         f"{instruction}\n\n"
         f"Contoh: `{md_code_text(example)}`"
     )
@@ -2272,24 +2247,45 @@ def build_preview_edit_help(scope: str = "single") -> str:
 # Helper for build mixed edit choose prompt.
 def build_mixed_edit_choose_prompt(mixed_items: list[dict]) -> str:
     """Build the data structure or message text for mixed edit choose prompt."""
-    lines = ["✏️ *Mau edit item nomor berapa?*\n"]
-    # Iterate through each i, item.
-    for i, item in enumerate(mixed_items or [], 1):
-        kind = item.get("kind")
-        parsed = item.get("parsed", {})
-        if kind == "transaction":
-            label = parsed.get("description") or parsed.get("subject") or item.get("raw", "-")
-            amount = parsed.get("amount", 0)
-            lines.append(f"{i}. {md_safe(label)} — {format_rupiah(float(amount or 0))}")
-        elif kind == "debt":
-            label = parsed.get("person_name") or item.get("raw", "-")
-            amount = parsed.get("amount", 0)
-            lines.append(f"{i}. Debt {md_safe(label)} — {format_rupiah(float(amount or 0))}")
-        # Use the fallback path when no earlier branch matched.
-        else:
-            lines.append(f"{i}. {md_safe(item.get('raw', '-'))}")
-    lines.append("\nBalas dengan angka, contoh: `2`.")
-    return "\n".join(lines)
+    return (
+        "✏️ *Mau edit item nomor berapa?*\n\n"
+        + build_mixed_detail_preview(mixed_items)
+        + "\n\nBalas dengan angka, contoh: `2`."
+    )
+
+
+def current_preview_edit_payload(user_data: dict, state: dict) -> dict:
+    """Read the selected pending item without mutating it or accessing Sheets."""
+    scope = state.get("scope", "single")
+    if scope == "mixed":
+        items = user_data.get("pending_mixed") or []
+        index = state.get("index", -1)
+        return (items[index].get("parsed") or {}) if isinstance(index, int) and 0 <= index < len(items) else {}
+    key = {"debt": "pending_debt", "pending_expense": "pending_expense_confirm", "asset": "pending_asset_confirm"}.get(scope, "pending_parsed")
+    return user_data.get(key) or {}
+
+
+async def handle_preview_category_choice(update, context, scope: str, action: str, choice_id: str) -> None:
+    """Resume a pending edit only for its current category decision token."""
+    state = context.user_data.get("pending_preview_edit") or {}
+    choice = state.get("category_choice") or {}
+    query = update.callback_query
+    if state.get("scope") != scope or state.get("step") != "category_choice" or not choice or choice.get("id") != choice_id:
+        await query.answer("Pilihan kategori sudah tidak berlaku.")
+        return
+    if action not in {"use", "rewrite"}:
+        return
+    state.pop("category_choice", None)
+    if action == "rewrite":
+        state.update(step="direct_field", field="category")
+        state["deferred_updates"] = {key: value for key, value in choice["updates"].items() if key != "category"}
+        await safe_edit_message(query, build_preview_field_value_prompt(scope, "category", current_preview_edit_payload(context.user_data, state)), parse_mode="Markdown", reply_markup=cancel_keyboard())
+        return
+    updates = dict(choice["updates"])
+    updates["category"] = choice["suggested_category"]
+    # Use the existing text-edit completion path with its original item selection.
+    proxy = SimpleNamespace(message=query.message, effective_chat=getattr(update, "effective_chat", None))
+    await handle_pending_preview_edit(proxy, context, "", confirmed_updates=updates)
 
 
 PREVIEW_EDIT_KEY_ALIASES = {
@@ -2712,7 +2708,7 @@ async def proceed_after_preview_edit(query, context: ContextTypes.DEFAULT_TYPE, 
 
 
 # Handle the asynchronous handle pending preview edit workflow.
-async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str) -> bool:
+async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str, *, confirmed_updates: dict | None = None) -> bool:
     """Handle text replies used to edit a pending preview.
 
     Args:
@@ -2776,7 +2772,7 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
         return True
 
     direct_field = state.get("field") if step == "direct_field" else None
-    updates = (
+    updates = confirmed_updates if confirmed_updates is not None else (
         parse_preview_direct_field_update(direct_field, user_text)
         # Handle direct field else parse preview edit updates(user text).
         if direct_field else parse_preview_edit_updates(user_text)
@@ -2784,7 +2780,7 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
     # Validate missing updates before continuing.
     if not updates:
         help_text = (
-            build_preview_field_value_prompt(scope or "single", direct_field)
+            build_preview_field_value_prompt(scope or "single", direct_field, current_preview_edit_payload(context.user_data, state))
             if direct_field else build_preview_edit_help(scope or "single")
         )
         # Send the Telegram response before continuing.
@@ -2793,6 +2789,27 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
             parse_mode="Markdown",
         )
         return True
+
+    updates = {**state.pop("deferred_updates", {}), **updates}
+    current = current_preview_edit_payload(context.user_data, state)
+    if confirmed_updates is None and scope in {"single", "mixed", "pending_expense"} and "category" in updates:
+        from app.application.external_io import run_sheets_read
+        category_current = {**current, "type": "expense"} if scope == "pending_expense" else current
+        choice = await run_sheets_read("preview_category_choice", assess_edit_category_choice, updates, {"old_txn": category_current})
+        if choice:
+            from app.bot.handler_parts.message_handlers import build_edit_category_choice_text
+            choice_id = token_hex(4)
+            state["category_choice"] = {**choice, "id": choice_id, "updates": dict(updates)}
+            state["step"] = "category_choice"
+            await update.message.reply_text(
+                build_edit_category_choice_text(choice).rsplit("\n\n", 1)[0] + "\n\nGunakan kategori tersebut atau tulis kategori lain?", parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f"✅ Gunakan {choice['suggested_category']}", callback_data=f"editflow:category:{scope}:use:{choice_id}")],
+                    [InlineKeyboardButton("✍️ Tulis kategori lain", callback_data=f"editflow:category:{scope}:rewrite:{choice_id}")],
+                    [InlineKeyboardButton("🚫 Batal", callback_data=f"cancel:{scope}")],
+                ]),
+            )
+            return True
 
     if scope == "mixed":
         mixed_items = context.user_data.get("pending_mixed") or []
@@ -2816,8 +2833,6 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
         context.user_data["pending_mixed"] = mixed_items
         context.user_data.pop("pending_preview_edit", None)
 
-        # Build item summary for the response flow.
-        item_summary = build_updated_item_summary(item, item_index + 1)
         receipt_context = context.user_data.get("pending_receipt_context")
         if mixed_needs_account(mixed_items):
             # Build detail preview for the response flow.
@@ -2825,18 +2840,18 @@ async def handle_pending_preview_edit(update: Update, context: ContextTypes.DEFA
             # Send the Telegram response before continuing.
             await reply_update_safely(
                 update,
-                f"{item_summary}\n\n{detail_preview}\n\n{preview_action_question(False)}",
+                f"{detail_preview}\n\n{preview_action_question(False)}",
                 parse_mode="Markdown",
                 reply_markup=preview_action_keyboard("mixed", False),
             )
             return True
 
         # Build final summary for the response flow.
-        final_summary = build_mixed_final_summary(mixed_items, receipt_context)
+        final_summary = build_mixed_detail_preview(mixed_items, receipt_context)
         # Send the Telegram response before continuing.
         await reply_update_safely(
             update,
-            f"{item_summary}\n\n{final_summary}\n\n{preview_action_question(True)}",
+            f"{final_summary}\n\n{preview_action_question(True)}",
             parse_mode="Markdown",
             reply_markup=preview_action_keyboard("mixed", True),
         )
@@ -3105,6 +3120,10 @@ def build_batch_preview(parsed_items: list[dict]) -> str:
     # Iterate through each idx, item.
     for idx, item in enumerate(parsed_items or [], 1):
         parsed = item.get("parsed", {}) or {}
+        if item.get("kind", "transaction") != "transaction":
+            date_key = str(parsed.get("date") or parsed.get("transaction_date") or "-")
+            grouped_by_date.setdefault(date_key, []).append((idx, parsed))
+            continue
         amount = _receipt_amount(parsed.get("amount"), 0)
         txn_type = parsed.get("type")
 
@@ -3146,6 +3165,11 @@ def build_batch_preview(parsed_items: list[dict]) -> str:
 
         # Iterate through each idx, parsed.
         for idx, parsed in grouped_by_date[date_key]:
+            original_item = parsed_items[idx - 1]
+            if original_item.get("kind", "transaction") != "transaction":
+                lines.extend(_mixed_item_detail_lines(original_item, idx))
+                lines.append("")
+                continue
             txn_type = parsed.get("type")
             type_icon = {
                 "expense": "-",
@@ -3167,6 +3191,9 @@ def build_batch_preview(parsed_items: list[dict]) -> str:
 
             if description:
                 lines.append(f"   📝 {md_safe(description)}")
+
+            if parsed.get("to_account"):
+                lines.append(f"   ➡️ Rekening tujuan: {md_safe(parsed['to_account'])}")
 
             if parsed.get("catatan"):
                 lines.append(f"   🗒️ {md_safe(parsed.get('catatan'))}")
@@ -5713,7 +5740,11 @@ def build_debt_initial_preview(debt_parsed: dict) -> str:
         effect = "Input debt terdeteksi."
 
     if debt_uses_cashflow(debt_parsed) and intent != "offset_debt":
-        next_step = "Jika lanjut, bot akan meminta rekening cashflow sebelum konfirmasi simpan."
+        next_step = (
+            "Periksa rekening di atas sebelum melanjutkan ke konfirmasi simpan."
+            if debt_parsed.get("account") else
+            "Jika lanjut, bot akan meminta rekening cashflow sebelum konfirmasi simpan."
+        )
     # Use the fallback path when no earlier branch matched.
     else:
         next_step = "Jika lanjut, bot akan menampilkan konfirmasi simpan tanpa mengubah saldo rekening."
@@ -5724,6 +5755,7 @@ def build_debt_initial_preview(debt_parsed: dict) -> str:
         f"👤 Subjek : {md_safe(person)}",
         f"💰 Nominal: {format_rupiah(amount)}",
         f"📅 Tanggal: {md_safe(date)}",
+        f"🏦 Rekening: {md_safe(debt_parsed.get('account') or ('Belum dipilih' if debt_uses_cashflow(debt_parsed) else 'Tidak mengubah saldo'))}",
         f"📝 Detail : {md_safe(description)}",
         f"🧾 Input  : `{md_safe(raw)}`",
         "",
